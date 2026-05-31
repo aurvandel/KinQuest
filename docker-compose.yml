@@ -1,12 +1,12 @@
 services:
   # ----------------------------------------------------
-  # 1. WilderHunt Node.js Application container
+  # 1. KinQuest Node.js Application container
   # ----------------------------------------------------
-  wilderhunt-app:
+  kinquest-app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wilderhunt-app
+    container_name: kinquest-app
     restart: always
     ports:
       - "3000:3000"
