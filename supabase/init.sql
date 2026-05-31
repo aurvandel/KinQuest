@@ -1,40 +1,28 @@
--- ====================================================================
--- WILDERHUNT DOCKER CONTAINER POSTGRES INITIALIZATION SCRIPT
--- Sets up security schemas, routing roles, permissions, and tables.
--- ====================================================================
+-- WilderHunt Supabase Local Initialization Script
+-- Execute this schema inside your Supabase Project SQL Editor or Docker container
 
--- 1. Enable standard postgres extensions
+-- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 2. Create standard API roles for PostgREST & Auth integration
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'anon') THEN
-    CREATE ROLE anon NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
-    CREATE ROLE authenticated NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'authenticator') THEN
-    CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD 'postgres-super-secure-authenticator-password';
-  END IF;
-END
-$$;
-
-GRANT anon TO authenticator;
-GRANT authenticated TO authenticator;
-
--- 3. Design Core Game Tables
-CREATE TABLE IF NOT EXISTS public.profiles (
+-- ============================================
+-- Profiles Table (User Management)
+-- ============================================
+CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT,
+  role TEXT DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+  permissions JSONB DEFAULT '{}'::jsonb,
   score INTEGER DEFAULT 0,
   completed_count INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.items (
+-- ============================================
+-- Items Table (Scavenger Hunt Challenges)
+-- ============================================
+CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT NOT NULL,
@@ -43,56 +31,88 @@ CREATE TABLE IF NOT EXISTS public.items (
   icon TEXT DEFAULT 'Sparkles',
   lat DOUBLE PRECISION,
   lng DOUBLE PRECISION,
-  radius DOUBLE PRECISION
+  radius DOUBLE PRECISION,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.submissions (
+-- ============================================
+-- Submissions Table (Hunter Proof/Evidence)
+-- ============================================
+CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
-  user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
-  username TEXT,
-  item_id TEXT REFERENCES public.items(id) ON DELETE CASCADE,
-  image_url TEXT,
-  status TEXT DEFAULT 'pending',
+  user_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  username TEXT NOT NULL,
+  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  image_url TEXT NOT NULL,
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
   ai_explanation TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
   user_lat DOUBLE PRECISION,
   user_lng DOUBLE PRECISION,
-  distance_meters DOUBLE PRECISION
+  distance_meters DOUBLE PRECISION,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS public.messages (
+-- ============================================
+-- Messages Table (Chat/Communication)
+-- ============================================
+CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
-  sender_id TEXT,
-  sender_name TEXT,
-  receiver_id TEXT,
+  sender_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  sender_name TEXT NOT NULL,
+  receiver_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. Expose schema 'public' to API roles and grant permissions
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
+-- ============================================
+-- Indexes for Performance
+-- ============================================
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
+CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
+CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_item_id ON submissions(item_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
+CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON messages(receiver_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO anon, authenticated, authenticator;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, authenticator;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, authenticator;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, authenticator;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, authenticator;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, authenticator;
-
--- 5. Seed some initial Hunt Items into database
-INSERT INTO public.items (id, title, description, points, category, icon, lat, lng, radius)
-VALUES
-  ('item_retro_key', 'A key with history', 'Locate a physical key. It can be an old door key, house key, padlock key, or retro key. Showcase its details up close.', 50, 'Home', 'Key', NULL, NULL, NULL),
-  ('item_qr_code', 'A QR or Barcode', 'Find any QR code or barcode—on a product container, a book cover, a ticket stub, or product label.', 30, 'Tech', 'QrCode', NULL, NULL, NULL),
-  ('item_green_leaf', 'Five-pointed leaf', 'Find a fresh green leaf in nature that has multiple lobes/shapes (like maple, ivy, or similar flora).', 40, 'Nature', 'Leaf', 40.7829, -73.9654, 500),
-  ('item_yellow_book', 'Yellow cover page book', 'Search your shelves or desks for a book with a primary solid yellow or mostly yellow color schema on the front sleeve.', 60, 'Media', 'BookOpen', NULL, NULL, NULL),
-  ('item_cozy_mug', 'Cozy mug or glass of liquid', 'Photograph your current beverage container: a coffee mug, warm tea cup, drinking glass, or insulated bottle.', 25, 'Food', 'Coffee', NULL, NULL, NULL),
-  ('item_red_object', 'Something vividly Red', 'Locate any item around you whose prominent dye color is cherry, crimson, or warning red.', 20, 'Creative', 'Palette', NULL, NULL, NULL),
-  ('item_desktop_gadget', 'A modern desk widget', 'Find an action-ready piece of hardware like computer mouse, noise-canceling headphones, a controller, or USB accessories.', 35, 'Tech', 'Tv', NULL, NULL, NULL),
-  ('item_clock_digit', 'A timepiece showing numbers', 'Capture a wristwatch, smartphone screen clock, desk digital clock, or wall clock to demonstrate the currency of tracking time.', 45, 'Time', 'Clock', 40.7850, -73.9682, 300),
-  ('item_houseplant', 'Succulent or houseplant', 'Photograph an active domestic plant, potted greenery, succulent, or flower arrangement inside or on your window sill.', 35, 'Home', 'Flower2', NULL, NULL, NULL),
-  ('item_metallic', 'Something metallic', 'Locate a shiny metallic item: cutlery, aluminum wrap, metal gears, or a watch dial gleaming under direct light.', 30, 'Home', 'Sparkles', NULL, NULL, NULL),
-  ('item_coin_metal', 'A circular coin', 'A physical coin of any currency denomination, resting flat. It could be cents, pence, euros, or vintage tokens.', 40, 'Finance', 'Coins', NULL, NULL, NULL),
-  ('item_furry_pet', 'A furry friend (or portrait)', 'Photograph a real pet (dog, cat, rabbit) or get creative with a stuffed animal, a toy dinosaur, or pet portrait illustration.', 65, 'Animal', 'Footprints', 40.7812, -73.9665, 1000)
+-- ============================================
+-- Initial Admin User (Optional)
+-- ============================================
+INSERT INTO profiles (id, username, display_name, role, score, completed_count, created_at)
+VALUES (
+  'user_admin',
+  'admin',
+  'Grand Host Admin',
+  'admin',
+  0,
+  0,
+  NOW()
+)
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================
+-- Initial Scavenger Hunt Items (Optional Seed Data)
+-- ============================================
+INSERT INTO items (id, title, description, points, category, icon, lat, lng, radius) VALUES
+('item_gen_gap', 'Generation Gap Smiles', 'Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!', 100, 'Family', 'Users', NULL, NULL, NULL),
+('item_family_heirloom', 'Relic of the Elders', 'Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.', 80, 'History', 'Heart', NULL, NULL, NULL),
+('item_cousins_selfie', 'The Multi-Clan Cousin Shot', 'Take a group selfie with at least three cousins representing at least two different family branches or lineages!', 75, 'Family', 'Camera', NULL, NULL, NULL),
+('item_bbq_boss', 'The Grill Master / Feast Chief', 'Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!', 50, 'Food', 'Flame', NULL, NULL, NULL),
+('item_uncanny_lookalikes', 'Uncanny Family Lookalikes', 'Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.', 60, 'Genetic', 'Laugh', NULL, NULL, NULL),
+('item_retro_moves', 'Old School Cool', 'Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!', 70, 'Entertainment', 'Music', NULL, NULL, NULL),
+('item_group_hug', 'Group Hug Extravaganza', 'A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!', 90, 'Joy', 'Sparkles', NULL, NULL, NULL),
+('item_reunion_recreation', 'Nature Walk Keepsake', 'Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.', 40, 'Nature', 'Leaf', 40.7829, -73.9654, 500),
+('item_family_mascot', 'Reunion Mascot/Pet', 'Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.', 45, 'Animal', 'Footprints', 40.7812, -73.9665, 1000)
+ON CONFLICT (id) DO NOTHING;
+
+-- ============================================
+-- Row-Level Security Policies (Optional - for future auth)
+-- ============================================
+-- These can be enabled later for security if needed
+-- ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE submissions ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+
