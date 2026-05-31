@@ -52,6 +52,12 @@ export interface ChatMessage {
 export interface AppSettings {
   name: string;
   icon: string | null;
+  defaultLat?: number;
+  defaultLng?: number;
+  defaultRadius?: number;
+  aiPromptCriteria?: string;
+  activeInviteCode?: string;
+  inviteRequired?: boolean;
 }
 
 

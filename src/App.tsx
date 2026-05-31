@@ -31,7 +31,10 @@ import {
   Upload,
   RotateCcw,
   User,
-  Shield
+  Shield,
+  Lock,
+  Share2,
+  QrCode
 } from "lucide-react";
 
 export default function App() {
@@ -43,7 +46,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat">("missions");
 
   // Game branding states
-  const [settings, setSettings] = useState<AppSettings>({ name: "WilderHunt", icon: null });
+  const [settings, setSettings] = useState<AppSettings>({ name: "WilderHunt", icon: null, inviteRequired: true, activeInviteCode: "hunt-party-2026" });
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [adminNameInput, setAdminNameInput] = useState("");
   const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
@@ -51,9 +54,14 @@ export default function App() {
   const [adminLngInput, setAdminLngInput] = useState(-73.9682);
   const [adminRadiusInput, setAdminRadiusInput] = useState(500);
   const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("hunt-party-2026");
+  const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
+  const [manualInviteCode, setManualInviteCode] = useState("");
+  const [manualInviteError, setManualInviteError] = useState<string | null>(null);
   const [isAdminSaving, setIsAdminSaving] = useState(false);
   const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
   const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
+  const [copiedInviteLink, setCopiedInviteLink] = useState(false);
 
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
@@ -145,6 +153,20 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   // On mount: Try getting current positioning plus reading cached self-hosted user
   useEffect(() => {
+    // 0. Parse invite search parameter
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const inviteUrlParam = params.get("invite");
+      if (inviteUrlParam) {
+        localStorage.setItem("wilderhunt_invite_code", inviteUrlParam.trim().toLowerCase());
+        // Clean URL params from navigation bar
+        const cleanURL = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, cleanURL);
+      }
+    } catch (e) {
+      console.warn("Failed parsing invite search parameter on mount:", e);
+    }
+
     // 1. Check Geolocation
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -219,7 +241,7 @@ CREATE TABLE IF NOT EXISTS submissions (
           setDbStatus(dStatus);
         }
       } catch (err) {
-        console.error("Polling coordinate check failed:", err);
+        console.error("Polling game state failed:", err);
       }
     };
 
@@ -249,9 +271,21 @@ CREATE TABLE IF NOT EXISTS submissions (
       return;
     }
 
+    if (!window.location.host) {
+      console.warn("Skipping WebSocket connection: window.location.host is empty.");
+      return;
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}`;
-    const ws = new WebSocket(wsUrl);
+    
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (e) {
+      console.warn("Failed to initiate WebSocket connection:", e);
+      return;
+    }
 
     ws.onopen = () => {
       console.log("WebSocket connected to:", wsUrl);
@@ -395,6 +429,10 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminSaveError("Game title cannot be empty");
       return;
     }
+    if (!adminActiveInviteCodeInput.trim()) {
+      setAdminSaveError("Invite code cannot be empty");
+      return;
+    }
     setIsAdminSaving(true);
     setAdminSaveSuccess(false);
     setAdminSaveError(null);
@@ -409,7 +447,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLat: Number(adminLatInput) || 40.7850,
           defaultLng: Number(adminLngInput) || -73.9682,
           defaultRadius: Number(adminRadiusInput) || 500,
-          aiPromptCriteria: adminAiPromptCriteriaInput.trim()
+          aiPromptCriteria: adminAiPromptCriteriaInput.trim(),
+          activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
+          inviteRequired: adminInviteRequiredInput
         })
       });
       if (res.ok) {
@@ -442,7 +482,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLat: 40.7850,
           defaultLng: -73.9682,
           defaultRadius: 500,
-          aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted."
+          aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.",
+          activeInviteCode: "hunt-party-2026",
+          inviteRequired: true
         })
       });
       if (res.ok) {
@@ -454,6 +496,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminLngInput(-73.9682);
         setAdminRadiusInput(500);
         setAdminAiPromptCriteriaInput("Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+        setAdminActiveInviteCodeInput("hunt-party-2026");
+        setAdminInviteRequiredInput(true);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
       } else {
@@ -626,11 +670,100 @@ CREATE TABLE IF NOT EXISTS submissions (
     }, 150);
   };
 
+  const handleManualInviteSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setManualInviteError(null);
+    const typed = manualInviteCode.trim().toLowerCase();
+    if (!typed) {
+      setManualInviteError("Please enter a join code");
+      return;
+    }
+    if (settings && settings.activeInviteCode && typed === settings.activeInviteCode.toLowerCase()) {
+      localStorage.setItem("wilderhunt_invite_code", typed);
+      setManualInviteCode("");
+      setManualInviteError(null);
+    } else {
+      setManualInviteError("Invalid invite code. Please check with the game administrator.");
+    }
+  };
+
   if (!appReady) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#f5f5f0]">
         <Loader2 className="h-8 w-8 text-[#5a5a40] animate-spin" />
         <p className="text-xs text-[#8c8c82] mt-2 font-bold font-mono">Booyaking Self-Hosted Node...</p>
+      </div>
+    );
+  }
+
+  // Check invite-only access
+  const isInviteModeActive = settings.inviteRequired !== false;
+  const savedInviteCode = localStorage.getItem("wilderhunt_invite_code");
+  const isInviteCodeValid = savedInviteCode && settings.activeInviteCode && savedInviteCode === settings.activeInviteCode;
+  const isUserAdmin = (profile?.role === "admin") || (registerName.trim().toLowerCase() === "admin") || (profile?.username?.toLowerCase() === "admin");
+  const isAuthorized = !isInviteModeActive || isInviteCodeValid || isUserAdmin;
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f0] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 animate-fadeIn">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center animate-fadeIn">
+          <div className="mx-auto h-16 w-16 rounded-[24px] bg-[#5a5a40]/15 flex items-center justify-center text-[#5a5a40] shadow-inner mb-6">
+            <Lock className="h-8 w-8 text-[#5a5a40] animate-pulse" />
+          </div>
+          <h2 className="text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
+            Access Restricted
+          </h2>
+          <p className="mt-3 text-sm text-[#8c8c82] max-w-sm mx-auto font-medium leading-relaxed">
+            This scavenger adventure is private. Only hunters with an active invitation key or scanned event QR code can access the lobbies and tasks.
+          </p>
+        </div>
+
+        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+          <div className="bg-white py-8 px-6 shadow-md border border-[#e5e5dd] rounded-[32px] space-y-6">
+            <div className="bg-[#5a5a40]/5 p-4 rounded-2xl border border-[#5a5a40]/10 text-center">
+              <span className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block font-sans">How to Join</span>
+              <p className="text-xs text-[#5a5a40] font-medium leading-relaxed mt-1.5 font-sans">
+                Please contact the Game Administrator host to receive an invite URL or scan the official event QR code display on-site.
+              </p>
+            </div>
+
+            <form onSubmit={handleManualInviteSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
+                  Have an invite code?
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter join code (e.g. hunt-lobby-2026)"
+                  value={manualInviteCode}
+                  onChange={(e) => setManualInviteCode(e.target.value)}
+                  className="w-full text-xs bg-[#f5f5f0]/50 border border-[#dcdcd4] rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-mono text-center tracking-widest uppercase font-bold text-[#2d2d2d]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3 px-4 rounded-xl text-sm font-bold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/15 cursor-pointer flex items-center justify-center gap-1.5 font-sans"
+              >
+                <Shield className="h-4 w-4" />
+                Verify Access Key
+              </button>
+            </form>
+
+            {manualInviteError && (
+              <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex gap-2 border border-red-100 font-sans">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-500" />
+                <span className="font-semibold">{manualInviteError}</span>
+              </div>
+            )}
+
+            <div className="text-center pt-2 border-t border-brand-border/60">
+              <p className="text-[9px] text-[#8c8c82] uppercase tracking-widest font-mono">
+                Host Operator: contact administrator
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -779,6 +912,8 @@ CREATE TABLE IF NOT EXISTS submissions (
                     setAdminLngInput(settings.defaultLng ?? -73.9682);
                     setAdminRadiusInput(settings.defaultRadius ?? 500);
                     setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+                    setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
+                    setAdminInviteRequiredInput(settings.inviteRequired !== false);
                   }
                 }}
                 type="button"
@@ -952,6 +1087,108 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <p className="text-[9px] text-[#8c8c82]">
                   Defines custom rules, funny personality constraints, or strict verification parameters parsed directly by the server-side Gemini prompt.
                 </p>
+              </div>
+
+              {/* Invite-Only and QR Code parameters (Admin Settings) */}
+              <div className="space-y-3 pt-3 border-t border-[#e5e5dd]/60">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  🛡️ Invite-Only Security (QR Code Auth)
+                </label>
+                
+                <div className="space-y-3 bg-[#f5f5f0]/50 p-4 rounded-2xl border border-[#dcdcd4]">
+                  {/* Master switch */}
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={adminInviteRequiredInput}
+                      onChange={(e) => setAdminInviteRequiredInput(e.target.checked)}
+                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                    />
+                    <div className="leading-none">
+                      <span className="text-xs font-bold text-[#5a5a40] block">Require Invite Link to Participate</span>
+                      <span className="text-[9px] text-[#8c8c82]">If enabled, hunters must scan the QR code or visit the invite URL once to unlock access.</span>
+                    </div>
+                  </label>
+
+                  {/* Code Input */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-bold text-[#8c8c82] uppercase tracking-widest block font-sans">Active Invite Token / Code</span>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. secret-hunt-2026"
+                        value={adminActiveInviteCodeInput}
+                        onChange={(e) => setAdminActiveInviteCodeInput(e.target.value.toLowerCase().trim().replace(/[^a-z0-9_-]/g, ''))}
+                        className="flex-1 text-xs bg-white border border-[#dcdcd4] rounded-xl px-3 py-1.5 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rand = `hunt-${Math.floor(1000 + Math.random() * 9000)}`;
+                          setAdminActiveInviteCodeInput(rand);
+                        }}
+                        className="px-2.5 py-1 bg-[#5a5a40]/10 hover:bg-[#5a5a40]/20 text-[#5a5a40] rounded-xl text-[10px] font-bold transition cursor-pointer select-none"
+                      >
+                        Roll Code
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Shareable URL with Copy Button */}
+                  {adminActiveInviteCodeInput.trim() && (
+                    <div className="space-y-1 pt-1.5 border-t border-[#dcdcd4]/60">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold text-[#8c8c82] uppercase tracking-widest block font-sans">Invite Link (Hold / Copy)</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentInviteLink = `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(adminActiveInviteCodeInput.trim().toLowerCase())}`;
+                            navigator.clipboard.writeText(currentInviteLink);
+                            setCopiedInviteLink(true);
+                            setTimeout(() => setCopiedInviteLink(false), 2000);
+                          }}
+                          className="text-[10px] font-bold text-[#5a5a40] hover:underline flex items-center gap-1 cursor-pointer select-none"
+                        >
+                          {copiedInviteLink ? (
+                            <>
+                              <Check className="h-3 w-3 text-emerald-600 animate-pulse" />
+                              <span className="text-emerald-600">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3 w-3" />
+                              <span>Copy URL</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <div className="bg-white/80 p-2 rounded-xl text-[10px] font-mono text-[#5a5a40] border border-[#e5e5dd] truncate select-all" title="Click to copy link">
+                        {`${window.location.protocol}//${window.location.host}/?invite=${adminActiveInviteCodeInput.trim().toLowerCase()}`}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* QR Code generator */}
+                  {adminActiveInviteCodeInput.trim() && (
+                    <div className="space-y-1.5 pt-2.5 border-t border-[#dcdcd4]/60 flex flex-col items-center">
+                      <span className="text-[9px] font-bold text-[#8c8c82] uppercase tracking-widest block self-start font-sans">Event Portal QR Code</span>
+                      <div className="bg-white p-2.5 rounded-2xl border border-[#dcdcd4] shadow-sm flex items-center justify-center">
+                        <img
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
+                            `${window.location.protocol}//${window.location.host}/?invite=${adminActiveInviteCodeInput.trim().toLowerCase()}`
+                          )}`}
+                          alt="Invite QR Code"
+                          className="w-36 h-36 border border-gray-100 object-contain rounded-lg"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                      <p className="text-[8px] text-center text-[#8c8c82] italic leading-snug font-sans">
+                        Let users scan this code with their phones to instantly verify their access and unlock registration!
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Result Notifications */}

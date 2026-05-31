@@ -941,6 +941,8 @@ export interface AppSettings {
   defaultLng?: number;
   defaultRadius?: number;
   aiPromptCriteria?: string;
+  activeInviteCode?: string;
+  inviteRequired?: boolean;
 }
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
@@ -956,7 +958,9 @@ export function getAppSettings(): AppSettings {
         defaultLat: Number(parsed.defaultLat) || 40.7850,
         defaultLng: Number(parsed.defaultLng) || -73.9682,
         defaultRadius: Number(parsed.defaultRadius) || 500,
-        aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted."
+        aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.",
+        activeInviteCode: parsed.activeInviteCode || "hunt-party-2026",
+        inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true
       };
     }
   } catch (err) {
@@ -968,7 +972,9 @@ export function getAppSettings(): AppSettings {
     defaultLat: 40.7850,
     defaultLng: -73.9682,
     defaultRadius: 500,
-    aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted."
+    aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.",
+    activeInviteCode: "hunt-party-2026",
+    inviteRequired: true
   };
 }
 

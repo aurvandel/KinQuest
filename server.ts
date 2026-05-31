@@ -82,7 +82,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria } = req.body;
+  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, activeInviteCode, inviteRequired } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -92,7 +92,9 @@ app.post("/api/settings", (req, res) => {
     defaultLat: defaultLat !== undefined ? Number(defaultLat) : undefined,
     defaultLng: defaultLng !== undefined ? Number(defaultLng) : undefined,
     defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : undefined,
-    aiPromptCriteria: aiPromptCriteria !== undefined ? String(aiPromptCriteria).trim() : undefined
+    aiPromptCriteria: aiPromptCriteria !== undefined ? String(aiPromptCriteria).trim() : undefined,
+    activeInviteCode: activeInviteCode !== undefined ? String(activeInviteCode).trim().toLowerCase() : undefined,
+    inviteRequired: inviteRequired !== undefined ? !!inviteRequired : undefined
   };
   saveAppSettings(updated);
   res.json({ success: true, settings: updated });
