@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # 1. WilderHunt Node.js Application container
+  # ----------------------------------------------------
+  wilderhunt-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wilderhunt-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Links automatically to the internal Kong API gateway
+      - SUPABASE_URL=http://kong:8000
+      - SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlLiwiaWF0IjoxNTcwMDAwMDAwLCJleHAiOjIyMDAwMDAwMDB9.ji2O3Haw3MbfMf3smRQl-0QysLmUCcFZQKc9-rRxxbo
+      # Place your personal Gemini API key here for AI-powered verification
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      - kong
+      - db
+
+  # ----------------------------------------------------
+  # 2. Local Supabase: PostgreSQL Database Engine
+  # ----------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: supabase-local-db
+    restart: always
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres-local-development-password-must-be-secure
+    ports:
+      - "5432:5432"
+    volumes:
+      # Auto-run table creations, schema configurations and seeds on initial container birth
+      - ./supabase/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - supabase-db-data:/var/lib/postgresql/data
+
+  # ----------------------------------------------------
+  # 3. Local Supabase: PostgREST API Generator
+  # ----------------------------------------------------
+  rest:
+    image: postgrest/postgrest:v12.0.1
+    container_name: supabase-local-rest
+    restart: always
+    environment:
+      # Handshake connection to postgres database via our secure authenticator role
+      - PGRST_DB_URI=postgres://authenticator:postgres-super-secure-authenticator-password@db:5432/postgres
+      - PGRST_DB_SCHEMAS=public
+      - PGRST_DB_ANON_ROLE=anon
+      - PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long
+    depends_on:
+      - db
+
+  # ----------------------------------------------------
+  # 4. Local Supabase: Kong Declarative Gateway
+  # ----------------------------------------------------
+  kong:
+    image: kong:2.8.4-alpine
+    container_name: supabase-local-kong
+    restart: always
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/usr/local/kong/kong.yml
+    volumes:
+      - ./supabase/kong.yml:/usr/local/kong/kong.yml:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rest
+
+volumes:
+  supabase-db-data:

@@ -1,0 +1,1394 @@
+import React, { useState, useEffect } from "react";
+import { ScavengerItem, PlayerProfile, Submission, ChatMessage, AppSettings } from "./types";
+import { MissionsList } from "./components/MissionsList";
+import { Leaderboard } from "./components/Leaderboard";
+import { Feed } from "./components/Feed";
+import { GameMap } from "./components/GameMap";
+import { Chat } from "./components/Chat";
+
+import {
+  Flame,
+  Award,
+  Users,
+  LogIn,
+  LogOut,
+  Trophy,
+  Loader2,
+  ListFilter,
+  UserCheck,
+  Zap,
+  PartyPopper,
+  Sparkles,
+  Map as MapIcon,
+  Compass,
+  AlertCircle,
+  Database,
+  Copy,
+  Check,
+  ExternalLink,
+  MessageSquare,
+  Settings,
+  Upload,
+  RotateCcw,
+  User,
+  Shield
+} from "lucide-react";
+
+export default function App() {
+  const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [players, setPlayers] = useState<PlayerProfile[]>([]);
+  const [items, setItems] = useState<ScavengerItem[]>([]);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [appReady, setAppReady] = useState(false);
+  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat">("missions");
+
+  // Game branding states
+  const [settings, setSettings] = useState<AppSettings>({ name: "WilderHunt", icon: null });
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [adminNameInput, setAdminNameInput] = useState("");
+  const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
+  const [adminLatInput, setAdminLatInput] = useState(40.7850);
+  const [adminLngInput, setAdminLngInput] = useState(-73.9682);
+  const [adminRadiusInput, setAdminRadiusInput] = useState(500);
+  const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+  const [isAdminSaving, setIsAdminSaving] = useState(false);
+  const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
+  const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
+
+  // User Settings & Permissions Dashboard states
+  const [userDashboardOpen, setUserDashboardOpen] = useState(false);
+  const [profileDisplayNameInput, setProfileDisplayNameInput] = useState("");
+  const [profileRoleInput, setProfileRoleInput] = useState<"user" | "admin" | "">("user");
+  const [profileShareLocation, setProfileShareLocation] = useState(true);
+  const [profileAllowNotifications, setProfileAllowNotifications] = useState(true);
+  const [profileMakePrivate, setProfileMakePrivate] = useState(false);
+  const [profileExtendedAiJudge, setProfileExtendedAiJudge] = useState(false);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
+  const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+
+  // Chat States
+  const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [onlinePlayers, setOnlinePlayers] = useState<{ id: string; username: string }[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Geolocation states
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
+  const [locationType, setLocationType] = useState<"gps" | "simulated">("gps");
+
+  // Expanded card linkage
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+
+  // Spinners / error maps per mission
+  const [isSubmittingMap, setIsSubmittingMap] = useState<{ [itemId: string]: boolean }>({});
+  const [submitErrorMap, setSubmitErrorMap] = useState<{ [itemId: string]: string | null }>({});
+
+  const [registerName, setRegisterName] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // DB diagnostic status
+  const [dbStatus, setDbStatus] = useState<{ mode: "supabase" | "local_fallback"; error: string | null }>({
+    mode: "local_fallback",
+    error: null
+  });
+  const [sqlVisible, setSqlVisible] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  const SQL_SCHEMA = `-- WilderHunt Supabase Relay Initialization Script
+-- Execute this schema inside your Supabase Project SQL Editor:
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  display_name TEXT,
+  role TEXT DEFAULT 'user',
+  permissions JSONB DEFAULT '{}'::jsonb,
+  score INTEGER DEFAULT 0,
+  completed_count INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS items (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  points INTEGER DEFAULT 10,
+  category TEXT DEFAULT 'General',
+  icon TEXT DEFAULT 'Sparkles',
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  radius DOUBLE PRECISION
+);
+
+CREATE TABLE IF NOT EXISTS submissions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  username TEXT,
+  item_id TEXT,
+  image_url TEXT,
+  status TEXT DEFAULT 'pending',
+  ai_explanation TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  user_lat DOUBLE PRECISION,
+  user_lng DOUBLE PRECISION,
+  distance_meters DOUBLE PRECISION
+);`;
+
+  const copySqlToClipboard = () => {
+    navigator.clipboard.writeText(SQL_SCHEMA);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 2000);
+  };
+
+  // On mount: Try getting current positioning plus reading cached self-hosted user
+  useEffect(() => {
+    // 1. Check Geolocation
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLat(position.coords.latitude);
+          setUserLng(position.coords.longitude);
+          setLocationType("gps");
+        },
+        (error) => {
+          console.warn("Browser GPS blocked, falling back to simulated NYC coordinates.");
+          setUserLat(40.7829);
+          setUserLng(-73.9654);
+          setLocationType("simulated");
+        }
+      );
+    } else {
+      setUserLat(40.7829);
+      setUserLng(-73.9654);
+      setLocationType("simulated");
+    }
+
+    // 2. Load game profile
+    const cachedUid = localStorage.getItem("scavenger_uid");
+    const cachedUser = localStorage.getItem("scavenger_user");
+
+    if (cachedUid && cachedUser) {
+      try {
+        setProfile(JSON.parse(cachedUser));
+      } catch (e) {
+        localStorage.removeItem("scavenger_uid");
+        localStorage.removeItem("scavenger_user");
+      }
+    }
+    setAppReady(true);
+  }, []);
+
+  // Central Game State Synchronizer (Polling loop every 2.5 seconds for real-time dynamic feel!)
+  useEffect(() => {
+    let intervalId: any;
+
+    const fetchGameState = async () => {
+      try {
+        const res = await fetch("/api/game-state");
+        if (res.ok) {
+          const data = await res.json();
+          setPlayers(data.users || []);
+          setItems(data.items || []);
+          setSubmissions(data.submissions || []);
+          if (data.settings) {
+            setSettings(data.settings);
+          }
+
+          // Sync active user profile score dynamically
+          const cachedUid = localStorage.getItem("scavenger_uid");
+          if (cachedUid) {
+            const serverProfile = (data.users || []).find((u: PlayerProfile) => u.id === cachedUid);
+            if (serverProfile) {
+              setProfile(serverProfile);
+              localStorage.setItem("scavenger_user", JSON.stringify(serverProfile));
+            } else {
+              // Server wiped user data (e.g. during restart), need to re-register
+              console.warn("Local profile was not found in server state database. Resetting auth.");
+              handleSignOut();
+            }
+          }
+        }
+
+        // Fetch DB Mode Status
+        const dbRes = await fetch("/api/db-status");
+        if (dbRes.ok) {
+          const dStatus = await dbRes.json();
+          setDbStatus(dStatus);
+        }
+      } catch (err) {
+        console.error("Polling coordinate check failed:", err);
+      }
+    };
+
+    fetchGameState();
+    intervalId = setInterval(fetchGameState, 2500);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // Download chat logs initially
+  useEffect(() => {
+    if (!profile) return;
+    
+    fetch("/api/chat-history")
+      .then(res => res.json())
+      .then(data => setChatMessages(data || []))
+      .catch(err => console.error("Failed to load chat history:", err));
+  }, [profile]);
+
+  // Connect Real-time WebSocket overlay
+  useEffect(() => {
+    if (!profile) {
+      if (socket) {
+        socket.close();
+        setSocket(null);
+      }
+      return;
+    }
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log("WebSocket connected to:", wsUrl);
+      ws.send(JSON.stringify({
+        type: "join",
+        userId: profile.id,
+        username: profile.username
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "message") {
+          setChatMessages((prev) => {
+            if (prev.some(m => m.id === payload.message.id)) return prev;
+            return [...prev, payload.message];
+          });
+          
+          if (activeTab !== "chat") {
+            setUnreadCount((c) => c + 1);
+          }
+        } else if (payload.type === "online_users") {
+          setOnlinePlayers(payload.users || []);
+        }
+      } catch (e) {
+        console.error("Failed to parse WebSocket message:", e);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket connection closed.");
+      setSocket(null);
+    };
+
+    ws.onerror = (err) => {
+      console.error("WebSocket critical error:", err);
+    };
+
+    setSocket(ws);
+
+    return () => {
+      ws.close();
+    };
+  }, [profile, activeTab]);
+
+  // Reset unread counts when clicking chat tab
+  useEffect(() => {
+    if (activeTab === "chat") {
+      setUnreadCount(0);
+    }
+  }, [activeTab]);
+
+  const handleSendMessage = (text: string, receiverId: string | null) => {
+    if (socket && socket.readyState === WebSocket.OPEN && profile) {
+      socket.send(JSON.stringify({
+        type: "send_message",
+        userId: profile.id,
+        username: profile.username,
+        receiverId,
+        text
+      }));
+    }
+  };
+
+  // Pre-populate admin inputs when settings load or when opening the panel
+  useEffect(() => {
+    if (settings) {
+      setAdminNameInput(settings.name);
+      setAdminIconInput(settings.icon);
+    }
+  }, [settings, adminPanelOpen]);
+
+  // Pre-populate user profile inputs when profile loads or when opening user dashboard
+  useEffect(() => {
+    if (profile) {
+      setProfileDisplayNameInput(profile.displayName || profile.username || "");
+      setProfileRoleInput(profile.role || "user");
+      setProfileShareLocation(profile.permissions?.shareLocation !== false);
+      setProfileAllowNotifications(profile.permissions?.allowNotifications !== false);
+      setProfileMakePrivate(profile.permissions?.makePrivate === true);
+      setProfileExtendedAiJudge(profile.permissions?.extendedAiJudge === true);
+    }
+  }, [profile, userDashboardOpen]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile) return;
+    if (!profileDisplayNameInput.trim()) {
+      setProfileSaveError("Display name cannot be empty");
+      return;
+    }
+    setIsProfileSaving(true);
+    setProfileSaveSuccess(false);
+    setProfileSaveError(null);
+
+    const updatedPermissions = {
+      shareLocation: profileShareLocation,
+      allowNotifications: profileAllowNotifications,
+      makePrivate: profileMakePrivate,
+      extendedAiJudge: profileExtendedAiJudge
+    };
+
+    try {
+      const res = await fetch("/api/profile/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: profile.id,
+          displayName: profileDisplayNameInput.trim(),
+          role: profileRoleInput,
+          permissions: updatedPermissions
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const updatedProf = data.profile;
+        setProfile(updatedProf);
+        localStorage.setItem("scavenger_user", JSON.stringify(updatedProf));
+        
+        // Also update players list immediately so local updates mirror on leaderboard
+        setPlayers((prev) => prev.map(p => p.id === updatedProf.id ? updatedProf : p));
+        
+        setProfileSaveSuccess(true);
+        setTimeout(() => setProfileSaveSuccess(false), 3000);
+      } else {
+        const errData = await res.json();
+        setProfileSaveError(errData.error || "Failed to update profile settings");
+      }
+    } catch (err: any) {
+      setProfileSaveError(err.message || "Network error saving profile");
+    } finally {
+      setIsProfileSaving(false);
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminNameInput.trim()) {
+      setAdminSaveError("Game title cannot be empty");
+      return;
+    }
+    setIsAdminSaving(true);
+    setAdminSaveSuccess(false);
+    setAdminSaveError(null);
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: adminNameInput.trim(),
+          icon: adminIconInput,
+          defaultLat: Number(adminLatInput) || 40.7850,
+          defaultLng: Number(adminLngInput) || -73.9682,
+          defaultRadius: Number(adminRadiusInput) || 500,
+          aiPromptCriteria: adminAiPromptCriteriaInput.trim()
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSettings(data.settings);
+        setAdminSaveSuccess(true);
+        setTimeout(() => setAdminSaveSuccess(false), 3000);
+      } else {
+        const errData = await res.json();
+        setAdminSaveError(errData.error || "Failed to update branding settings");
+      }
+    } catch (err: any) {
+      setAdminSaveError(err.message || "Network error saving settings");
+    } finally {
+      setIsAdminSaving(false);
+    }
+  };
+
+  const handleResetSettings = async () => {
+    setIsAdminSaving(true);
+    setAdminSaveSuccess(false);
+    setAdminSaveError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "WilderHunt",
+          icon: null,
+          defaultLat: 40.7850,
+          defaultLng: -73.9682,
+          defaultRadius: 500,
+          aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted."
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSettings(data.settings);
+        setAdminNameInput("WilderHunt");
+        setAdminIconInput(null);
+        setAdminLatInput(40.7850);
+        setAdminLngInput(-73.9682);
+        setAdminRadiusInput(500);
+        setAdminAiPromptCriteriaInput("Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+        setAdminSaveSuccess(true);
+        setTimeout(() => setAdminSaveSuccess(false), 3000);
+      } else {
+        const errData = await res.json();
+        setAdminSaveError(errData.error || "Failed to reset settings");
+      }
+    } catch (err: any) {
+      setAdminSaveError(err.message || "Network error resetting settings");
+    } finally {
+      setIsAdminSaving(false);
+    }
+  };
+
+  const handleIconUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      setAdminSaveError("Icon image file should be under 2MB for optimized storage.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAdminIconInput(reader.result as string);
+    };
+    reader.onerror = () => {
+      setAdminSaveError("Failed to read image file.");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Self-hosted anonymous guest registration
+  const handleRegisterInputSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUsername = registerName.trim();
+    if (!cleanUsername) {
+      setAuthError("Please enter a callsign nickname!");
+      return;
+    }
+
+    setAuthError(null);
+    setIsAuthLoading(true);
+
+    // Only 'admin' username gets the 'admin' role. Everything else is a hunter/user.
+    const resolvedRole = cleanUsername.toLowerCase() === "admin" ? "admin" : "user";
+
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: cleanUsername,
+          role: resolvedRole
+        })
+      });
+
+      if (!response.ok) {
+        const errPayload = await response.json();
+        throw new Error(errPayload.error || "Authentication gateway reject.");
+      }
+
+      const activeUser = await response.json();
+      localStorage.setItem("scavenger_uid", activeUser.id);
+      localStorage.setItem("scavenger_user", JSON.stringify(activeUser));
+      setProfile(activeUser);
+
+    } catch (err: any) {
+      setAuthError(err.message || "Failed to reach self-hosted api endpoint.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem("scavenger_uid");
+    localStorage.removeItem("scavenger_user");
+    setProfile(null);
+  };
+
+  // Submit base64 photo with current coordinates to server
+  const handleUploadSubmission = async (itemId: string, base64Image: string) => {
+    if (!profile) return;
+
+    setSubmitErrorMap((prev) => ({ ...prev, [itemId]: null }));
+    setIsSubmittingMap((prev) => ({ ...prev, [itemId]: true }));
+
+    try {
+      const response = await fetch("/api/verify-submission", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: profile.id,
+          itemId: itemId,
+          imageBase64: base64Image,
+          userLat: userLat,
+          userLng: userLng
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Verification engine failed.");
+      }
+
+      const payload = await response.json();
+      
+      if (payload.submission.status === "rejected") {
+        throw new Error(payload.explanation || "Verification declined by Referee.");
+      }
+
+      // Success approval: state updates automatically on next polling sweep!
+
+    } catch (err: any) {
+      console.error("Submission grading error:", err);
+      setSubmitErrorMap((prev) => ({
+        ...prev,
+        [itemId]: err instanceof Error ? err.message : "Proof check declined. Retry."
+      }));
+    } finally {
+      setIsSubmittingMap((prev) => ({ ...prev, [itemId]: false }));
+    }
+  };
+
+  // Delete live submissions
+  const handleDeleteSubmission = async (subId: string) => {
+    try {
+      const response = await fetch(`/api/submissions/${subId}`, {
+        method: "DELETE"
+      });
+      if (!response.ok) {
+        throw new Error("Could not delete proof from self-hosted store.");
+      }
+      // Success: automatically visual refresh occurs in periodic loop!
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Create customized challenge
+  const handleAddChallenge = async (newChallenge: Omit<ScavengerItem, "id">) => {
+    const response = await fetch("/api/challenges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newChallenge)
+    });
+
+    if (!response.ok) {
+      throw new Error("Challenge registration failed.");
+    }
+    // Saved in DB!
+  };
+
+  // User simulated GPS movement updater
+  const handleSimulateCoordinates = (lat: number, lng: number) => {
+    setUserLat(lat);
+    setUserLng(lng);
+    setLocationType("simulated");
+  };
+
+  // Map clicks link directly to challenge cards and expands them!
+  const handleSelectChallengeFromMap = (itemId: string) => {
+    setActiveTab("missions");
+    // Trigger scroll-to frame
+    setTimeout(() => {
+      const element = document.getElementById(`challenge-card-${itemId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 150);
+  };
+
+  if (!appReady) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#f5f5f0]">
+        <Loader2 className="h-8 w-8 text-[#5a5a40] animate-spin" />
+        <p className="text-xs text-[#8c8c82] mt-2 font-bold font-mono">Booyaking Self-Hosted Node...</p>
+      </div>
+    );
+  }
+
+  // Welcoming Gate
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f0] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+          <div className="mx-auto h-12 w-12 rounded-2xl bg-[#5a5a40] flex items-center justify-center shadow-lg text-white font-serif overflow-hidden">
+            {settings.icon ? (
+              <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <Compass className="h-6 w-6 animate-spin-slow text-[#f5f5f0]" />
+            )}
+          </div>
+          <h2 className="mt-6 text-center text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
+            {settings.name}
+          </h2>
+          <p className="mt-2 text-center text-sm text-[#8c8c82] font-medium leading-relaxed max-w-sm mx-auto">
+            A self-hosted mobile scavenger adventure. Locate geofenced checkpoints, photograph proof, and let our AI Judge score your hunt live.
+          </p>
+        </div>
+
+        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+          <div className="bg-white py-8 px-6 shadow-sm border border-brand-border rounded-[32px] space-y-6">
+            <form onSubmit={handleRegisterInputSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
+                  Choose callsign / nickname
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={18}
+                  placeholder="e.g. Pathfinder_77"
+                  value={registerName}
+                  onChange={(e) => setRegisterName(e.target.value)}
+                  className="w-full text-sm bg-[#f5f5f0]/50 border border-brand-border rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isAuthLoading}
+                className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/10 cursor-pointer disabled:opacity-50"
+              >
+                {isAuthLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4" />
+                )}
+                Enter Self-Hosted Game Lobby
+              </button>
+            </form>
+
+            {authError && (
+              <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex items-center gap-2 border border-red-100">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <p className="font-semibold">{authError}</p>
+              </div>
+            )}
+
+            <div className="text-center pt-2 border-t border-brand-border/60">
+              <p className="text-[10px] text-brand-muted tracking-wider uppercase font-mono">
+                Running in isolated Docker environment
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#f5f5f0] text-[#2d2d2d] font-sans flex flex-col">
+      {/* Top Header navbar with score indicators */}
+      <header className="h-16 px-4 sm:px-8 flex items-center justify-between border-b border-brand-border bg-[#f5f5f0]/95 backdrop-blur-md sticky top-0 z-[1000] shrink-0">
+        <div className="flex items-center space-x-3">
+          <div className="w-8 h-8 bg-[#5a5a40] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+            {settings.icon ? (
+              <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
+            )}
+          </div>
+          <div>
+            <h1 className="text-sm sm:text-base font-serif italic text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[120px] sm:max-w-[200px]">
+              {settings.name}
+            </h1>
+            <span className="text-[9px] font-mono uppercase tracking-widest text-brand-muted">Docker Node</span>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-4 sm:space-x-6">
+          <div className="hidden sm:block text-right">
+            <p className="text-[9px] uppercase tracking-widest font-bold text-brand-muted">Active Hunter</p>
+            <p className="text-xs font-semibold">{profile.username}</p>
+          </div>
+
+          <div className="h-8 w-[1px] bg-[#dcdcd4]"></div>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Real-time Score Badge */}
+            <div className="bg-[#5a5a40] text-[#f5f5f0] px-3.5 py-1.5 rounded-xl flex items-center gap-2 shadow-sm shadow-[#5a5a40]/10">
+              <Flame className="h-4 w-4 text-[#c27d56] fill-[#c27d56] animate-pulse" />
+              <div className="text-left leading-none">
+                <span className="text-[8px] uppercase font-bold tracking-widest block opacity-75">TALLY</span>
+                <span className="text-xs font-black font-mono">{profile.score} PTS</span>
+              </div>
+            </div>
+
+            {/* User Preferences Dashboard Button */}
+            <button
+              onClick={() => {
+                setUserDashboardOpen(!userDashboardOpen);
+                setProfileSaveSuccess(false);
+                setProfileSaveError(null);
+                if (profile) {
+                  setProfileDisplayNameInput(profile.displayName || profile.username || "");
+                  setProfileRoleInput(profile.role || "user");
+                }
+              }}
+              type="button"
+              className={`p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                userDashboardOpen
+                  ? "bg-[#5a5a40]/20 text-[#5a5a40] border-[#5a5a40]/30 font-bold"
+                  : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
+              }`}
+              title="User Settings & Persona Dashboard"
+            >
+              <User className="h-4 w-4" />
+            </button>
+
+            {/* Admin Branding Settings Cog */}
+            {profile?.role === "admin" && (
+              <button
+                onClick={() => {
+                  setAdminPanelOpen(!adminPanelOpen);
+                  setAdminSaveSuccess(false);
+                  setAdminSaveError(null);
+                  if (settings) {
+                    setAdminNameInput(settings.name);
+                    setAdminIconInput(settings.icon);
+                    setAdminLatInput(settings.defaultLat ?? 40.7850);
+                    setAdminLngInput(settings.defaultLng ?? -73.9682);
+                    setAdminRadiusInput(settings.defaultRadius ?? 500);
+                    setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+                  }
+                }}
+                type="button"
+                className={`p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                  adminPanelOpen
+                    ? "bg-[#5a5a40] text-white border-transparent"
+                    : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
+                }`}
+                title="Branding Identity Control Panel"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            )}
+
+            <button
+              onClick={handleSignOut}
+              type="button"
+              className="text-[#8c8c82] hover:text-red-600 transition p-2 hover:bg-white rounded-xl border border-transparent hover:border-brand-border/40 shrink-0"
+              title="Leave adventure lobby"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+        {/* Admin Customizer Control Console */}
+        {adminPanelOpen && (
+          <div id="admin-branding-panel" className="bg-white border-2 border-[#5a5a40]/30 rounded-[32px] p-6 shadow-md max-w-md mx-auto space-y-4 animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-[#e5e5dd] pb-3">
+              <div className="flex items-center gap-2">
+                <Settings className="h-5 w-5 text-[#5a5a40]" />
+                <h2 className="text-xs font-bold uppercase tracking-widest text-[#5a5a40] font-sans">Identity Manager</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminPanelOpen(false)}
+                className="text-[11px] font-bold text-brand-muted hover:text-brand-dark cursor-pointer transition"
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              {/* Name Field */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Scavenger Game Title
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    maxLength={32}
+                    placeholder="e.g. Stewart Quest"
+                    value={adminNameInput}
+                    onChange={(e) => setAdminNameInput(e.target.value)}
+                    className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl pl-4 pr-32 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-mono font-bold"
+                  />
+                  {/* Preset quick helper to suggest "Stewart Quest" */}
+                  <button
+                    type="button"
+                    onClick={() => setAdminNameInput("Stewart Quest")}
+                    className="absolute right-2 top-2 px-2 py-1 bg-[#5a5a40]/10 hover:bg-[#5a5a40]/20 text-[#5a5a40] rounded-lg text-[9px] font-bold font-sans transition cursor-pointer select-none"
+                    title="Pre-fill with example name"
+                  >
+                    Use: Stewart Quest
+                  </button>
+                </div>
+              </div>
+
+              {/* Icon Uploader */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Custom Branding Logo Icon
+                </label>
+                
+                <div className="flex items-center gap-3 bg-[#f5f5f0]/40 p-3 rounded-2xl border border-dashed border-[#dcdcd4]">
+                  {/* Current/New preview */}
+                  <div className="w-12 h-12 rounded-xl bg-[#5a5a40] flex items-center justify-center text-white text-xs overflow-hidden shrink-0 shadow-sm border border-[#5a5a40]/20">
+                    {adminIconInput ? (
+                      <img src={adminIconInput} alt="Custom Logo Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-4 h-4 border-2 border-white rounded-sm rotate-45 animate-spin-slow" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 space-y-1">
+                    <input
+                      type="file"
+                      id="branding-logo-file"
+                      accept="image/*"
+                      onChange={handleIconUploadChange}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="branding-logo-file"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d2d2c8] hover:border-[#5a5a40] text-[10px] font-bold rounded-lg text-[#5a5a40] cursor-pointer transition select-none"
+                    >
+                      <Upload className="h-3 w-3" />
+                      Choose Image...
+                    </label>
+                    <p className="text-[9px] text-[#8c8c82]">
+                      Supports PNG, JPG (under 2MB). Fits square grid.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Map Centering Configuration (Front-end Settings) */}
+              <div className="space-y-2 pt-2 border-t border-[#e5e5dd]/60">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Default Map Center GPS (Front-end)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-bold text-[#8c8c82]">Latitude</span>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={adminLatInput}
+                      onChange={(e) => setAdminLatInput(parseFloat(e.target.value) || 0)}
+                      className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-bold text-[#8c8c82]">Longitude</span>
+                    <input
+                      type="number"
+                      step="any"
+                      required
+                      value={adminLngInput}
+                      onChange={(e) => setAdminLngInput(parseFloat(e.target.value) || 0)}
+                      className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Default Geofencing Radius (Front-end & Back-end Settings) */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Default Geofencing Radius (meters)
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={1}
+                  value={adminRadiusInput}
+                  onChange={(e) => setAdminRadiusInput(parseInt(e.target.value) || 100)}
+                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono"
+                />
+              </div>
+
+              {/* Backend AI Referee Instructions (Back-end settings) */}
+              <div className="space-y-1.5 pt-2 border-t border-[#e5e5dd]/60">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  AI Judge Prompt Criteria (Backend Settings)
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={adminAiPromptCriteriaInput}
+                  onChange={(e) => setAdminAiPromptCriteriaInput(e.target.value)}
+                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2.5 outline-none font-sans leading-relaxed text-[#2d2d2d]"
+                  placeholder="Set AI behavior rules..."
+                />
+                <p className="text-[9px] text-[#8c8c82]">
+                  Defines custom rules, funny personality constraints, or strict verification parameters parsed directly by the server-side Gemini prompt.
+                </p>
+              </div>
+
+              {/* Result Notifications */}
+              {adminSaveSuccess && (
+                <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-medium border border-emerald-100 flex items-center gap-1.5 animate-bounce">
+                  <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Branding identity saved! Syncing screens...</span>
+                </div>
+              )}
+
+              {adminSaveError && (
+                <div className="p-2.5 bg-red-50 text-red-700 rounded-xl text-[11px] font-medium border border-red-100 flex items-center gap-1.5">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+                  <span>{adminSaveError}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={isAdminSaving}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isAdminSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  Save Custom Branding
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleResetSettings}
+                  disabled={isAdminSaving}
+                  className="py-2.5 px-3 rounded-xl text-xs font-semibold text-[#8c8c82] hover:text-[#5a5a40] hover:bg-[#f5f5f0] border border-transparent hover:border-[#dcdcd4]/60 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="Reset to default settings"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* User Account & Persona Settings Dashboard */}
+        {userDashboardOpen && (
+          <div id="user-preferences-panel" className="bg-white border-2 border-[#5a5a40]/30 rounded-[32px] p-6 shadow-md max-w-md mx-auto space-y-4 animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-[#e5e5dd] pb-3">
+              <div className="flex items-center gap-2">
+                <User className="h-5 w-5 text-[#5a5a40]" />
+                <h2 className="text-xs font-bold uppercase tracking-widest text-[#5a5a40] font-sans">Hunter Settings</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUserDashboardOpen(false)}
+                className="text-[11px] font-bold text-brand-muted hover:text-brand-dark cursor-pointer transition"
+              >
+                Close
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="space-y-4">
+              {/* Display Name Input */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Public Display Name / Label
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={24}
+                  placeholder="e.g. Legendary Ranger"
+                  value={profileDisplayNameInput}
+                  onChange={(e) => setProfileDisplayNameInput(e.target.value)}
+                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
+                />
+                <p className="text-[9px] text-[#8c8c82]">
+                  This is shown to other hunters in chats, feeds, and the live scoreboard.
+                </p>
+              </div>
+
+              {/* Read-only Account Type Display */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Account Type
+                </label>
+                <div className="text-xs font-bold text-[#5a5a40] bg-[#f5f5f0]/80 px-3 py-2.5 rounded-xl border border-brand-border/60 inline-flex items-center gap-1.5 uppercase tracking-wide">
+                  {profile.role === "admin" ? (
+                    <>
+                      <span>👑 Host Admin</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>🏹 Hunter User</span>
+                    </>
+                  )}
+                </div>
+                <p className="text-[9px] text-[#8c8c82]">
+                  {profile.role === "admin" 
+                    ? "As the game organizer you have complete administrative power."
+                    : "Hunters are dedicated to completing scavenger challenges & scoring points."}
+                </p>
+              </div>
+
+              {/* Preferences & Permissions checkboxes */}
+              <div className="space-y-3 pt-2 border-t border-[#e5e5dd]">
+                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                  Permissions & Privacy Settings
+                </label>
+
+                <div className="space-y-2.5">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={profileShareLocation}
+                      onChange={(e) => setProfileShareLocation(e.target.checked)}
+                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                    />
+                    <div className="leading-none">
+                      <span className="text-xs font-semibold text-[#2d2d2d] block">Share GPS coordinates</span>
+                      <span className="text-[9px] text-[#8c8c82]">Enables geofenced challenge verification.</span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={profileAllowNotifications}
+                      onChange={(e) => setProfileAllowNotifications(e.target.checked)}
+                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                    />
+                    <div className="leading-none">
+                      <span className="text-xs font-semibold text-[#2d2d2d] block">AIFeed Push Stream</span>
+                      <span className="text-[9px] text-[#8c8c82]">Receive direct referee score & chat notifications.</span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={profileMakePrivate}
+                      onChange={(e) => setProfileMakePrivate(e.target.checked)}
+                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                    />
+                    <div className="leading-none">
+                      <span className="text-xs font-semibold text-[#2d2d2d] block">Incognito Mode (Private profile)</span>
+                      <span className="text-[9px] text-[#8c8c82]">Blur profile from public scoreboards.</span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={profileExtendedAiJudge}
+                      onChange={(e) => setProfileExtendedAiJudge(e.target.checked)}
+                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                    />
+                    <div className="leading-none">
+                      <span className="text-xs font-semibold text-[#2d2d2d] block">High Intensity AI Judge</span>
+                      <span className="text-[9px] text-[#8c8c82]">Enable playful, stricter banter critiques from AI Judge.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Result Notifications */}
+              {profileSaveSuccess && (
+                <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-medium border border-emerald-100 flex items-center gap-1.5 animate-bounce">
+                  <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>Profile setting & preferences successfully synced!</span>
+                </div>
+              )}
+
+              {profileSaveError && (
+                <div className="p-2.5 bg-red-50 text-red-700 rounded-xl text-[11px] font-medium border border-red-100 flex items-center gap-1.5">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+                  <span>{profileSaveError}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={isProfileSaving}
+                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isProfileSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  Save Profile Settings
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Navigation tabs */}
+        <div className="flex bg-white p-1 rounded-2xl border border-brand-border shadow-sm max-w-md mx-auto z-[990]">
+          <button
+            onClick={() => setActiveTab("missions")}
+            className={`flex-1 py-2 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeTab === "missions"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+          >
+            <ListFilter className="h-3.5 w-3.5" />
+            Missions
+          </button>
+          <button
+            onClick={() => setActiveTab("map")}
+            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeTab === "map"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+          >
+            <MapIcon className="h-3.5 w-3.5" />
+            Live Map
+          </button>
+          <button
+            onClick={() => setActiveTab("leaderboard")}
+            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeTab === "leaderboard"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+          >
+            <Trophy className="h-3.5 w-3.5" />
+            Leaderboard
+          </button>
+          <button
+            onClick={() => setActiveTab("feed")}
+            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeTab === "feed"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+          >
+            <Users className="h-3.5 w-3.5" />
+            Feed
+          </button>
+          <button
+            onClick={() => setActiveTab("chat")}
+            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 relative ${
+              activeTab === "chat"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span>Chat</span>
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[9px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Dynamic Location Indicator */}
+        <div className="bg-white/80 border border-brand-border rounded-2xl px-4 py-2.5 max-w-md mx-auto flex items-center justify-between text-xs font-medium text-brand-moss shadow-sm">
+          <div className="flex items-center gap-1.5">
+            <Compass className="h-4 w-4 text-brand-terracotta" />
+            <span className="text-[11px]">
+              Location Status:{" "}
+              {userLat !== null && userLng !== null ? (
+                <strong className="font-mono text-brand-dark">
+                  ({userLat.toFixed(4)}, {userLng.toFixed(4)})
+                </strong>
+              ) : (
+                "Locking..."
+              )}
+            </span>
+          </div>
+
+          <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+            locationType === "gps"
+              ? "bg-green-100 text-green-700 border border-green-200"
+              : "bg-amber-100 text-amber-700 border border-amber-200"
+          }`}>
+            {locationType === "gps" ? "Active satellite" : "Emulated GPS"}
+          </span>
+        </div>
+
+        {/* Database Connectivity Status */}
+        <div className="bg-white/80 border border-[#d2d2c8] rounded-2xl p-4 max-w-md mx-auto shadow-sm space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 font-medium text-[#5a5a40]">
+              <Database className="h-4 w-4 text-[#8c8c5a]" />
+              <span>Storage Node:</span>
+            </div>
+            
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+              dbStatus.mode === "supabase"
+                ? "bg-emerald-150 text-emerald-800 border border-emerald-200"
+                : "bg-[#eaeaee] text-[#4d4d42] border border-[#d2d2c8]"
+            }`}>
+              {dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}
+            </span>
+          </div>
+
+          {dbStatus.mode === "local_fallback" && (
+            <div className="text-[11px] text-[#8c8c78] leading-normal space-y-2">
+              <p>
+                Currently running on **Local isolated Sandbox** storage. To bind persistent game data across systems:
+              </p>
+              <div className="p-2.5 bg-[#f5f5f0] rounded-xl border border-brand-border/60 text-[10px] space-y-1">
+                <p className="font-bold text-[#5a5a40]">Instructions:</p>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>Configure <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> in Server settings.</li>
+                  <li>Click below to copy and execute the database layout script in Supabase!</li>
+                </ol>
+              </div>
+
+              <div className="pt-1 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSqlVisible(!sqlVisible)}
+                  className="w-full text-center text-[10px] font-bold text-[#5a5a40] hover:text-[#464632] underline hover:no-underline transition cursor-pointer"
+                >
+                  {sqlVisible ? "Hide SQL Seed Script" : "Show Required Supabase SQL Schema"}
+                </button>
+
+                {sqlVisible && (
+                  <div className="p-3 bg-[#2d2d25] rounded-xl text-[#f2f2eb] font-mono text-[9px] relative overflow-hidden max-h-48 overflow-y-auto">
+                    <button
+                      type="button"
+                      onClick={copySqlToClipboard}
+                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-[#3d3d32] hover:bg-[#5a5a40] text-white transition flex items-center gap-1 cursor-pointer"
+                      title="Copy schema SQL"
+                    >
+                      {copiedSql ? (
+                        <Check className="h-3.5 w-3.5 text-green-400" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                      <span>{copiedSql ? "Copied!" : "Copy"}</span>
+                    </button>
+                    <pre className="whitespace-pre-wrap">{SQL_SCHEMA}</pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {dbStatus.mode === "supabase" && dbStatus.error && (
+            <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl space-y-1 text-[11px] leading-relaxed">
+              <p className="font-bold">⚠️ DB Schema Missing Warning:</p>
+              <p className="text-[10px] opacity-90">{dbStatus.error}</p>
+              <button
+                type="button"
+                onClick={() => setSqlVisible(!sqlVisible)}
+                className="font-bold underline text-[10px] mt-1 block hover:no-underline"
+              >
+                {sqlVisible ? "Hide SQL Setup Script" : "View Setup SQL"}
+              </button>
+              {sqlVisible && (
+                <div className="mt-1.5 p-2 bg-[#2d2d25] rounded text-white font-mono text-[9px] relative max-h-36 overflow-y-auto">
+                  <button
+                    type="button"
+                    onClick={copySqlToClipboard}
+                    className="absolute top-1 right-1 p-1 bg-[#3d3d32] text-[8px] rounded hover:bg-[#5a5a40] text-white transition"
+                  >
+                    {copiedSql ? "Copied!" : "Copy Code"}
+                  </button>
+                  <pre className="whitespace-pre-wrap">{SQL_SCHEMA}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Dynamic Panel Renders */}
+        <div className="pt-2">
+          {activeTab === "missions" && (
+            <MissionsList
+              items={items}
+              submissions={submissions}
+              onUploadSubmission={handleUploadSubmission}
+              isSubmittingMap={isSubmittingMap}
+              submitErrorMap={submitErrorMap}
+              userLat={userLat}
+              userLng={userLng}
+              onAddChallenge={handleAddChallenge}
+            />
+          )}
+
+          {activeTab === "map" && (
+            <GameMap
+              items={items}
+              userLat={userLat}
+              userLng={userLng}
+              onSelectChallenge={handleSelectChallengeFromMap}
+              onSimulateCoordinates={handleSimulateCoordinates}
+            />
+          )}
+
+          {activeTab === "leaderboard" && (
+            <Leaderboard players={players} currentUserId={profile.id} />
+          )}
+
+          {activeTab === "feed" && (
+            <Feed
+              submissions={submissions}
+              items={items}
+              currentUserId={profile.id}
+              onDeleteSubmission={handleDeleteSubmission}
+            />
+          )}
+
+          {activeTab === "chat" && (
+            <Chat
+              profile={profile}
+              players={players}
+              onlinePlayers={onlinePlayers}
+              chatMessages={chatMessages}
+              onSendMessage={handleSendMessage}
+            />
+          )}
+        </div>
+      </main>
+
+      {/* Footer credits bar */}
+      <footer className="h-12 bg-[#5a5a40] text-white/60 px-4 sm:px-8 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] font-bold shrink-0 mt-auto">
+        <span>Self-Hosted Instance: v2.0.0-stable</span>
+        <div className="hidden md:flex space-x-6">
+          <span>Real-time Dynamic Sync Active</span>
+          <span>Docker Node: {profile?.id.substring(0, 10)}</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
