@@ -46,15 +46,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat">("missions");
 
   // Game branding states
-  const [settings, setSettings] = useState<AppSettings>({ name: "WilderHunt", icon: null, inviteRequired: true, activeInviteCode: "hunt-party-2026" });
+  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "reunion-2026" });
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [adminNameInput, setAdminNameInput] = useState("");
   const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
   const [adminLatInput, setAdminLatInput] = useState(40.7850);
   const [adminLngInput, setAdminLngInput] = useState(-73.9682);
   const [adminRadiusInput, setAdminRadiusInput] = useState(500);
-  const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
-  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("hunt-party-2026");
+  const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
+  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("reunion-2026");
   const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
   const [manualInviteCode, setManualInviteCode] = useState("");
   const [manualInviteError, setManualInviteError] = useState<string | null>(null);
@@ -477,26 +477,26 @@ CREATE TABLE IF NOT EXISTS submissions (
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "WilderHunt",
+          name: "KinQuest",
           icon: null,
           defaultLat: 40.7850,
           defaultLng: -73.9682,
           defaultRadius: 500,
-          aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.",
-          activeInviteCode: "hunt-party-2026",
+          aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+          activeInviteCode: "reunion-2026",
           inviteRequired: true
         })
       });
       if (res.ok) {
         const data = await res.json();
         setSettings(data.settings);
-        setAdminNameInput("WilderHunt");
+        setAdminNameInput("KinQuest");
         setAdminIconInput(null);
         setAdminLatInput(40.7850);
         setAdminLngInput(-73.9682);
         setAdminRadiusInput(500);
-        setAdminAiPromptCriteriaInput("Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
-        setAdminActiveInviteCodeInput("hunt-party-2026");
+        setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
+        setAdminActiveInviteCodeInput("reunion-2026");
         setAdminInviteRequiredInput(true);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
@@ -535,7 +535,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     e.preventDefault();
     const cleanUsername = registerName.trim();
     if (!cleanUsername) {
-      setAuthError("Please enter a callsign nickname!");
+      setAuthError("Please enter your name or family title!");
       return;
     }
 
@@ -711,30 +711,30 @@ CREATE TABLE IF NOT EXISTS submissions (
             <Lock className="h-8 w-8 text-[#5a5a40] animate-pulse" />
           </div>
           <h2 className="text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
-            Access Restricted
+            KinQuest Restreint
           </h2>
           <p className="mt-3 text-sm text-[#8c8c82] max-w-sm mx-auto font-medium leading-relaxed">
-            This scavenger adventure is private. Only hunters with an active invitation key or scanned event QR code can access the lobbies and tasks.
+            Welcome to the family! This KinQuest scavenger adventure is private. Only clan members with an active family invitation code or those who scanned the event QR code can join the lobby.
           </p>
         </div>
 
         <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
           <div className="bg-white py-8 px-6 shadow-md border border-[#e5e5dd] rounded-[32px] space-y-6">
             <div className="bg-[#5a5a40]/5 p-4 rounded-2xl border border-[#5a5a40]/10 text-center">
-              <span className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block font-sans">How to Join</span>
+              <span className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block font-sans">How to Join The Fun</span>
               <p className="text-xs text-[#5a5a40] font-medium leading-relaxed mt-1.5 font-sans">
-                Please contact the Game Administrator host to receive an invite URL or scan the official event QR code display on-site.
+                Kindly ask the family reunion organizer or host to share their invitation link, or scan their custom event QR code off their screen!
               </p>
             </div>
 
             <form onSubmit={handleManualInviteSubmit} className="space-y-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
-                  Have an invite code?
+                  Enter Family Access Key
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter join code (e.g. hunt-lobby-2026)"
+                  placeholder="e.g. reunion-2026"
                   value={manualInviteCode}
                   onChange={(e) => setManualInviteCode(e.target.value)}
                   className="w-full text-xs bg-[#f5f5f0]/50 border border-[#dcdcd4] rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-mono text-center tracking-widest uppercase font-bold text-[#2d2d2d]"
@@ -746,7 +746,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 className="w-full py-3 px-4 rounded-xl text-sm font-bold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/15 cursor-pointer flex items-center justify-center gap-1.5 font-sans"
               >
                 <Shield className="h-4 w-4" />
-                Verify Access Key
+                Unlock Family Portal
               </button>
             </form>
 
@@ -759,7 +759,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 
             <div className="text-center pt-2 border-t border-brand-border/60">
               <p className="text-[9px] text-[#8c8c82] uppercase tracking-widest font-mono">
-                Host Operator: contact administrator
+                Operator Portal: Seek Elder / Organizer
               </p>
             </div>
           </div>
@@ -784,7 +784,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             {settings.name}
           </h2>
           <p className="mt-2 text-center text-sm text-[#8c8c82] font-medium leading-relaxed max-w-sm mx-auto">
-            A self-hosted mobile scavenger adventure. Locate geofenced checkpoints, photograph proof, and let our AI Judge score your hunt live.
+            The ultimate family reunion scavenger hunt. Complete heartwarming photo missions, submit family checkpoints, chat with your cousins, and let our real-time AI Referee score your entries!
           </p>
         </div>
 
@@ -793,13 +793,13 @@ CREATE TABLE IF NOT EXISTS submissions (
             <form onSubmit={handleRegisterInputSubmit} className="space-y-4">
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
-                  Choose callsign / nickname
+                  Introduce Yourself (e.g. Aunt Sarah, Cousin Leo)
                 </label>
                 <input
                   type="text"
                   required
                   maxLength={18}
-                  placeholder="e.g. Pathfinder_77"
+                  placeholder="e.g. Aunt Sarah or Cousin Leo"
                   value={registerName}
                   onChange={(e) => setRegisterName(e.target.value)}
                   className="w-full text-sm bg-[#f5f5f0]/50 border border-brand-border rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
@@ -816,7 +816,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 ) : (
                   <LogIn className="h-4 w-4" />
                 )}
-                Enter Self-Hosted Game Lobby
+                Enter Family Reunion Lobby
               </button>
             </form>
 
@@ -829,7 +829,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 
             <div className="text-center pt-2 border-t border-brand-border/60">
               <p className="text-[10px] text-brand-muted tracking-wider uppercase font-mono">
-                Running in isolated Docker environment
+                KinQuest Private Sandbox Mode
               </p>
             </div>
           </div>

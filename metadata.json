@@ -1,6 +1,6 @@
 {
-  "name": "Scavenger Hunt",
-  "description": "A self-hosted scavenger hunt application where players can complete photo missions, submit entries, and climb the live leaderboards.",
+  "name": "KinQuest",
+  "description": "A self-hosted family reunion scavenger hunt application where relative clans complete warm photo missions, submit entries, and climb live leaderboards.",
   "requestFramePermissions": ["camera", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

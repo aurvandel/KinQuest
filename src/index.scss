@@ -19,4 +19,22 @@
 body {
   background-color: var(--color-brand-beige-light);
   color: var(--color-brand-dark);
+
+  // Smooth custom scrollbars configured using nested SCSS structure
+  * {
+    &::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: var(--color-brand-border);
+      border-radius: 9999px;
+      &:hover {
+        background: var(--color-brand-muted);
+      }
+    }
+  }
 }

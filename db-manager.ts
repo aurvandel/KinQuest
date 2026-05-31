@@ -63,31 +63,86 @@ export interface DbStore {
 // Default initial items
 const DEFAULT_ITEMS: ScavengerItem[] = [
   {
-    id: "item_retro_key",
-    title: "A key with history",
-    description: "Locate a physical key. It can be an old door key, house key, padlock key, or retro key. Showcase its details up close.",
+    id: "item_gen_gap",
+    title: "Generation Gap Smiles",
+    description: "Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!",
+    points: 100,
+    category: "Family",
+    icon: "Users",
+    lat: null,
+    lng: null,
+    radius: null
+  },
+  {
+    id: "item_family_heirloom",
+    title: "Relic of the Elders",
+    description: "Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.",
+    points: 80,
+    category: "History",
+    icon: "Heart",
+    lat: null,
+    lng: null,
+    radius: null
+  },
+  {
+    id: "item_cousins_selfie",
+    title: "The Multi-Clan Cousin Shot",
+    description: "Take a group selfie with at least three cousins representing at least two different family branches or lineages!",
+    points: 75,
+    category: "Family",
+    icon: "Camera",
+    lat: null,
+    lng: null,
+    radius: null
+  },
+  {
+    id: "item_bbq_boss",
+    title: "The Grill Master / Feast Chief",
+    description: "Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!",
     points: 50,
-    category: "Home",
-    icon: "Key",
+    category: "Food",
+    icon: "Flame",
     lat: null,
     lng: null,
     radius: null
   },
   {
-    id: "item_qr_code",
-    title: "A QR or Barcode",
-    description: "Find any QR code or barcode—on a product container, a book cover, a ticket stub, or product label.",
-    points: 30,
-    category: "Tech",
-    icon: "QrCode",
+    id: "item_ uncanny_lookalikes",
+    title: "Uncanny Family Lookalikes",
+    description: "Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.",
+    points: 60,
+    category: "Genetic",
+    icon: "Laugh",
     lat: null,
     lng: null,
     radius: null
   },
   {
-    id: "item_green_leaf",
-    title: "Five-pointed leaf",
-    description: "Find a fresh green leaf in nature that has multiple lobes/shapes (like maple, ivy, or similar flora).",
+    id: "item_retro_moves",
+    title: "Old School Cool",
+    description: "Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!",
+    points: 70,
+    category: "Entertainment",
+    icon: "Music",
+    lat: null,
+    lng: null,
+    radius: null
+  },
+  {
+    id: "item_group_hug",
+    title: "Group Hug Extravaganza",
+    description: "A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!",
+    points: 90,
+    category: "Joy",
+    icon: "Sparkles",
+    lat: null,
+    lng: null,
+    radius: null
+  },
+  {
+    id: "item_reunion_recreation",
+    title: "Nature Walk Keepsake",
+    description: "Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.",
     points: 40,
     category: "Nature",
     icon: "Leaf",
@@ -96,98 +151,10 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
     radius: 500
   },
   {
-    id: "item_yellow_book",
-    title: "Yellow cover page book",
-    description: "Search your shelves or desks for a book with a primary solid yellow or mostly yellow color schema on the front sleeve.",
-    points: 60,
-    category: "Media",
-    icon: "BookOpen",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_cozy_mug",
-    title: "Cozy mug or glass of liquid",
-    description: "Photograph your current beverage container: a coffee mug, warm tea cup, drinking glass, or insulated bottle.",
-    points: 25,
-    category: "Food",
-    icon: "Coffee",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_red_object",
-    title: "Something vividly Red",
-    description: "Locate any item around you whose prominent dye color is cherry, crimson, or warning red.",
-    points: 20,
-    category: "Creative",
-    icon: "Palette",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_desktop_gadget",
-    title: "A modern desk widget",
-    description: "Find an action-ready piece of hardware like computer mouse, noise-canceling headphones, a controller, or USB accessories.",
-    points: 35,
-    category: "Tech",
-    icon: "Tv",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_clock_digit",
-    title: "A timepiece showing numbers",
-    description: "Capture a wristwatch, smartphone screen clock, desk digital clock, or wall clock to demonstrate the currency of tracking time.",
+    id: "item_family_mascot",
+    title: "Reunion Mascot/Pet",
+    description: "Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.",
     points: 45,
-    category: "Time",
-    icon: "Clock",
-    lat: 40.7850,
-    lng: -73.9682,
-    radius: 300
-  },
-  {
-    id: "item_houseplant",
-    title: "Succulent or houseplant",
-    description: "Photograph an active domestic plant, potted greenery, succulent, or flower arrangement inside or on your window sill.",
-    points: 35,
-    category: "Home",
-    icon: "Flower2",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_metallic",
-    title: "Something metallic",
-    description: "Locate a shiny metallic item: cutlery, aluminum wrap, metal gears, or a watch dial gleaming under direct light.",
-    points: 30,
-    category: "Home",
-    icon: "Sparkles",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_coin_metal",
-    title: "A circular coin",
-    description: "A physical coin of any currency denomination, resting flat. It could be cents, pence, euros, or vintage tokens.",
-    points: 40,
-    category: "Finance",
-    icon: "Coins",
-    lat: null,
-    lng: null,
-    radius: null
-  },
-  {
-    id: "item_furry_pet",
-    title: "A furry friend (or portrait)",
-    description: "Photograph a real pet (dog, cat, rabbit) or get creative with a stuffed animal, a toy dinosaur, or pet portrait illustration.",
-    points: 65,
     category: "Animal",
     icon: "Footprints",
     lat: 40.7812,
@@ -953,13 +920,13 @@ export function getAppSettings(): AppSettings {
       const content = fs.readFileSync(SETTINGS_FILE, "utf-8");
       const parsed = JSON.parse(content);
       return {
-        name: parsed.name || "WilderHunt",
+        name: parsed.name || "KinQuest",
         icon: parsed.icon || null,
         defaultLat: Number(parsed.defaultLat) || 40.7850,
         defaultLng: Number(parsed.defaultLng) || -73.9682,
         defaultRadius: Number(parsed.defaultRadius) || 500,
-        aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.",
-        activeInviteCode: parsed.activeInviteCode || "hunt-party-2026",
+        aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+        activeInviteCode: parsed.activeInviteCode || "reunion-2026",
         inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true
       };
     }
@@ -967,13 +934,13 @@ export function getAppSettings(): AppSettings {
     console.error("Failed to load app settings:", err);
   }
   return {
-    name: "WilderHunt",
+    name: "KinQuest",
     icon: null,
     defaultLat: 40.7850,
     defaultLng: -73.9682,
     defaultRadius: 500,
-    aiPromptCriteria: "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.",
-    activeInviteCode: "hunt-party-2026",
+    aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+    activeInviteCode: "reunion-2026",
     inviteRequired: true
   };
 }
