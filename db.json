@@ -6,13 +6,27 @@
       "displayName": "Grand Host Admin",
       "score": 0,
       "completedCount": 0,
-      "createdAt": "2026-05-31T20:01:18.167Z",
+      "createdAt": "2026-06-01T15:16:28.417Z",
       "role": "admin",
       "permissions": {
         "shareLocation": true,
         "allowNotifications": true,
         "makePrivate": false,
         "extendedAiJudge": true
+      }
+    },
+    "user_cache_606201": {
+      "id": "user_cache_606201",
+      "username": "parker",
+      "score": 0,
+      "completedCount": 0,
+      "createdAt": "2026-06-01T15:59:11.926Z",
+      "role": "user",
+      "permissions": {
+        "shareLocation": true,
+        "allowNotifications": true,
+        "makePrivate": false,
+        "extendedAiJudge": false
       }
     }
   },
@@ -48,7 +62,7 @@
       "icon": "Camera",
       "lat": null,
       "lng": null,
-      "radius: null"
+      "radius": null
     },
     "item_bbq_boss": {
       "id": "item_bbq_boss",
@@ -61,8 +75,8 @@
       "lng": null,
       "radius": null
     },
-    "item_unic_lookalike": {
-      "id": "item_unic_lookalike",
+    "item_ uncanny_lookalikes": {
+      "id": "item_ uncanny_lookalikes",
       "title": "Uncanny Family Lookalikes",
       "description": "Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.",
       "points": 60,

@@ -13,10 +13,17 @@ services:
     environment:
       - NODE_ENV=production
       # Links automatically to the internal Kong API gateway
-      - SUPABASE_URL=http://kong:8000
-      - SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewoKICAicm9sZSI6ICJhbm9uIiwKICAiaXNzIjogInN1cGFiYXNlIiwKICAiaWF0IjogMTc4MDI4Nzk4OSwKICAiZXhwIjogMTgxMTgyMzk4OQp9.WCZ_bWTv1m-hwz2UF831_Zlc5BiIA9pwoEGcWrUduxg
+      - SUPABASE_URL=${SUPABASE_URL:-http://kong:8000}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       # Place your personal Gemini API key here for AI-powered verification
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Admin password for access control
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # Image upload directory (inside container)
+      - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
+    volumes:
+      # Mount the uploads volume to persist images
+      - ./uploads:/app/uploads
     depends_on:
       - kong
       - db
@@ -29,9 +36,9 @@ services:
     container_name: supabase-local-db
     restart: always
     environment:
-      - POSTGRES_DB=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres-local-development-password-must-be-secure
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -51,7 +58,7 @@ services:
       - PGRST_DB_URI=postgres://authenticator:postgres-super-secure-authenticator-password@db:5432/postgres
       - PGRST_DB_SCHEMAS=public
       - PGRST_DB_ANON_ROLE=anon
-      - PGRST_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long
+      - PGRST_JWT_SECRET=${PGRST_JWT_SECRET}
     depends_on:
       - db
 

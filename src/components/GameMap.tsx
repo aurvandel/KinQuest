@@ -293,7 +293,7 @@ export function GameMap({
           <div className="bg-white/95 backdrop-blur-md border border-brand-border rounded-xl p-3 shadow-md max-w-sm pointer-events-auto space-y-2">
             <p className="text-xs font-bold text-brand-moss flex items-center gap-1.5">
               <Sparkles className="h-4 w-4" />
-              <span>Sandbox Geolocation Emulator</span>
+              <span> Geolocation Emulator</span>
             </p>
             <p className="text-[10.5px] text-gray-500 leading-normal">
               Click anywhere on the map to jump your GPS position! Useful for testing distance approvals in the editor preview.

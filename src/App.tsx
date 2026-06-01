@@ -5,6 +5,7 @@ import { Leaderboard } from "./components/Leaderboard";
 import { Feed } from "./components/Feed";
 import { GameMap } from "./components/GameMap";
 import { Chat } from "./components/Chat";
+import { AdminAuthModal } from "./components/AdminAuthModal";
 
 import {
   Flame,
@@ -96,6 +97,10 @@ export default function App() {
   const [registerName, setRegisterName] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isAdminAuthOpen, setIsAdminAuthOpen] = useState(false);
+  const [isAdminAuthLoading, setIsAdminAuthLoading] = useState(false);
+  const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
+  const [pendingAdminName, setPendingAdminName] = useState<string | null>(null);
 
   // DB diagnostic status
   const [dbStatus, setDbStatus] = useState<{ mode: "supabase" | "local_fallback"; error: string | null }>({
@@ -530,29 +535,17 @@ CREATE TABLE IF NOT EXISTS submissions (
     reader.readAsDataURL(file);
   };
 
-  // Self-hosted anonymous guest registration
-  const handleRegisterInputSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanUsername = registerName.trim();
-    if (!cleanUsername) {
-      setAuthError("Please enter your name or family title!");
-      return;
-    }
-
+  const registerUser = async (cleanUsername: string, role: "user" | "admin") => {
     setAuthError(null);
     setIsAuthLoading(true);
-
-    // Only 'admin' username gets the 'admin' role. Everything else is a hunter/user.
-    const resolvedRole = cleanUsername.toLowerCase() === "admin" ? "admin" : "user";
-
     try {
       const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: cleanUsername,
-          role: resolvedRole
-        })
+          role,
+        }),
       });
 
       if (!response.ok) {
@@ -564,12 +557,64 @@ CREATE TABLE IF NOT EXISTS submissions (
       localStorage.setItem("scavenger_uid", activeUser.id);
       localStorage.setItem("scavenger_user", JSON.stringify(activeUser));
       setProfile(activeUser);
-
     } catch (err: any) {
       setAuthError(err.message || "Failed to reach self-hosted api endpoint.");
     } finally {
       setIsAuthLoading(false);
     }
+  };
+
+  // Self-hosted anonymous guest registration
+  const handleRegisterInputSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUsername = registerName.trim();
+    if (!cleanUsername) {
+      setAuthError("Please enter your name or family title!");
+      return;
+    }
+
+    if (cleanUsername.toLowerCase() === "admin") {
+      setPendingAdminName(cleanUsername);
+      setAdminAuthError(null);
+      setIsAdminAuthOpen(true);
+      return;
+    }
+
+    await registerUser(cleanUsername, "user");
+  };
+
+  const handleAdminAuthSuccess = async (password: string) => {
+    const cleanUsername = pendingAdminName?.trim() || "admin";
+    setAdminAuthError(null);
+    setIsAdminAuthLoading(true);
+
+    try {
+      const response = await fetch("/api/auth/admin-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+
+      if (!response.ok) {
+        const errPayload = await response.json();
+        throw new Error(errPayload.error || "Invalid admin password");
+      }
+
+      setIsAdminAuthOpen(false);
+      setPendingAdminName(null);
+      await registerUser(cleanUsername, "admin");
+    } catch (err: any) {
+      setAdminAuthError(err.message || "Admin password verification failed");
+    } finally {
+      setIsAdminAuthLoading(false);
+    }
+  };
+
+  const handleAdminAuthClose = () => {
+    if (isAdminAuthLoading) return;
+    setIsAdminAuthOpen(false);
+    setPendingAdminName(null);
+    setAdminAuthError(null);
   };
 
   const handleSignOut = () => {
@@ -710,8 +755,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           <div className="mx-auto h-16 w-16 rounded-[24px] bg-[#5a5a40]/15 flex items-center justify-center text-[#5a5a40] shadow-inner mb-6">
             <Lock className="h-8 w-8 text-[#5a5a40] animate-pulse" />
           </div>
-          <h2 className="text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
-            KinQuest Restreint
+          <h2 className="text-3xl font-serif font-bold text-[#5a5a40] tracking-tight text-balance">
+            KinQuest
           </h2>
           <p className="mt-3 text-sm text-[#8c8c82] max-w-sm mx-auto font-medium leading-relaxed">
             Welcome to the family! This KinQuest scavenger adventure is private. Only clan members with an active family invitation code or those who scanned the event QR code can join the lobby.
@@ -771,78 +816,88 @@ CREATE TABLE IF NOT EXISTS submissions (
   // Welcoming Gate
   if (!profile) {
     return (
-      <div className="min-h-screen bg-[#f5f5f0] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
-        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-          <div className="mx-auto h-12 w-12 rounded-2xl bg-[#5a5a40] flex items-center justify-center shadow-lg text-white font-serif overflow-hidden">
-            {settings.icon ? (
-              <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-            ) : (
-              <Compass className="h-6 w-6 animate-spin-slow text-[#f5f5f0]" />
-            )}
+      <>
+        <div className="min-h-screen bg-[#f5f5f0] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+          <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+            <div className="mx-auto h-12 w-12 rounded-2xl bg-[#5a5a40] flex items-center justify-center shadow-lg text-white font-serif overflow-hidden">
+              {settings.icon ? (
+                <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <Compass className="h-6 w-6 animate-spin-slow text-[#f5f5f0]" />
+              )}
+            </div>
+            <h2 className="mt-6 text-center text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
+              {settings.name}
+            </h2>
+            <p className="mt-2 text-center text-sm text-[#8c8c82] font-medium leading-relaxed max-w-sm mx-auto">
+              The ultimate family reunion scavenger hunt. Complete heartwarming photo missions, submit family checkpoints, chat with your cousins, and let our real-time AI Referee score your entries!
+            </p>
           </div>
-          <h2 className="mt-6 text-center text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
-            {settings.name}
-          </h2>
-          <p className="mt-2 text-center text-sm text-[#8c8c82] font-medium leading-relaxed max-w-sm mx-auto">
-            The ultimate family reunion scavenger hunt. Complete heartwarming photo missions, submit family checkpoints, chat with your cousins, and let our real-time AI Referee score your entries!
-          </p>
-        </div>
 
-        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-6 shadow-sm border border-brand-border rounded-[32px] space-y-6">
-            <form onSubmit={handleRegisterInputSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
-                  Introduce Yourself (e.g. Aunt Sarah, Cousin Leo)
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={18}
-                  placeholder="e.g. Aunt Sarah or Cousin Leo"
-                  value={registerName}
-                  onChange={(e) => setRegisterName(e.target.value)}
-                  className="w-full text-sm bg-[#f5f5f0]/50 border border-brand-border rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
-                />
+          <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+            <div className="bg-white py-8 px-6 shadow-sm border border-brand-border rounded-[32px] space-y-6">
+              <form onSubmit={handleRegisterInputSubmit} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
+                    Introduce Yourself (e.g. Aunt Sarah, Cousin Leo)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={18}
+                    placeholder="e.g. Aunt Sarah or Cousin Leo"
+                    value={registerName}
+                    onChange={(e) => setRegisterName(e.target.value)}
+                    className="w-full text-sm bg-[#f5f5f0]/50 border border-brand-border rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/10 cursor-pointer disabled:opacity-50"
+                >
+                  {isAuthLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <LogIn className="h-4 w-4" />
+                  )}
+                  Enter Family Reunion Lobby
+                </button>
+              </form>
+
+              {authError && (
+                <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex items-center gap-2 border border-red-100">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <p className="font-semibold">{authError}</p>
+                </div>
+              )}
+
+              <div className="text-center pt-2 border-t border-brand-border/60">
+                <p className="text-[10px] text-brand-muted tracking-wider uppercase font-mono">
+                  KinQuest Private Sandbox Mode
+                </p>
               </div>
-
-              <button
-                type="submit"
-                disabled={isAuthLoading}
-                className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/10 cursor-pointer disabled:opacity-50"
-              >
-                {isAuthLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <LogIn className="h-4 w-4" />
-                )}
-                Enter Family Reunion Lobby
-              </button>
-            </form>
-
-            {authError && (
-              <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex items-center gap-2 border border-red-100">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <p className="font-semibold">{authError}</p>
-              </div>
-            )}
-
-            <div className="text-center pt-2 border-t border-brand-border/60">
-              <p className="text-[10px] text-brand-muted tracking-wider uppercase font-mono">
-                KinQuest Private Sandbox Mode
-              </p>
             </div>
           </div>
         </div>
-      </div>
+
+        <AdminAuthModal
+          isOpen={isAdminAuthOpen}
+          onClose={handleAdminAuthClose}
+          onSuccess={handleAdminAuthSuccess}
+          isLoading={isAdminAuthLoading}
+          error={adminAuthError}
+        />
+      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#f5f5f0] text-[#2d2d2d] font-sans flex flex-col">
       {/* Top Header navbar with score indicators */}
-      <header className="h-16 px-4 sm:px-8 flex items-center justify-between border-b border-brand-border bg-[#f5f5f0]/95 backdrop-blur-md sticky top-0 z-[1000] shrink-0">
-        <div className="flex items-center space-x-3">
+      <header className="h-16 px-3 sm:px-8 flex items-center justify-between border-b border-brand-border bg-[#f5f5f0]/95 backdrop-blur-md sticky top-0 z-[1000] shrink-0">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
           <div className="w-8 h-8 bg-[#5a5a40] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
             {settings.icon ? (
               <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -850,30 +905,31 @@ CREATE TABLE IF NOT EXISTS submissions (
               <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
             )}
           </div>
-          <div>
-            <h1 className="text-sm sm:text-base font-serif italic text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[120px] sm:max-w-[200px]">
+          <div className="min-w-0">
+            <h1 className="text-xs sm:text-sm md:text-base font-serif italic text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[80px] sm:max-w-[150px] md:max-w-[200px]">
               {settings.name}
             </h1>
-            <span className="text-[9px] font-mono uppercase tracking-widest text-brand-muted">Docker Node</span>
+            <span className="text-[8px] sm:text-[9px] font-mono uppercase tracking-widest text-brand-muted hidden sm:block">Docker Node</span>
           </div>
         </div>
 
-        <div className="flex items-center space-x-4 sm:space-x-6">
-          <div className="hidden sm:block text-right">
+        <div className="flex items-center space-x-2 sm:space-x-4 lg:space-x-6">
+          <div className="hidden md:block text-right">
             <p className="text-[9px] uppercase tracking-widest font-bold text-brand-muted">Active Hunter</p>
             <p className="text-xs font-semibold">{profile.username}</p>
           </div>
 
-          <div className="h-8 w-[1px] bg-[#dcdcd4]"></div>
+          <div className="hidden md:block h-8 w-[1px] bg-[#dcdcd4]"></div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-3">
             {/* Real-time Score Badge */}
-            <div className="bg-[#5a5a40] text-[#f5f5f0] px-3.5 py-1.5 rounded-xl flex items-center gap-2 shadow-sm shadow-[#5a5a40]/10">
-              <Flame className="h-4 w-4 text-[#c27d56] fill-[#c27d56] animate-pulse" />
-              <div className="text-left leading-none">
-                <span className="text-[8px] uppercase font-bold tracking-widest block opacity-75">TALLY</span>
+            <div className="bg-[#5a5a40] text-[#f5f5f0] px-2 sm:px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-[#5a5a40]/10 whitespace-nowrap">
+              <Flame className="h-3.5 sm:h-4 w-3.5 sm:w-4 text-[#c27d56] fill-[#c27d56] animate-pulse flex-shrink-0" />
+              <div className="text-left leading-none hidden sm:block">
+                <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest block opacity-75">TALLY</span>
                 <span className="text-xs font-black font-mono">{profile.score} PTS</span>
               </div>
+              <span className="text-xs sm:hidden font-black font-mono">{profile.score}</span>
             </div>
 
             {/* User Preferences Dashboard Button */}
@@ -888,14 +944,14 @@ CREATE TABLE IF NOT EXISTS submissions (
                 }
               }}
               type="button"
-              className={`p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+              className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
                 userDashboardOpen
                   ? "bg-[#5a5a40]/20 text-[#5a5a40] border-[#5a5a40]/30 font-bold"
                   : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
               }`}
               title="User Settings & Persona Dashboard"
             >
-              <User className="h-4 w-4" />
+              <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
             </button>
 
             {/* Admin Branding Settings Cog */}
@@ -917,24 +973,24 @@ CREATE TABLE IF NOT EXISTS submissions (
                   }
                 }}
                 type="button"
-                className={`p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
                   adminPanelOpen
                     ? "bg-[#5a5a40] text-white border-transparent"
                     : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
                 }`}
                 title="Branding Identity Control Panel"
               >
-                <Settings className="h-4 w-4" />
+                <Settings className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
               </button>
             )}
 
             <button
               onClick={handleSignOut}
               type="button"
-              className="text-[#8c8c82] hover:text-red-600 transition p-2 hover:bg-white rounded-xl border border-transparent hover:border-brand-border/40 shrink-0"
+              className="text-[#8c8c82] hover:text-red-600 transition p-1.5 sm:p-2 hover:bg-white rounded-xl border border-transparent hover:border-brand-border/40 shrink-0"
               title="Leave adventure lobby"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
             </button>
           </div>
         </div>
@@ -1392,63 +1448,68 @@ CREATE TABLE IF NOT EXISTS submissions (
         )}
 
         {/* Navigation tabs */}
-        <div className="flex bg-white p-1 rounded-2xl border border-brand-border shadow-sm max-w-md mx-auto z-[990]">
+        <div className="flex bg-white p-0.5 sm:p-1 rounded-2xl border border-brand-border shadow-sm w-full max-w-2xl mx-auto z-[990] gap-0.5 sm:gap-1">
           <button
             onClick={() => setActiveTab("missions")}
-            className={`flex-1 py-2 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "missions"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark"
             }`}
+            title="View missions"
           >
-            <ListFilter className="h-3.5 w-3.5" />
-            Missions
+            <ListFilter className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Missions</span>
           </button>
           <button
             onClick={() => setActiveTab("map")}
-            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "map"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark"
             }`}
+            title="View live map"
           >
-            <MapIcon className="h-3.5 w-3.5" />
-            Live Map
+            <MapIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Map</span>
           </button>
           <button
             onClick={() => setActiveTab("leaderboard")}
-            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "leaderboard"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark"
             }`}
+            title="View leaderboard"
           >
-            <Trophy className="h-3.5 w-3.5" />
-            Leaderboard
+            <Trophy className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Scores</span>
           </button>
           <button
             onClick={() => setActiveTab("feed")}
-            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "feed"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark"
             }`}
+            title="View feed"
           >
-            <Users className="h-3.5 w-3.5" />
-            Feed
+            <Users className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Feed</span>
           </button>
           <button
             onClick={() => setActiveTab("chat")}
-            className={`flex-1 py-1.5 rounded-xl text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-1.5 relative ${
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
               activeTab === "chat"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark"
             }`}
+            title="Chat"
           >
-            <MessageSquare className="h-3.5 w-3.5" />
-            <span>Chat</span>
+            <MessageSquare className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Chat</span>
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[9px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
                 {unreadCount}
               </span>
             )}
@@ -1473,8 +1534,8 @@ CREATE TABLE IF NOT EXISTS submissions (
 
           <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
             locationType === "gps"
-              ? "bg-green-100 text-green-700 border border-green-200"
-              : "bg-amber-100 text-amber-700 border border-amber-200"
+              ? "bg-green-100 text-green-700 border border-green-200 text-center"
+              : "bg-amber-100 text-amber-700 border border-amber-200 text-center"
           }`}>
             {locationType === "gps" ? "Active satellite" : "Emulated GPS"}
           </span>
@@ -1574,6 +1635,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             <MissionsList
               items={items}
               submissions={submissions}
+              currentUserId={profile.id}
               onUploadSubmission={handleUploadSubmission}
               isSubmittingMap={isSubmittingMap}
               submitErrorMap={submitErrorMap}

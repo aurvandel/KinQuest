@@ -164,6 +164,11 @@ export function verifyAdminPassword(password: string): boolean {
   return false;
 }
 
+export function hasActiveAdminPassword(): boolean {
+  const store = loadPasswordStore();
+  return store.passwords.some((pwd) => pwd.isActive);
+}
+
 /**
  * Deactivate an admin password by ID
  */

@@ -23,6 +23,7 @@ import {
 interface MissionsListProps {
   items: ScavengerItem[];
   submissions: Submission[];
+  currentUserId: string;
   onUploadSubmission: (itemId: string, base64Image: string) => Promise<void>;
   isSubmittingMap: { [itemId: string]: boolean };
   submitErrorMap: { [itemId: string]: string | null };
@@ -34,6 +35,7 @@ interface MissionsListProps {
 export function MissionsList({
   items,
   submissions,
+  currentUserId,
   onUploadSubmission,
   isSubmittingMap,
   submitErrorMap,
@@ -67,7 +69,7 @@ export function MissionsList({
       : items.filter((item) => item.category === selectedCategory);
 
   const getMissionStatus = (itemId: string) => {
-    const itemSubmissions = submissions.filter((sub) => sub.itemId === itemId);
+    const itemSubmissions = submissions.filter((sub) => sub.itemId === itemId && sub.userId === currentUserId);
     if (itemSubmissions.some((sub) => sub.status === "approved")) {
       return { status: "approved", score: itemSubmissions.find((s) => s.status === "approved") };
     }
@@ -493,8 +495,57 @@ export function MissionsList({
                       <p className="text-[11px] text-green-700/90 leading-relaxed font-medium pl-5">
                         <strong>AI Judge says:</strong> "{associatedSub.aiExplanation || "Correct match found!"}"
                       </p>
+                      {associatedSub.imageUrl && (
+                        <div className="pt-2">
+                          <img
+                            src={associatedSub.imageUrl}
+                            alt="Approved submission"
+                            className="w-full h-auto max-h-64 object-cover rounded-lg border border-green-200"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
+
+                  {/* Recent submissions gallery */}
+                  {status !== "open" && status !== "approved" && (() => {
+                    const itemSubmissions = submissions.filter((sub) => sub.itemId === item.id && sub.userId === currentUserId);
+                    const recentSubmissions = itemSubmissions.slice(0, 3);
+                    return recentSubmissions.length > 0 ? (
+                      <div className="bg-brand-beige-light/30 border border-brand-border rounded-xl p-3 space-y-2">
+                        <p className="text-xs font-bold text-brand-moss uppercase tracking-wider">
+                          Submission{recentSubmissions.length !== 1 ? 's' : ''} ({recentSubmissions.length})
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {recentSubmissions.map((sub) => (
+                            <div key={sub.id} className="relative group">
+                              <img
+                                src={sub.imageUrl}
+                                alt="Submission preview"
+                                className="w-full aspect-square object-cover rounded-lg border border-brand-border/50 group-hover:border-brand-moss/50 transition"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition rounded-lg flex items-center justify-center">
+                                <div className="opacity-0 group-hover:opacity-100 transition">
+                                  {sub.status === "approved" && (
+                                    <CheckCircle2 className="h-6 w-6 text-green-400" />
+                                  )}
+                                  {sub.status === "rejected" && (
+                                    <XCircle className="h-6 w-6 text-red-400" />
+                                  )}
+                                  {sub.status === "pending" && (
+                                    <Clock className="h-6 w-6 text-amber-400 animate-pulse" />
+                                  )}
+                                </div>
+                              </div>
+                              <span className="absolute bottom-1 right-1 text-[8px] font-bold bg-brand-moss/80 text-white px-1.5 py-0.5 rounded opacity-75">
+                                {sub.username}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
 
                   {/* Camera control area */}
                   {status !== "approved" && (

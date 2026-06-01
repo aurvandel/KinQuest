@@ -1,3 +1,4 @@
+// @ts-ignore - local fallback when @types/react is not available
 import React, { useState } from "react";
 import { Lock, AlertCircle, Loader2, Check } from "lucide-react";
 

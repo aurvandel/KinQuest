@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import http from "http";
+import fs from "fs";
 import { WebSocketServer } from "ws";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
@@ -26,6 +27,7 @@ import {
   saveAppSettings,
   AppSettings
 } from "./db-manager";
+import { hasActiveAdminPassword, verifyAdminPassword } from "./password-manager";
 
 dotenv.config();
 
@@ -66,6 +68,51 @@ function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lo
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c; // distance in metres
+}
+
+// Image upload helper: save base64 image to disk and return URL
+function saveImageToDisk(base64Data: string, mimeType: string): { url: string; filePath: string } | null {
+  try {
+    const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+    
+    // Ensure uploads directory exists
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    // Determine file extension from mime type
+    const mimeToExt: { [key: string]: string } = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/gif": "gif",
+      "image/webp": "webp"
+    };
+    const ext = mimeToExt[mimeType] || "jpg";
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 10000);
+    const filename = `img_${timestamp}_${random}.${ext}`;
+    const filePath = path.join(uploadsDir, filename);
+
+    // Extract base64 content if it has data URI prefix
+    let imageBuffer = base64Data;
+    const match = base64Data.match(/^data:[^;]+;base64,(.*)$/);
+    if (match) {
+      imageBuffer = match[1];
+    }
+
+    // Write file to disk
+    fs.writeFileSync(filePath, Buffer.from(imageBuffer, "base64"));
+    
+    return {
+      url: `/api/uploads/${filename}`,
+      filePath: filePath
+    };
+  } catch (error) {
+    console.error("Image save error:", error);
+    return null;
+  }
 }
 
 // 1. Database mode & error diagnostic status route for UI reporting
@@ -116,6 +163,36 @@ app.get("/api/game-state", async (req, res) => {
 });
 
 // 3. Authenticate / register callsing profile
+app.post("/api/auth/admin-verify", (req, res) => {
+  const { password } = req.body;
+  if (!password || typeof password !== "string") {
+    return res.status(400).json({ error: "Admin password is required" });
+  }
+
+  const envPassword = process.env.ADMIN_PASSWORD;
+  const hasEnvPassword = typeof envPassword === "string" && envPassword.length > 0;
+  const envMatch = hasEnvPassword && password === envPassword;
+  const hasStorePassword = hasActiveAdminPassword();
+
+  let storeMatch = false;
+  try {
+    storeMatch = verifyAdminPassword(password);
+  } catch (err) {
+    console.warn("Admin password store verification failed:", err);
+  }
+
+  if (!hasEnvPassword && !hasStorePassword) {
+    console.warn("Admin password verification is not configured; allowing admin login without enforcement.");
+    return res.json({ success: true, passwordConfigured: false });
+  }
+
+  if (!envMatch && !storeMatch) {
+    return res.status(401).json({ error: "Invalid admin password" });
+  }
+
+  res.json({ success: true, passwordConfigured: true });
+});
+
 app.post("/api/auth/register", async (req, res) => {
   const { username, role } = req.body;
   if (!username || typeof username !== "string" || username.trim().length === 0) {
@@ -223,6 +300,20 @@ app.post("/api/verify-submission", async (req, res) => {
 
     const subId = `sub_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
+    // Save image to disk
+    const match = imageBase64.match(/^data:([^;]+);base64,(.*)$/);
+    let mimeType = "image/jpeg";
+    let data = imageBase64;
+    
+    if (match) {
+      mimeType = match[1];
+      data = match[2];
+    }
+
+    // Save image and get URL
+    const imageResult = saveImageToDisk(imageBase64, mimeType);
+    const imageUrl = imageResult?.url || imageBase64; // fallback to base64 if save fails
+
     // Handle immediate coordinate verification failure
     if (locationFailed) {
       const failedSubmission: Submission = {
@@ -230,7 +321,7 @@ app.post("/api/verify-submission", async (req, res) => {
         userId: user.id,
         username: user.username,
         itemId: itemId,
-        imageUrl: imageBase64,
+        imageUrl: imageUrl,
         status: "rejected",
         aiExplanation: gpsExplanation,
         createdAt: new Date().toISOString(),
@@ -248,16 +339,7 @@ app.post("/api/verify-submission", async (req, res) => {
       });
     }
 
-    // Extract photo base64 structure
-    const match = imageBase64.match(/^data:([^;]+);base64,(.*)$/);
-    let mimeType = "image/jpeg";
-    let data = imageBase64;
-    
-    if (match) {
-      mimeType = match[1];
-      data = match[2];
-    }
-
+    // Extract photo base64 structure for AI processing
     const imagePart = {
       inlineData: {
         mimeType,
@@ -332,7 +414,7 @@ You MUST respond strictly in valid JSON matching this schema:
       userId: user.id,
       username: user.username,
       itemId: itemId,
-      imageUrl: imageBase64,
+      imageUrl: imageUrl,
       status: isMatch ? "approved" : "rejected",
       aiExplanation: parsedResult.explanation,
       createdAt: new Date().toISOString(),
@@ -389,6 +471,44 @@ app.get("/api/chat-history", async (req, res) => {
   }
 });
 
+// 8. Serve uploaded submission images
+app.get("/api/uploads/:filename", (req, res) => {
+  const { filename } = req.params;
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const filePath = path.join(uploadsDir, filename);
+
+  // Security: validate that the requested file is within the uploads directory
+  const resolvedPath = path.resolve(filePath);
+  const resolvedUploadsDir = path.resolve(uploadsDir);
+  
+  if (!resolvedPath.startsWith(resolvedUploadsDir)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  // Check if file exists
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "Image not found" });
+  }
+
+  // Determine content type based on file extension
+  const ext = path.extname(filename).toLowerCase();
+  const contentTypeMap: { [key: string]: string } = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp"
+  };
+  const contentType = contentTypeMap[ext] || "application/octet-stream";
+
+  // Set cache headers for images (1 day cache since they're immutable by filename)
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.setHeader("Content-Type", contentType);
+  
+  // Stream the file
+  fs.createReadStream(filePath).pipe(res);
+});
+
 // Configure Vite pipeline or production hosting bundle serving
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -399,8 +519,33 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    const assetsPath = path.join(distPath, "assets");
+
+    // Fingerprinted assets can be cached aggressively.
+    app.use(
+      "/assets",
+      express.static(assetsPath, {
+        maxAge: "1y",
+        immutable: true,
+      }),
+    );
+
+    // Keep non-fingerprinted files revalidating to avoid stale shells.
+    app.use(
+      express.static(distPath, {
+        index: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+          } else {
+            res.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+          }
+        },
+      }),
+    );
+
     app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
