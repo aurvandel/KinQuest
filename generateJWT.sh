@@ -2,7 +2,7 @@
 #!/usr/bin/env bash
 
 # Define the secret key used for signing the token
-SECRET="your-super-secret-jwt-token-with-at-least-32-characters-long"
+SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
 
 # 1. Base64 URL Encoding Function
 # Converts standard Base64 to URL-safe Base64 by swapping characters and stripping padding

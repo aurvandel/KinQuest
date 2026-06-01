@@ -14,7 +14,7 @@ services:
       - NODE_ENV=production
       # Links automatically to the internal Kong API gateway
       - SUPABASE_URL=http://kong:8000
-      - SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewoKICAicm9sZSI6ICJhbm9uIiwKICAiaXNzIjogInN1cGFiYXNlIiwKICAiaWF0IjogMTc4MDI4NzU3OSwKICAiZXhwIjogMTgxMTgyMzU3OQp9.V5tDW8iEMR82RmuQOcmTStCpE78Uk7HV2U8nbUF-yA  
+      - SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewoKICAicm9sZSI6ICJhbm9uIiwKICAiaXNzIjogInN1cGFiYXNlIiwKICAiaWF0IjogMTc4MDI4Nzk4OSwKICAiZXhwIjogMTgxMTgyMzk4OQp9.WCZ_bWTv1m-hwz2UF831_Zlc5BiIA9pwoEGcWrUduxg
       # Place your personal Gemini API key here for AI-powered verification
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     depends_on:
