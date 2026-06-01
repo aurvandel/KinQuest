@@ -792,6 +792,31 @@ CREATE TABLE IF NOT EXISTS submissions (
     setLocationType("simulated");
   };
 
+  const handleRevertToDeviceGPS = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserLat(position.coords.latitude);
+          setUserLng(position.coords.longitude);
+          setLocationType("gps");
+        },
+        (error) => {
+          console.warn("Failed to get current device GPS:", error);
+          alert("Unable to access device GPS. Please enable location permissions.");
+        }
+      );
+    } else {
+      alert("Geolocation is not supported by your browser.");
+    }
+  };
+
+  const handleCreateMissionFromMap = (lat: number, lng: number) => {
+    // Pre-set the map coordinates for the new mission
+    setUserLat(lat);
+    setUserLng(lng);
+    setShowCreateMissionModal(true);
+  };
+
   // Map clicks link directly to challenge cards and expands them!
   const handleSelectChallengeFromMap = (itemId: string) => {
     setActiveTab("missions");
@@ -1043,6 +1068,19 @@ CREATE TABLE IF NOT EXISTS submissions (
               <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
             </button>
 
+            {/* Database Status Indicator Icon - visible to all */}
+            <button
+              type="button"
+              className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                dbStatus.mode === "supabase"
+                  ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
+                  : "text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200"
+              }`}
+              title={`Storage: ${dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}`}
+            >
+              <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+            </button>
+
             {/* Admin Branding Settings Cog */}
             {profile?.role === "admin" && (
               <button
@@ -1254,7 +1292,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           </span>
         </div>
 
-        {/* Database Connectivity Status */}
+        {/* Database Connectivity Status - Admin Only */}
+        {profile?.role === "admin" && (
         <div className="bg-white/80 border border-[#d2d2c8] rounded-2xl p-4 max-w-md mx-auto shadow-sm space-y-3">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2 font-medium text-[#5a5a40]">
@@ -1341,6 +1380,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             </div>
           )}
         </div>
+        )}
 
         {/* Dynamic Panel Renders */}
         <div className="pt-2">
@@ -1368,6 +1408,8 @@ CREATE TABLE IF NOT EXISTS submissions (
               userLng={userLng}
               onSelectChallenge={handleSelectChallengeFromMap}
               onSimulateCoordinates={handleSimulateCoordinates}
+              onRevertToDeviceGPS={handleRevertToDeviceGPS}
+              onCreateMissionFromMap={handleCreateMissionFromMap}
             />
           )}
 

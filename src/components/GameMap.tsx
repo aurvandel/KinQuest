@@ -16,6 +16,8 @@ interface GameMapProps {
   selectedItemId?: string | null;
   onSelectChallenge?: (itemId: string) => void;
   onSimulateCoordinates?: (lat: number, lng: number) => void;
+  onRevertToDeviceGPS?: () => void;
+  onCreateMissionFromMap?: (lat: number, lng: number) => void;
 }
 
 export function GameMap({
@@ -24,7 +26,9 @@ export function GameMap({
   userLng,
   selectedItemId,
   onSelectChallenge,
-  onSimulateCoordinates
+  onSimulateCoordinates,
+  onRevertToDeviceGPS,
+  onCreateMissionFromMap
 }: GameMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -115,6 +119,32 @@ export function GameMap({
         const { lat, lng } = e.latlng;
         if (onSimulateCoordinates) {
           onSimulateCoordinates(lat, lng);
+        }
+      });
+
+      // Bind Map double-click to create mission at location
+      map.on("dblclick", (e: any) => {
+        const { lat, lng } = e.latlng;
+        if (onCreateMissionFromMap) {
+          onCreateMissionFromMap(lat, lng);
+        }
+      });
+
+      // Track long-tap for mobile (750ms hold)
+      let touchStartTime = 0;
+      let touchCoords = { lat: 0, lng: 0 };
+      
+      map.on("touchstart", (e: any) => {
+        touchStartTime = Date.now();
+        if (e.latlng) {
+          touchCoords = e.latlng;
+        }
+      });
+
+      map.on("touchend", () => {
+        const touchDuration = Date.now() - touchStartTime;
+        if (touchDuration > 750 && onCreateMissionFromMap) {
+          onCreateMissionFromMap(touchCoords.lat, touchCoords.lng);
         }
       });
 
@@ -269,19 +299,29 @@ export function GameMap({
         <div className="flex items-center gap-2">
           <Compass className="h-5 w-5 text-brand-moss animate-pulse" />
           <div>
-            <h3 className="text-sm font-serif font-bold italic text-brand-moss">Live Geolocation Tracker</h3>
-            <p className="text-[10px] text-brand-muted">Find challenges within their required radiuses</p>
+            <h3 className="text-sm font-serif font-bold italic text-brand-moss">Live Map</h3>
+            <p className="text-[10px] text-brand-muted">Double-click to create a mission, click for coordinates</p>
           </div>
         </div>
 
-        <button
-          onClick={recenterMap}
-          type="button"
-          className="bg-white border border-brand-border hover:bg-brand-beige-light p-1.5 rounded-full text-brand-moss transition shadow-sm"
-          title="Recenter location"
-        >
-          <Crosshair className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onRevertToDeviceGPS?.()}
+            type="button"
+            className="bg-white border border-brand-border hover:bg-brand-beige-light p-1.5 rounded-full text-brand-moss transition shadow-sm"
+            title="Use device GPS location"
+          >
+            <Navigation className="h-4 w-4" />
+          </button>
+          <button
+            onClick={recenterMap}
+            type="button"
+            className="bg-white border border-brand-border hover:bg-brand-beige-light p-1.5 rounded-full text-brand-moss transition shadow-sm"
+            title="Recenter location"
+          >
+            <Crosshair className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Map iframe mockup / Leaflet div container */}
@@ -296,7 +336,7 @@ export function GameMap({
               <span> Geolocation Emulator</span>
             </p>
             <p className="text-[10.5px] text-gray-500 leading-normal">
-              Click anywhere on the map to jump your GPS position! Useful for testing distance approvals in the editor preview.
+              Click to emulate GPS movement. Double-click (or long-tap on mobile) to create a new geofenced mission at that location!
             </p>
 
             <div className="flex flex-wrap gap-1.5 pt-1 border-t border-brand-border/50">

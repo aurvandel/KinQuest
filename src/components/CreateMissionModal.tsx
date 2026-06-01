@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { X, Send, Compass, Check, AlertCircle, Loader2 } from "lucide-react";
 import { ScavengerItem } from "../types";
 
@@ -28,6 +28,14 @@ export function CreateMissionModal({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Auto-fill coordinates when modal opens with valid userLat/userLng
+  useEffect(() => {
+    if (isOpen && userLat !== null && userLng !== null && !lat && !lng) {
+      setLat(userLat.toFixed(5));
+      setLng(userLng.toFixed(5));
+    }
+  }, [isOpen, userLat, userLng, lat, lng]);
 
   if (!isOpen) return null;
 
