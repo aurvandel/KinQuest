@@ -17,13 +17,13 @@ HEADER='{"alg":"HS256","typ":"JWT"}'
 
 # 3. Define Payload (Includes standard 'iat' and 'exp' claims)
 CURRENT_TIME=$(date +%s)
-EXPIRATION_TIME=$((CURRENT_TIME + 3600)) # Token expires in 1 hour (3600 seconds)
+EXPIRATION_TIME=$((CURRENT_TIME + 31536000))
 
 PAYLOAD=$(cat <<EOF
 {
 
-  "role": 'anon',
-  "iss": 'supabase',
+  "role": "anon",
+  "iss": "supabase",
   "iat": $CURRENT_TIME,
   "exp": $EXPIRATION_TIME
 }
