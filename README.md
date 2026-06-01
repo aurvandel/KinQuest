@@ -1,20 +1,159 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# KinQuest - Family Reunion Scavenger Hunt App
 
-# Run and deploy your AI Studio app
+A real-time, collaborative family reunion scavenger hunt application with AI-powered verification, geolocation challenges, live leaderboards, and interactive maps.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/78378374-0688-4625-bd0e-8313bf9e81e7
+- **Scavenger Hunt Missions**: Create photo and GPS-based challenges with point rewards
+- **AI Judge System**: Google Gemini AI verifies photo submissions in real-time with personalized feedback
+- **Geofencing**: GPS-based challenges with configurable radius constraints
+- **Live Leaderboard**: Real-time scoring and family member rankings
+- **Interactive Map**: View all challenges with geolocation, simulate positions, and track proximity
+- **Chat System**: Real-time family communication via WebSocket
+- **Admin Controls**: 
+  - Create and manage custom missions
+  - Configure game settings (title, icon, AI judge criteria)
+  - Generate invite codes and QR codes
+  - Update geofencing parameters
+- **User Permissions**: 
+  - Control location sharing, notifications, AI judging level
+  - Create and delete personal missions
+  - Privacy mode for incognito gameplay
+- **Photo Feed**: View all family submissions and community activity
 
-## Run Locally
+## Tech Stack
 
-**Prerequisites:**  Node.js
+- **Frontend**: React 18, TypeScript, Tailwind CSS
+- **Backend**: Node.js Express, WebSocket (ws)
+- **Database**: Supabase (PostgreSQL)
+- **AI**: Google Gemini API for photo verification
+- **Build Tools**: Vite, esbuild
+- **Containerization**: Docker & Docker Compose
 
+## Prerequisites
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Node.js 16+
+- Docker & Docker Compose (for local Supabase)
+- Google Gemini API key
+- (Optional) Supabase project for production deployment
+
+## Installation & Setup
+
+1. **Clone and install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Configure environment variables** in `.env.local`:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   ADMIN_PASSWORD=your_secure_admin_password
+   SUPABASE_URL=http://localhost:8000  # for local dev
+   SUPABASE_ANON_KEY=your_anon_key
+   ```
+
+3. **Start the local Supabase stack:**
+   ```bash
+   docker compose up -d
+   ```
+   This starts:
+   - PostgreSQL database (port 5432)
+   - PostgREST API (port 8000)
+   - Kong API Gateway (port 8000)
+   - Node.js app (port 3000)
+
+4. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
+   Open http://localhost:3000 in your browser
+
+## Build & Deploy
+
+```bash
+npm run build
+npm run start
+```
+
+The app automatically detects database availability and falls back to local JSON storage if needed.
+
+## Project Structure
+
+```
+├── src/
+│   ├── components/          # React UI components
+│   │   ├── MissionsList.tsx      # Scavenger hunt missions display
+│   │   ├── GameMap.tsx           # Interactive geolocation map
+│   │   ├── Leaderboard.tsx       # Real-time scores
+│   │   ├── Chat.tsx              # WebSocket chat
+│   │   ├── AdminSettingsModal.tsx # Admin configuration
+│   │   └── ...
+│   ├── App.tsx              # Main app shell
+│   ├── types.ts             # TypeScript interfaces
+│   └── index.css            # Global styles
+├── server.ts                # Express API & WebSocket server
+├── db-manager.ts            # Database layer (Supabase + fallback)
+├── password-manager.ts      # Admin authentication
+├── docker-compose.yml       # Local development stack
+├── supabase/init.sql        # Database schema
+└── Dockerfile              # Container configuration
+```
+
+## Key Features Explained
+
+### Mission Creation & Management
+- Create custom hunts with photo or GPS geofencing
+- Set point values, categories, and difficulty
+- Delete missions (admins can delete any, users can delete their own)
+- Optional geofence radius (in meters)
+
+### AI Verification
+- Photos submitted by family members are evaluated by Gemini
+- AI provides personalized feedback and bonus points for family spirit
+- Status tracking: pending → approved/rejected
+
+### Geolocation System
+- Real GPS tracking with fallback to simulated coordinates
+- Proximity alerts when near challenges
+- Distance calculation in real-time
+- Configurable geofence radius per mission
+
+### Admin Dashboard
+- Manage game branding (name, icon)
+- Set default geolocation center and radius
+- Configure AI judge personality/criteria
+- Generate and share invite codes
+- Display QR code for easy joining
+
+## Database Schema
+
+Key tables:
+- **profiles**: User accounts, roles, permissions, scores
+- **items**: Scavenger hunt challenges (missions)
+- **submissions**: Photo proof submissions with AI verification status
+- **messages**: Real-time chat messages
+
+## API Endpoints
+
+- `POST /api/register` - Create user account
+- `POST /api/challenges` - Create mission
+- `DELETE /api/challenges/:id` - Delete mission
+- `POST /api/verify-submission` - Submit photo for AI verification
+- `DELETE /api/submissions/:id` - Delete submission
+- `WebSocket /api/chat` - Real-time chat connection
+
+## Development Notes
+
+- The app uses both Supabase and local JSON fallback
+- WebSocket handles real-time features (chat, online status)
+- Missions are stored with creator ID for permission management
+- All API responses include error details for debugging
+
+## Future Enhancements
+
+- Team-based competitions
+- Custom challenge templates
+- Bonus challenges and achievements
+- Photo filters and AR features
+- Mobile app native versions
+- Twilio SMS notifications

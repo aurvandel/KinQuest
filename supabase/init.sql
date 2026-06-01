@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS items (
   lat DOUBLE PRECISION,
   lng DOUBLE PRECISION,
   radius DOUBLE PRECISION,
+  created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
+CREATE INDEX IF NOT EXISTS idx_items_created_by ON items(created_by);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_item_id ON submissions(item_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);

@@ -689,7 +689,7 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
       lat: newItem.lat,
       lng: newItem.lng,
       radius: newItem.radius,
-      createdBy: newItem.createdBy
+      created_by: newItem.createdBy || null
     };
 
     const { error } = await supabase.from("items").insert(row);
