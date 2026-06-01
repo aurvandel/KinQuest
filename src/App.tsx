@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { ScavengerItem, PlayerProfile, Submission, ChatMessage, AppSettings } from "./types";
 import { MissionsList } from "./components/MissionsList";
 import { Leaderboard } from "./components/Leaderboard";
@@ -81,6 +81,9 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [onlinePlayers, setOnlinePlayers] = useState<{ id: string; username: string }[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  
+  // Ref to track current active tab in WebSocket handlers without causing reconnection
+  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat">("missions");
 
   // Geolocation states
   const [userLat, setUserLat] = useState<number | null>(null);
@@ -266,21 +269,38 @@ CREATE TABLE IF NOT EXISTS submissions (
       .catch(err => console.error("Failed to load chat history:", err));
   }, [profile]);
 
+  // Ref to track if profile ID actually changed (to avoid reconnection on object refresh)
+  const profileIdRef = useRef<string | null>(null);
+
   // Connect Real-time WebSocket overlay
   useEffect(() => {
+    // Check if profile ID actually changed
+    const profileIdChanged = profile && profileIdRef.current !== profile.id;
+    
     if (!profile) {
+      console.log("No profile, closing WebSocket");
       if (socket) {
         socket.close();
         setSocket(null);
       }
+      profileIdRef.current = null;
       return;
     }
+
+    // If profile ID didn't change and socket exists, don't reconnect
+    if (!profileIdChanged && socket) {
+      console.log("Profile unchanged and socket exists, skipping reconnection");
+      return;
+    }
+
+    profileIdRef.current = profile.id;
 
     if (!window.location.host) {
-      console.warn("Skipping WebSocket connection: window.location.host is empty.");
+      console.warn("Skipping WebSocket: window.location.host is empty");
       return;
     }
 
+    console.log("🔌 Initiating WebSocket connection for profile:", profile.id);
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}`;
     
@@ -288,32 +308,36 @@ CREATE TABLE IF NOT EXISTS submissions (
     try {
       ws = new WebSocket(wsUrl);
     } catch (e) {
-      console.warn("Failed to initiate WebSocket connection:", e);
+      console.error("Failed to create WebSocket:", e);
       return;
     }
 
     ws.onopen = () => {
-      console.log("WebSocket connected to:", wsUrl);
-      ws.send(JSON.stringify({
+      console.log("✅ WebSocket OPEN, sending join message");
+      const joinMessage = {
         type: "join",
         userId: profile.id,
         username: profile.username
-      }));
+      };
+      ws.send(JSON.stringify(joinMessage));
     };
 
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+        
         if (payload.type === "message") {
+          console.log("💬 Received chat message");
           setChatMessages((prev) => {
             if (prev.some(m => m.id === payload.message.id)) return prev;
             return [...prev, payload.message];
           });
           
-          if (activeTab !== "chat") {
+          if (activeTabRef.current !== "chat") {
             setUnreadCount((c) => c + 1);
           }
         } else if (payload.type === "online_users") {
+          console.log("👥 Online users:", payload.users?.length || 0);
           setOnlinePlayers(payload.users || []);
         }
       } catch (e) {
@@ -322,20 +346,23 @@ CREATE TABLE IF NOT EXISTS submissions (
     };
 
     ws.onclose = () => {
-      console.log("WebSocket connection closed.");
+      console.log("❌ WebSocket closed");
       setSocket(null);
     };
 
     ws.onerror = (err) => {
-      console.error("WebSocket critical error:", err);
+      console.error("⚠️ WebSocket error:", err);
     };
 
     setSocket(ws);
 
     return () => {
-      ws.close();
+      console.log("Cleanup: closing WebSocket");
+      if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+        ws.close();
+      }
     };
-  }, [profile, activeTab]);
+  }, [profile?.id]);
 
   // Reset unread counts when clicking chat tab
   useEffect(() => {
@@ -344,16 +371,41 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   }, [activeTab]);
 
+  // Update the ref to track current active tab for WebSocket handlers
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
   const handleSendMessage = (text: string, receiverId: string | null) => {
-    if (socket && socket.readyState === WebSocket.OPEN && profile) {
-      socket.send(JSON.stringify({
-        type: "send_message",
-        userId: profile.id,
-        username: profile.username,
-        receiverId,
-        text
-      }));
+    console.log("handleSendMessage called:", { text, receiverId, hasProfile: !!profile, socketState: socket?.readyState });
+    
+    if (!profile) {
+      console.error("Cannot send message: profile is null");
+      return;
     }
+    
+    if (!socket) {
+      console.warn("Socket not ready yet, will retry in 500ms");
+      setTimeout(() => handleSendMessage(text, receiverId), 500);
+      return;
+    }
+    
+    if (socket.readyState !== WebSocket.OPEN) {
+      console.warn("Socket not OPEN (state:", socket.readyState, "), will retry in 500ms");
+      setTimeout(() => handleSendMessage(text, receiverId), 500);
+      return;
+    }
+    
+    const message = {
+      type: "send_message",
+      userId: profile.id,
+      username: profile.username,
+      receiverId,
+      text
+    };
+    
+    console.log("📤 Sending message via WebSocket:", message);
+    socket.send(JSON.stringify(message));
   };
 
   // Pre-populate admin inputs when settings load or when opening the panel

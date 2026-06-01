@@ -561,18 +561,29 @@ async function startServer() {
     ws.on("message", async (data: string) => {
       try {
         const payload = JSON.parse(data);
-        if (!payload.type) return;
+        console.log("Server received message from client:", payload);
+        if (!payload.type) {
+          console.log("Message has no type, ignoring");
+          return;
+        }
 
         if (payload.type === "join") {
           const { userId, username } = payload;
+          console.log("Client joining:", { userId, username });
           if (userId && username) {
             activeSockets.set(ws, { userId, username });
+            console.log("Added socket to activeSockets, total active:", activeSockets.size);
             // Broadcast active user list
             broadcastOnlineUsers(wss, activeSockets);
           }
         } else if (payload.type === "send_message") {
           const { userId, username, receiverId, text } = payload;
-          if (!userId || !text || text.trim() === "") return;
+          console.log("Received send_message event:", { userId, username, receiverId, textLength: text?.length });
+          
+          if (!userId || !text || text.trim() === "") {
+            console.log("Rejecting message: missing userId, text, or text is empty");
+            return;
+          }
 
           const chatMsg = {
             id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -583,8 +594,10 @@ async function startServer() {
             createdAt: new Date().toISOString()
           };
 
+          console.log("Creating chat message:", chatMsg);
           // Save message to database/file
           await saveChatMessage(chatMsg);
+          console.log("Message saved successfully");
 
           // Broadcast appropriately
           const rawBroadcast = JSON.stringify({
@@ -594,6 +607,7 @@ async function startServer() {
 
           if (!receiverId) {
             // Shout box - broadcast to ALL
+            console.log("Broadcasting to all clients (shout box), total clients:", wss.clients.size);
             wss.clients.forEach((client) => {
               if (client.readyState === 1) {
                 client.send(rawBroadcast);
@@ -601,9 +615,11 @@ async function startServer() {
             });
           } else {
             // Private message - send only to sender and receiver
+            console.log("Broadcasting to specific recipients (DM), searching in", activeSockets.size, "active sockets");
             activeSockets.forEach((info, clientSocket) => {
               if (info.userId === receiverId || info.userId === userId) {
                 if (clientSocket.readyState === 1) {
+                  console.log("Sending DM to:", info.userId);
                   clientSocket.send(rawBroadcast);
                 }
               }
@@ -618,6 +634,7 @@ async function startServer() {
     ws.on("close", () => {
       console.log("WebSocket client disconnected.");
       activeSockets.delete(ws);
+      console.log("Remaining active sockets:", activeSockets.size);
       broadcastOnlineUsers(wss, activeSockets);
     });
 

@@ -165,26 +165,21 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
             </div>
           </div>
         ) : (
-          // Global Shoutbox list (shows list of active online users as a summary)
-          <div className="flex-1 p-4 overflow-y-auto">
-            <h3 className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans mb-3">
-              Active Transmitters ({onlinePlayers.length})
-            </h3>
-            <div className="space-y-2">
-              {onlinePlayers.map((player) => (
-                <div key={player.id} className="flex items-center gap-2 text-xs">
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
-                  <span className="font-semibold text-[#4d4d42] truncate">
-                    {player.username} {player.id === profile.id && "(You)"}
-                  </span>
-                </div>
-              ))}
-              {onlinePlayers.length === 0 && (
-                <div className="text-[10px] text-[#8c8c82] italic">Mapping live connections...</div>
-              )}
+          // Global Shoutbox info
+          <div className="flex-1 p-4 overflow-y-auto flex flex-col">
+            <div className="bg-[#5a5a40]/5 p-4 rounded-2xl border border-[#5a5a40]/10 text-center mb-6">
+              <p className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
+                Active Hunters
+              </p>
+              <p className="text-2xl font-bold text-[#5a5a40] mt-2">
+                {onlinePlayers.length}
+              </p>
+              <p className="text-[9px] text-[#8c8c82] mt-1">
+                {onlinePlayers.length === 1 ? "person online" : "people online"}
+              </p>
             </div>
             
-            <div className="mt-8 border-t border-[#e5e5dd] pt-4 text-[10px] text-[#8c8c82] leading-relaxed">
+            <div className="mt-auto border-t border-[#e5e5dd] pt-4 text-[10px] text-[#8c8c82] leading-relaxed">
               <p className="font-medium text-[#5a5a40] mb-1 flex items-center gap-1">
                 <ShieldCheck className="h-3.5 w-3.5 text-[#8c8c5a]" /> 
                 Explorer Rules:
