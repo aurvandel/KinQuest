@@ -237,7 +237,7 @@ app.post("/api/profile/update", async (req, res) => {
 
 // 4. Create custom scavenge check items
 app.post("/api/challenges", async (req, res) => {
-  const { title, description, points, category, icon, lat, lng, radius } = req.body;
+  const { title, description, points, category, icon, lat, lng, radius, createdBy } = req.body;
 
   if (!title || !description || !points) {
     return res.status(400).json({ error: "Missing required challenge title, criteria or points." });
@@ -252,11 +252,60 @@ app.post("/api/challenges", async (req, res) => {
       icon: icon || "Sparkles",
       lat: lat ? Number(lat) : null,
       lng: lng ? Number(lng) : null,
-      radius: radius ? Number(radius) : null
+      radius: radius ? Number(radius) : null,
+      createdBy: createdBy || undefined
     });
     res.json(newItem);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to save challenge description", details: err.message });
+  }
+});
+
+// Delete a mission - admin or creator only
+app.delete("/api/challenges/:id", async (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+
+  if (!id || !userId) {
+    return res.status(400).json({ error: "Missing challenge ID or user ID" });
+  }
+
+  try {
+    const db = await getAppState();
+    const item = db.items[id];
+
+    if (!item) {
+      return res.status(404).json({ error: "Challenge not found" });
+    }
+
+    const user = db.users[userId];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Check permissions: admin or creator
+    const isAdmin = user.role === "admin";
+    const isCreator = item.createdBy === userId;
+
+    if (!isAdmin && !isCreator) {
+      return res.status(403).json({ error: "You don't have permission to delete this mission" });
+    }
+
+    // Delete from database
+    delete db.items[id];
+    
+    // Also delete associated submissions for this item
+    Object.keys(db.submissions).forEach((subId) => {
+      if (db.submissions[subId].itemId === id) {
+        delete db.submissions[subId];
+      }
+    });
+
+    // Note: Changes are auto-persisted through the db system
+    // The local fallback handles this automatically
+    res.json({ success: true, message: "Mission deleted successfully" });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to delete mission", details: err.message });
   }
 });
 

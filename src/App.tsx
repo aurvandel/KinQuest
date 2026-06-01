@@ -6,6 +6,9 @@ import { Feed } from "./components/Feed";
 import { GameMap } from "./components/GameMap";
 import { Chat } from "./components/Chat";
 import { AdminAuthModal } from "./components/AdminAuthModal";
+import { UserSettingsModal } from "./components/UserSettingsModal";
+import { AdminSettingsModal } from "./components/AdminSettingsModal";
+import { CreateMissionModal } from "./components/CreateMissionModal";
 
 import {
   Flame,
@@ -66,6 +69,7 @@ export default function App() {
 
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
+  const [showCreateMissionModal, setShowCreateMissionModal] = useState(false);
   const [profileDisplayNameInput, setProfileDisplayNameInput] = useState("");
   const [profileRoleInput, setProfileRoleInput] = useState<"user" | "admin" | "">("user");
   const [profileShareLocation, setProfileShareLocation] = useState(true);
@@ -747,13 +751,38 @@ CREATE TABLE IF NOT EXISTS submissions (
     const response = await fetch("/api/challenges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newChallenge)
+      body: JSON.stringify({ ...newChallenge, createdBy: profile?.id })
     });
 
     if (!response.ok) {
       throw new Error("Challenge registration failed.");
     }
     // Saved in DB!
+    setShowCreateMissionModal(false);
+  };
+
+  // Delete mission - admin or creator only
+  const handleDeleteMission = async (itemId: string) => {
+    const confirmed = window.confirm("Are you sure you want to delete this mission? This cannot be undone.");
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/api/challenges/${itemId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile?.id })
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete mission.");
+      }
+
+      // Remove from local state
+      setItems((prev) => prev.filter((item) => item.id !== itemId));
+    } catch (err: any) {
+      console.error("Delete mission error:", err);
+      alert(err instanceof Error ? err.message : "Failed to delete mission.");
+    }
   };
 
   // User simulated GPS movement updater
@@ -1058,453 +1087,77 @@ CREATE TABLE IF NOT EXISTS submissions (
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* Admin Customizer Control Console */}
-        {adminPanelOpen && (
-          <div id="admin-branding-panel" className="bg-white border-2 border-[#5a5a40]/30 rounded-[32px] p-6 shadow-md max-w-md mx-auto space-y-4 animate-fadeIn">
-            <div className="flex items-center justify-between border-b border-[#e5e5dd] pb-3">
-              <div className="flex items-center gap-2">
-                <Settings className="h-5 w-5 text-[#5a5a40]" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-[#5a5a40] font-sans">Identity Manager</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAdminPanelOpen(false)}
-                className="text-[11px] font-bold text-brand-muted hover:text-brand-dark cursor-pointer transition"
-              >
-                Close
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveSettings} className="space-y-4">
-              {/* Name Field */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Scavenger Game Title
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    required
-                    maxLength={32}
-                    placeholder="e.g. Stewart Quest"
-                    value={adminNameInput}
-                    onChange={(e) => setAdminNameInput(e.target.value)}
-                    className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl pl-4 pr-32 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-mono font-bold"
-                  />
-                  {/* Preset quick helper to suggest "Stewart Quest" */}
-                  <button
-                    type="button"
-                    onClick={() => setAdminNameInput("Stewart Quest")}
-                    className="absolute right-2 top-2 px-2 py-1 bg-[#5a5a40]/10 hover:bg-[#5a5a40]/20 text-[#5a5a40] rounded-lg text-[9px] font-bold font-sans transition cursor-pointer select-none"
-                    title="Pre-fill with example name"
-                  >
-                    Use: Stewart Quest
-                  </button>
-                </div>
-              </div>
-
-              {/* Icon Uploader */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Custom Branding Logo Icon
-                </label>
-                
-                <div className="flex items-center gap-3 bg-[#f5f5f0]/40 p-3 rounded-2xl border border-dashed border-[#dcdcd4]">
-                  {/* Current/New preview */}
-                  <div className="w-12 h-12 rounded-xl bg-[#5a5a40] flex items-center justify-center text-white text-xs overflow-hidden shrink-0 shadow-sm border border-[#5a5a40]/20">
-                    {adminIconInput ? (
-                      <img src={adminIconInput} alt="Custom Logo Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-4 h-4 border-2 border-white rounded-sm rotate-45 animate-spin-slow" />
-                    )}
-                  </div>
-
-                  <div className="flex-1 space-y-1">
-                    <input
-                      type="file"
-                      id="branding-logo-file"
-                      accept="image/*"
-                      onChange={handleIconUploadChange}
-                      className="hidden"
-                    />
-                    <label
-                      htmlFor="branding-logo-file"
-                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-[#d2d2c8] hover:border-[#5a5a40] text-[10px] font-bold rounded-lg text-[#5a5a40] cursor-pointer transition select-none"
-                    >
-                      <Upload className="h-3 w-3" />
-                      Choose Image...
-                    </label>
-                    <p className="text-[9px] text-[#8c8c82]">
-                      Supports PNG, JPG (under 2MB). Fits square grid.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Map Centering Configuration (Front-end Settings) */}
-              <div className="space-y-2 pt-2 border-t border-[#e5e5dd]/60">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Default Map Center GPS (Front-end)
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-[#8c8c82]">Latitude</span>
-                    <input
-                      type="number"
-                      step="any"
-                      required
-                      value={adminLatInput}
-                      onChange={(e) => setAdminLatInput(parseFloat(e.target.value) || 0)}
-                      className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-[#8c8c82]">Longitude</span>
-                    <input
-                      type="number"
-                      step="any"
-                      required
-                      value={adminLngInput}
-                      onChange={(e) => setAdminLngInput(parseFloat(e.target.value) || 0)}
-                      className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Default Geofencing Radius (Front-end & Back-end Settings) */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Default Geofencing Radius (meters)
-                </label>
-                <input
-                  type="number"
-                  required
-                  min={1}
-                  value={adminRadiusInput}
-                  onChange={(e) => setAdminRadiusInput(parseInt(e.target.value) || 100)}
-                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono"
-                />
-              </div>
-
-              {/* Backend AI Referee Instructions (Back-end settings) */}
-              <div className="space-y-1.5 pt-2 border-t border-[#e5e5dd]/60">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  AI Judge Prompt Criteria (Backend Settings)
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  value={adminAiPromptCriteriaInput}
-                  onChange={(e) => setAdminAiPromptCriteriaInput(e.target.value)}
-                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2.5 outline-none font-sans leading-relaxed text-[#2d2d2d]"
-                  placeholder="Set AI behavior rules..."
-                />
-                <p className="text-[9px] text-[#8c8c82]">
-                  Defines custom rules, funny personality constraints, or strict verification parameters parsed directly by the server-side Gemini prompt.
-                </p>
-              </div>
-
-              {/* Invite-Only and QR Code parameters (Admin Settings) */}
-              <div className="space-y-3 pt-3 border-t border-[#e5e5dd]/60">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  🛡️ Invite-Only Security (QR Code Auth)
-                </label>
-                
-                <div className="space-y-3 bg-[#f5f5f0]/50 p-4 rounded-2xl border border-[#dcdcd4]">
-                  {/* Master switch */}
-                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={adminInviteRequiredInput}
-                      onChange={(e) => setAdminInviteRequiredInput(e.target.checked)}
-                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
-                    />
-                    <div className="leading-none">
-                      <span className="text-xs font-bold text-[#5a5a40] block">Require Invite Link to Participate</span>
-                      <span className="text-[9px] text-[#8c8c82]">If enabled, hunters must scan the QR code or visit the invite URL once to unlock access.</span>
-                    </div>
-                  </label>
-
-                  {/* Code Input */}
-                  <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-[#8c8c82] uppercase tracking-widest block font-sans">Active Invite Token / Code</span>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. secret-hunt-2026"
-                        value={adminActiveInviteCodeInput}
-                        onChange={(e) => setAdminActiveInviteCodeInput(e.target.value.toLowerCase().trim().replace(/[^a-z0-9_-]/g, ''))}
-                        className="flex-1 text-xs bg-white border border-[#dcdcd4] rounded-xl px-3 py-1.5 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const rand = `hunt-${Math.floor(1000 + Math.random() * 9000)}`;
-                          setAdminActiveInviteCodeInput(rand);
-                        }}
-                        className="px-2.5 py-1 bg-[#5a5a40]/10 hover:bg-[#5a5a40]/20 text-[#5a5a40] rounded-xl text-[10px] font-bold transition cursor-pointer select-none"
-                      >
-                        Roll Code
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Shareable URL with Copy Button */}
-                  {adminActiveInviteCodeInput.trim() && (
-                    <div className="space-y-1 pt-1.5 border-t border-[#dcdcd4]/60">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] font-bold text-[#8c8c82] uppercase tracking-widest block font-sans">Invite Link (Hold / Copy)</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const currentInviteLink = `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(adminActiveInviteCodeInput.trim().toLowerCase())}`;
-                            navigator.clipboard.writeText(currentInviteLink);
-                            setCopiedInviteLink(true);
-                            setTimeout(() => setCopiedInviteLink(false), 2000);
-                          }}
-                          className="text-[10px] font-bold text-[#5a5a40] hover:underline flex items-center gap-1 cursor-pointer select-none"
-                        >
-                          {copiedInviteLink ? (
-                            <>
-                              <Check className="h-3 w-3 text-emerald-600 animate-pulse" />
-                              <span className="text-emerald-600">Copied!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3 w-3" />
-                              <span>Copy URL</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                      <div className="bg-white/80 p-2 rounded-xl text-[10px] font-mono text-[#5a5a40] border border-[#e5e5dd] truncate select-all" title="Click to copy link">
-                        {`${window.location.protocol}//${window.location.host}/?invite=${adminActiveInviteCodeInput.trim().toLowerCase()}`}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* QR Code generator */}
-                  {adminActiveInviteCodeInput.trim() && (
-                    <div className="space-y-1.5 pt-2.5 border-t border-[#dcdcd4]/60 flex flex-col items-center">
-                      <span className="text-[9px] font-bold text-[#8c8c82] uppercase tracking-widest block self-start font-sans">Event Portal QR Code</span>
-                      <div className="bg-white p-2.5 rounded-2xl border border-[#dcdcd4] shadow-sm flex items-center justify-center">
-                        <img
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                            `${window.location.protocol}//${window.location.host}/?invite=${adminActiveInviteCodeInput.trim().toLowerCase()}`
-                          )}`}
-                          alt="Invite QR Code"
-                          className="w-36 h-36 border border-gray-100 object-contain rounded-lg"
-                          referrerPolicy="no-referrer"
-                        />
-                      </div>
-                      <p className="text-[8px] text-center text-[#8c8c82] italic leading-snug font-sans">
-                        Let users scan this code with their phones to instantly verify their access and unlock registration!
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Result Notifications */}
-              {adminSaveSuccess && (
-                <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-medium border border-emerald-100 flex items-center gap-1.5 animate-bounce">
-                  <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <span>Branding identity saved! Syncing screens...</span>
-                </div>
-              )}
-
-              {adminSaveError && (
-                <div className="p-2.5 bg-red-50 text-red-700 rounded-xl text-[11px] font-medium border border-red-100 flex items-center gap-1.5">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
-                  <span>{adminSaveError}</span>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="pt-2 flex gap-2">
-                <button
-                  type="submit"
-                  disabled={isAdminSaving}
-                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {isAdminSaving ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Check className="h-3.5 w-3.5" />
-                  )}
-                  Save Custom Branding
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleResetSettings}
-                  disabled={isAdminSaving}
-                  className="py-2.5 px-3 rounded-xl text-xs font-semibold text-[#8c8c82] hover:text-[#5a5a40] hover:bg-[#f5f5f0] border border-transparent hover:border-[#dcdcd4]/60 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
-                  title="Reset to default settings"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Reset
-                </button>
-              </div>
-            </form>
-          </div>
+        {/* Admin Settings Modal */}
+        {profile?.role === "admin" && (
+          <AdminSettingsModal
+            isOpen={adminPanelOpen}
+            onClose={() => setAdminPanelOpen(false)}
+            settings={settings}
+            nameInput={adminNameInput}
+            onNameChange={setAdminNameInput}
+            iconInput={adminIconInput}
+            onIconUpload={handleIconUploadChange}
+            latInput={adminLatInput}
+            onLatChange={setAdminLatInput}
+            lngInput={adminLngInput}
+            onLngChange={setAdminLngInput}
+            radiusInput={adminRadiusInput}
+            onRadiusChange={setAdminRadiusInput}
+            aiPromptInput={adminAiPromptCriteriaInput}
+            onAiPromptChange={setAdminAiPromptCriteriaInput}
+            inviteCodeInput={adminActiveInviteCodeInput}
+            onInviteCodeChange={setAdminActiveInviteCodeInput}
+            inviteRequiredInput={adminInviteRequiredInput}
+            onInviteRequiredChange={setAdminInviteRequiredInput}
+            copiedInviteLink={copiedInviteLink}
+            onCopyInviteLink={() => {
+              const inviteLink = `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(adminActiveInviteCodeInput.trim().toLowerCase())}`;
+              navigator.clipboard.writeText(inviteLink);
+              setCopiedInviteLink(true);
+              setTimeout(() => setCopiedInviteLink(false), 2000);
+            }}
+            isLoading={isAdminSaving}
+            saveSuccess={adminSaveSuccess}
+            saveError={adminSaveError}
+            onSubmit={handleSaveSettings}
+            onReset={handleResetSettings}
+            onGenerateCode={() => {
+              const rand = `hunt-${Math.floor(1000 + Math.random() * 9000)}`;
+              setAdminActiveInviteCodeInput(rand);
+            }}
+          />
         )}
 
         {/* User Account & Persona Settings Dashboard */}
-        {userDashboardOpen && (
-          <div id="user-preferences-panel" className="bg-white border-2 border-[#5a5a40]/30 rounded-[32px] p-6 shadow-md max-w-md mx-auto space-y-4 animate-fadeIn">
-            <div className="flex items-center justify-between border-b border-[#e5e5dd] pb-3">
-              <div className="flex items-center gap-2">
-                <User className="h-5 w-5 text-[#5a5a40]" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-[#5a5a40] font-sans">Hunter Settings</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setUserDashboardOpen(false)}
-                className="text-[11px] font-bold text-brand-muted hover:text-brand-dark cursor-pointer transition"
-              >
-                Close
-              </button>
-            </div>
+        <UserSettingsModal
+          isOpen={userDashboardOpen}
+          onClose={() => setUserDashboardOpen(false)}
+          profile={profile}
+          displayNameInput={profileDisplayNameInput}
+          onDisplayNameChange={setProfileDisplayNameInput}
+          shareLocation={profileShareLocation}
+          onShareLocationChange={setProfileShareLocation}
+          allowNotifications={profileAllowNotifications}
+          onAllowNotificationsChange={setProfileAllowNotifications}
+          makePrivate={profileMakePrivate}
+          onMakePrivateChange={setProfileMakePrivate}
+          extendedAiJudge={profileExtendedAiJudge}
+          onExtendedAiJudgeChange={setProfileExtendedAiJudge}
+          isLoading={isProfileSaving}
+          saveSuccess={profileSaveSuccess}
+          saveError={profileSaveError}
+          onSubmit={handleSaveProfile}
+        />
 
-            <form onSubmit={handleSaveProfile} className="space-y-4">
-              {/* Display Name Input */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Public Display Name / Label
-                </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={24}
-                  placeholder="e.g. Legendary Ranger"
-                  value={profileDisplayNameInput}
-                  onChange={(e) => setProfileDisplayNameInput(e.target.value)}
-                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
-                />
-                <p className="text-[9px] text-[#8c8c82]">
-                  This is shown to other hunters in chats, feeds, and the live scoreboard.
-                </p>
-              </div>
-
-              {/* Read-only Account Type Display */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Account Type
-                </label>
-                <div className="text-xs font-bold text-[#5a5a40] bg-[#f5f5f0]/80 px-3 py-2.5 rounded-xl border border-brand-border/60 inline-flex items-center gap-1.5 uppercase tracking-wide">
-                  {profile.role === "admin" ? (
-                    <>
-                      <span>👑 Host Admin</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>🏹 Hunter User</span>
-                    </>
-                  )}
-                </div>
-                <p className="text-[9px] text-[#8c8c82]">
-                  {profile.role === "admin" 
-                    ? "As the game organizer you have complete administrative power."
-                    : "Hunters are dedicated to completing scavenger challenges & scoring points."}
-                </p>
-              </div>
-
-              {/* Preferences & Permissions checkboxes */}
-              <div className="space-y-3 pt-2 border-t border-[#e5e5dd]">
-                <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                  Permissions & Privacy Settings
-                </label>
-
-                <div className="space-y-2.5">
-                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={profileShareLocation}
-                      onChange={(e) => setProfileShareLocation(e.target.checked)}
-                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
-                    />
-                    <div className="leading-none">
-                      <span className="text-xs font-semibold text-[#2d2d2d] block">Share GPS coordinates</span>
-                      <span className="text-[9px] text-[#8c8c82]">Enables geofenced challenge verification.</span>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={profileAllowNotifications}
-                      onChange={(e) => setProfileAllowNotifications(e.target.checked)}
-                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
-                    />
-                    <div className="leading-none">
-                      <span className="text-xs font-semibold text-[#2d2d2d] block">AIFeed Push Stream</span>
-                      <span className="text-[9px] text-[#8c8c82]">Receive direct referee score & chat notifications.</span>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={profileMakePrivate}
-                      onChange={(e) => setProfileMakePrivate(e.target.checked)}
-                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
-                    />
-                    <div className="leading-none">
-                      <span className="text-xs font-semibold text-[#2d2d2d] block">Incognito Mode (Private profile)</span>
-                      <span className="text-[9px] text-[#8c8c82]">Blur profile from public scoreboards.</span>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={profileExtendedAiJudge}
-                      onChange={(e) => setProfileExtendedAiJudge(e.target.checked)}
-                      className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
-                    />
-                    <div className="leading-none">
-                      <span className="text-xs font-semibold text-[#2d2d2d] block">High Intensity AI Judge</span>
-                      <span className="text-[9px] text-[#8c8c82]">Enable playful, stricter banter critiques from AI Judge.</span>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {/* Result Notifications */}
-              {profileSaveSuccess && (
-                <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-medium border border-emerald-100 flex items-center gap-1.5 animate-bounce">
-                  <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <span>Profile setting & preferences successfully synced!</span>
-                </div>
-              )}
-
-              {profileSaveError && (
-                <div className="p-2.5 bg-red-50 text-red-700 rounded-xl text-[11px] font-medium border border-red-100 flex items-center gap-1.5">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
-                  <span>{profileSaveError}</span>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="pt-2 flex gap-2">
-                <button
-                  type="submit"
-                  disabled={isProfileSaving}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {isProfileSaving ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Check className="h-3.5 w-3.5" />
-                  )}
-                  Save Profile Settings
-                </button>
-              </div>
-            </form>
-          </div>
+        {/* Create Mission Modal */}
+        {profile && (
+          <CreateMissionModal
+            isOpen={showCreateMissionModal}
+            onClose={() => setShowCreateMissionModal(false)}
+            onSubmit={handleAddChallenge}
+            userLat={userLat}
+            userLng={userLng}
+          />
         )}
 
         {/* Navigation tabs */}
@@ -1696,12 +1349,15 @@ CREATE TABLE IF NOT EXISTS submissions (
               items={items}
               submissions={submissions}
               currentUserId={profile.id}
+              currentUserRole={profile.role || "user"}
               onUploadSubmission={handleUploadSubmission}
               isSubmittingMap={isSubmittingMap}
               submitErrorMap={submitErrorMap}
               userLat={userLat}
               userLng={userLng}
               onAddChallenge={handleAddChallenge}
+              onDeleteMission={handleDeleteMission}
+              onShowCreateModal={() => setShowCreateMissionModal(true)}
             />
           )}
 

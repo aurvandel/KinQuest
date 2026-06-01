@@ -666,7 +666,8 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
     icon: item.icon,
     lat: item.lat,
     lng: item.lng,
-    radius: item.radius
+    radius: item.radius,
+    createdBy: item.createdBy
   };
 
   const mode = getDbMode();
@@ -687,7 +688,8 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
       icon: newItem.icon,
       lat: newItem.lat,
       lng: newItem.lng,
-      radius: newItem.radius
+      radius: newItem.radius,
+      createdBy: newItem.createdBy
     };
 
     const { error } = await supabase.from("items").insert(row);

@@ -17,49 +17,44 @@ import {
   HelpCircle,
   Compass,
   Zap,
-  Check
+  Check,
+  Trash2,
+  AlertCircle
 } from "lucide-react";
 
 interface MissionsListProps {
   items: ScavengerItem[];
   submissions: Submission[];
   currentUserId: string;
+  currentUserRole: "user" | "admin";
   onUploadSubmission: (itemId: string, base64Image: string) => Promise<void>;
   isSubmittingMap: { [itemId: string]: boolean };
   submitErrorMap: { [itemId: string]: string | null };
   userLat: number | null;
   userLng: number | null;
   onAddChallenge?: (newChallenge: Omit<ScavengerItem, "id">) => Promise<void>;
+  onDeleteMission?: (itemId: string) => Promise<void>;
+  onShowCreateModal?: () => void;
 }
 
 export function MissionsList({
   items,
   submissions,
   currentUserId,
+  currentUserRole,
   onUploadSubmission,
   isSubmittingMap,
   submitErrorMap,
   userLat,
   userLng,
-  onAddChallenge
+  onAddChallenge,
+  onDeleteMission,
+  onShowCreateModal
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [tempImageMap, setTempImageMap] = useState<{ [itemId: string]: string }>({});
-
-  // Creator form state
-  const [showCreator, setShowCreator] = useState(false);
-  const [creatorTitle, setCreatorTitle] = useState("");
-  const [creatorDesc, setCreatorDesc] = useState("");
-  const [creatorPoints, setCreatorPoints] = useState("40");
-  const [creatorCategory, setCreatorCategory] = useState("Exploration");
-  const [creatorIcon, setCreatorIcon] = useState("Sparkles");
-  const [creatorLat, setCreatorLat] = useState("");
-  const [creatorLng, setCreatorLng] = useState("");
-  const [creatorRadius, setCreatorRadius] = useState("200");
-  
-  const [creatorError, setCreatorError] = useState<string | null>(null);
-  const [creatorSuccess, setCreatorSuccess] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const categories = ["All", ...Array.from(new Set(items.map((item) => item.category)))];
 
@@ -140,211 +135,39 @@ export function MissionsList({
     };
   };
 
-  const handleCreatorSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreatorError(null);
-    setCreatorSuccess(false);
-
-    if (!creatorTitle || !creatorDesc) {
-      setCreatorError("Title and description/criteria are required.");
-      return;
-    }
-
-    const itemLat = creatorLat ? Number(creatorLat) : null;
-    const itemLng = creatorLng ? Number(creatorLng) : null;
-    const itemRadius = creatorRadius ? Number(creatorRadius) : null;
-
-    if ((creatorLat && !creatorLng) || (!creatorLat && creatorLng)) {
-      setCreatorError("Must define BOTH Latitude & Longitude to geofence this challenge.");
-      return;
-    }
-
-    if (onAddChallenge) {
-      try {
-        await onAddChallenge({
-          title: creatorTitle,
-          description: creatorDesc,
-          points: Number(creatorPoints) || 40,
-          category: creatorCategory,
-          icon: creatorIcon,
-          lat: itemLat,
-          lng: itemLng,
-          radius: itemRadius
-        });
-
-        // Reset
-        setCreatorTitle("");
-        setCreatorDesc("");
-        setCreatorLat("");
-        setCreatorLng("");
-        setCreatorSuccess(true);
-        setTimeout(() => setCreatorSuccess(false), 3000);
-      } catch (err) {
-        setCreatorError("Could not submit. Server unresponsive.");
-      }
+  const handleDeleteMission = async (itemId: string) => {
+    if (!onDeleteMission) return;
+    try {
+      setDeletingId(itemId);
+      await onDeleteMission(itemId);
+    } catch (err) {
+      console.error("Failed to delete mission:", err);
+    } finally {
+      setDeletingId(null);
     }
   };
 
-  // Autofill creator coordinates from user's current loc
-  const autofillCurrentLoc = () => {
-    if (userLat !== null && userLng !== null) {
-      setCreatorLat(userLat.toFixed(5));
-      setCreatorLng(userLng.toFixed(5));
-    } else {
-      setCreatorError("Could not capture Geolocation coordinates to autofill yet.");
-    }
+  const canDeleteMission = (item: ScavengerItem) => {
+    return currentUserRole === "admin" || item.createdBy === currentUserId;
   };
 
   return (
     <div className="space-y-6">
-      {/* Creator Challenge Panel Toggle */}
-      {onAddChallenge && (
-        <div className="bg-white border border-brand-border rounded-[28px] overflow-hidden shadow-sm">
-          <div
-            onClick={() => setShowCreator(!showCreator)}
-            className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-brand-beige-light/30 transition select-none"
-          >
-            <div className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5 text-brand-moss" />
-              <div>
-                <h3 className="text-sm font-serif font-bold italic text-brand-moss">Create a Custom Hunt Mission</h3>
-                <p className="text-[10px] text-brand-muted">Publish a new photo or GPS geotagged challenge</p>
-              </div>
+      {/* Create Mission Button */}
+      {onAddChallenge && onShowCreateModal && (
+        <button
+          onClick={onShowCreateModal}
+          className="w-full bg-white border border-brand-border rounded-[28px] px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-brand-beige-light/30 transition select-none group"
+        >
+          <div className="flex items-center gap-2">
+            <PlusCircle className="h-5 w-5 text-brand-moss group-hover:text-brand-moss-dark transition" />
+            <div className="text-left">
+              <h3 className="text-sm font-serif font-bold italic text-brand-moss group-hover:text-brand-moss-dark transition">Create a Custom Hunt Mission</h3>
+              <p className="text-[10px] text-brand-muted">Publish a new photo or GPS geotagged challenge</p>
             </div>
-            {showCreator ? <ChevronUp className="h-4 w-4 text-brand-moss" /> : <ChevronDown className="h-4 w-4 text-brand-moss" />}
           </div>
-
-          {showCreator && (
-            <form onSubmit={handleCreatorSubmit} className="p-6 border-t border-brand-border bg-brand-beige-light/10 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-brand-moss uppercase tracking-widest block">Challenge Title</label>
-                  <input
-                    type="text"
-                    required
-                    value={creatorTitle}
-                    onChange={(e) => setCreatorTitle(e.target.value)}
-                    placeholder="e.g. Bronze Statue of Deer"
-                    className="w-full text-xs bg-white border border-brand-border rounded-xl px-3 py-2.5 outline-none focus:ring-1 focus:ring-brand-moss"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-brand-moss uppercase tracking-widest block">Points Awarded</label>
-                    <input
-                      type="number"
-                      required
-                      value={creatorPoints}
-                      onChange={(e) => setCreatorPoints(e.target.value)}
-                      placeholder="40"
-                      className="w-full text-xs bg-white border border-brand-border rounded-xl px-3 py-2.5 outline-none focus:ring-1 focus:ring-brand-moss"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-brand-moss uppercase tracking-widest block">Category</label>
-                    <select
-                      value={creatorCategory}
-                      onChange={(e) => setCreatorCategory(e.target.value)}
-                      className="w-full text-xs bg-white border border-brand-border rounded-xl px-3 py-2.5 outline-none focus:ring-1 focus:ring-brand-moss appearance-none"
-                    >
-                      <option value="Exploration">Exploration</option>
-                      <option value="Nature">Nature</option>
-                      <option value="Home">Home</option>
-                      <option value="Tech">Tech</option>
-                      <option value="Animal">Animal</option>
-                      <option value="Creative">Creative</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-brand-moss uppercase tracking-widest block">Description & Match Criteria (For AI Referee)</label>
-                <textarea
-                  required
-                  value={creatorDesc}
-                  onChange={(e) => setCreatorDesc(e.target.value)}
-                  placeholder="Summarize what players must look for and capture in their photo proof to win..."
-                  rows={2}
-                  className="w-full text-xs bg-white border border-brand-border rounded-xl px-3 py-2.5 outline-none focus:ring-1 focus:ring-brand-moss resize-none"
-                />
-              </div>
-
-              {/* Geofencing Inputs */}
-              <div className="bg-[#f5f5f0]/80 border border-brand-border rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-brand-moss flex items-center gap-1">
-                    <Compass className="h-4 w-4" />
-                    <span>Attach GPS Geofenced Constraint (Optional)</span>
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={autofillCurrentLoc}
-                    className="text-[10px] font-bold text-brand-moss bg-white rounded-lg px-2 py-1 shadow-sm border border-brand-border hover:bg-brand-beige"
-                  >
-                    📍 Autofill Current simulated GPS loc
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-semibold text-brand-muted uppercase block">Latitude</label>
-                    <input
-                      type="text"
-                      value={creatorLat}
-                      onChange={(e) => setCreatorLat(e.target.value)}
-                      placeholder="e.g. 40.7829"
-                      className="w-full text-xs bg-white border border-brand-border rounded-xl px-2.5 py-2 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-semibold text-brand-muted uppercase block">Longitude</label>
-                    <input
-                      type="text"
-                      value={creatorLng}
-                      onChange={(e) => setCreatorLng(e.target.value)}
-                      placeholder="e.g. -73.9654"
-                      className="w-full text-xs bg-white border border-brand-border rounded-xl px-2.5 py-2 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-semibold text-brand-muted uppercase block">Radius Fence (Meters)</label>
-                    <input
-                      type="number"
-                      value={creatorRadius}
-                      onChange={(e) => setCreatorRadius(e.target.value)}
-                      placeholder="e.g. 200"
-                      className="w-full text-xs bg-white border border-brand-border rounded-xl px-2.5 py-2 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <p className="text-[10px] text-brand-muted leading-relaxed">
-                  💡 If Latitude/Longitude is specified, players must be within the defined boundary radius (in meters) to get photo permission or submit successfully.
-                </p>
-              </div>
-
-              {creatorError && <p className="text-xs text-red-600 font-bold">{creatorError}</p>}
-              {creatorSuccess && (
-                <div className="bg-emerald-50 text-emerald-800 text-xs font-semibold p-3.5 rounded-xl flex items-center gap-2 border border-emerald-200">
-                  <Check className="h-4 w-4" />
-                  <span>Challenge created! It has been live-synchronized on the map & checklist!</span>
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  className="bg-brand-moss hover:bg-brand-moss-dark text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  Publish Challenge Live
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
+          <ArrowRight className="h-4 w-4 text-brand-moss group-hover:translate-x-1 transition" />
+        </button>
       )}
 
       {/* Category Slider */}
@@ -462,7 +285,24 @@ export function MissionsList({
                     )}
                   </div>
 
-                  <div>{isExpanded ? <ChevronUp className="h-5 w-5 text-brand-muted" /> : <ChevronDown className="h-5 w-5 text-brand-muted" />}</div>
+                  {/* Delete button and Expand */}
+                  <div className="flex items-center gap-2">
+                    {canDeleteMission(item) && onDeleteMission && (
+                      <button
+                        onClick={() => handleDeleteMission(item.id)}
+                        disabled={deletingId === item.id}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition disabled:opacity-50"
+                        title={currentUserRole === "admin" ? "Delete mission (Admin)" : "Delete mission (Created by you)"}
+                      >
+                        {deletingId === item.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </button>
+                    )}
+                    <div>{isExpanded ? <ChevronUp className="h-5 w-5 text-brand-muted" /> : <ChevronDown className="h-5 w-5 text-brand-muted" />}</div>
+                  </div>
                 </div>
               </div>
 

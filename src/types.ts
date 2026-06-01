@@ -8,6 +8,7 @@ export interface ScavengerItem {
   lat?: number | null;
   lng?: number | null;
   radius?: number | null; // in meters
+  createdBy?: string; // User ID of who created this mission
 }
 
 export interface PlayerProfile {
