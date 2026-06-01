@@ -482,7 +482,9 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
   const mode = getDbMode();
   const cleanName = username.trim();
   const isTargetAdmin = cleanName.toLowerCase() === "admin";
-  const assignedRole = isTargetAdmin ? "admin" : "user";
+  // Use registerRole parameter if provided, otherwise default based on username
+  const assignedRole = registerRole || (isTargetAdmin ? "admin" : "user");
+  console.log("authRegisterPlayer:", { cleanName, registerRole, isTargetAdmin, assignedRole, mode });
 
   if (mode === "local_fallback" || !supabase) {
     const db = loadLocalDb();
@@ -492,9 +494,11 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
 
     if (existingUser) {
       if (existingUser.role !== assignedRole) {
+        console.log("Updating existing user role:", { username: existingUser.username, oldRole: existingUser.role, newRole: assignedRole });
         existingUser.role = assignedRole;
         saveLocalDb(db);
       }
+      console.log("Returning existing user:", { username: existingUser.username, role: existingUser.role });
       return existingUser;
     }
 
@@ -540,13 +544,11 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         }
       }
 
-      // Enforce correct role
-      let finalRole = u.role || assignedRole;
-      if (isTargetAdmin) {
+      // Use registerRole parameter if provided, otherwise enforce based on username
+      let finalRole = registerRole || assignedRole;
+      // Special case: if username is "admin" and no explicit role given, force admin
+      if (isTargetAdmin && !registerRole) {
         finalRole = "admin";
-      } else if (u.role === "admin") {
-        // Only allow 'admin' username to be admin role
-        finalRole = "user";
       }
 
       if (finalRole !== u.role) {
@@ -567,6 +569,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
 
     // Register new user
     const uid = isTargetAdmin ? "user_admin" : `user_${Math.floor(Math.random() * 899999 + 100000)}`;
+    const isAdminUser = assignedRole === "admin";
     const newUserRow = {
       id: uid,
       username: isTargetAdmin ? "admin" : cleanName,
@@ -579,7 +582,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         shareLocation: true,
         allowNotifications: true,
         makePrivate: false,
-        extendedAiJudge: isTargetAdmin
+        extendedAiJudge: isAdminUser
       })
     };
 
@@ -608,7 +611,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         shareLocation: true,
         allowNotifications: true,
         makePrivate: false,
-        extendedAiJudge: isTargetAdmin
+        extendedAiJudge: isAdminUser
       }
     };
   } catch (err) {
@@ -617,9 +620,20 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
     let existingUser = Object.values(db.users).find(
       u => u.username.toLowerCase() === cleanName.toLowerCase()
     );
-    if (existingUser) return existingUser;
+    
+    // If user exists and we have an explicit role to assign, update it
+    if (existingUser) {
+      if (registerRole && existingUser.role !== registerRole) {
+        existingUser.role = registerRole;
+        existingUser.permissions = existingUser.permissions || {};
+        existingUser.permissions.extendedAiJudge = registerRole === "admin";
+        saveLocalDb(db);
+      }
+      return existingUser;
+    }
 
     const uid = isTargetAdmin ? "user_admin" : `user_cache_${Math.floor(Math.random() * 899999 + 100000)}`;
+    const isAdminUser = assignedRole === "admin";
     const newUser: PlayerProfile = {
       id: uid,
       username: isTargetAdmin ? "admin" : cleanName,
@@ -632,7 +646,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         shareLocation: true,
         allowNotifications: true,
         makePrivate: false,
-        extendedAiJudge: isTargetAdmin
+        extendedAiJudge: isAdminUser
       }
     };
     db.users[uid] = newUser;

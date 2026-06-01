@@ -1,7 +1,21 @@
 -- WilderHunt Supabase Local Initialization Script
 -- Execute this schema inside your Supabase Project SQL Editor or Docker container
 
+-- ============================================
+-- Role Setup for PostgREST
+-- ============================================
+-- Create the authenticator role (used by PostgREST)
+CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD 'postgres-super-secure-authenticator-password';
+
+-- Create the anon role (for public/unauthenticated requests)
+CREATE ROLE anon NOINHERIT;
+
+-- Grant anon role to authenticator
+GRANT anon TO authenticator;
+
+-- ============================================
 -- Enable UUID extension
+-- ============================================
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================
@@ -106,6 +120,18 @@ INSERT INTO items (id, title, description, points, category, icon, lat, lng, rad
 ('item_reunion_recreation', 'Nature Walk Keepsake', 'Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.', 40, 'Nature', 'Leaf', 40.7829, -73.9654, 500),
 ('item_family_mascot', 'Reunion Mascot/Pet', 'Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.', 45, 'Animal', 'Footprints', 40.7812, -73.9665, 1000)
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================
+-- Permissions for PostgREST anon role
+-- ============================================
+-- Grant usage on schema
+GRANT USAGE ON SCHEMA public TO anon;
+
+-- Grant full CRUD access on all tables to anon role (needed for app functionality)
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
+
+-- Grant read/write access on sequences (for auto-increment IDs)
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
 
 -- ============================================
 -- Row-Level Security Policies (Optional - for future auth)

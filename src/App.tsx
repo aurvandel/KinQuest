@@ -416,17 +416,25 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   }, [settings, adminPanelOpen]);
 
-  // Pre-populate user profile inputs when profile loads or when opening user dashboard
+  // Ref to track which profile we've populated the form for
+  const populatedProfileIdRef = useRef<string | null>(null);
+
+  // Pre-populate user profile inputs ONLY when dashboard opens or profile ID changes
   useEffect(() => {
-    if (profile) {
+    if (!profile) return;
+    
+    // Only populate if dashboard just opened or profile ID changed
+    if (userDashboardOpen && populatedProfileIdRef.current !== profile.id) {
+      console.log("Populating profile form for profile ID:", profile.id);
       setProfileDisplayNameInput(profile.displayName || profile.username || "");
       setProfileRoleInput(profile.role || "user");
       setProfileShareLocation(profile.permissions?.shareLocation !== false);
       setProfileAllowNotifications(profile.permissions?.allowNotifications !== false);
       setProfileMakePrivate(profile.permissions?.makePrivate === true);
       setProfileExtendedAiJudge(profile.permissions?.extendedAiJudge === true);
+      populatedProfileIdRef.current = profile.id;
     }
-  }, [profile, userDashboardOpen]);
+  }, [profile?.id, userDashboardOpen]);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
