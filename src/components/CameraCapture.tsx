@@ -39,6 +39,13 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
       setCameraActive(true);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // Wait for metadata to load before playing
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(err => {
+            console.error("Video play failed:", err);
+          });
+        };
+        // Fallback: try playing anyway (browser may auto-play before metadata)
         videoRef.current.play().catch(err => {
           console.error("Video play failed:", err);
         });
@@ -93,6 +100,15 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
   const capturePhoto = () => {
     if (videoRef.current) {
       const video = videoRef.current;
+      
+      // Ensure video has valid dimensions
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        console.warn("Video dimensions not loaded. Waiting for metadata...");
+        // Wait a moment and try again
+        setTimeout(capturePhoto, 100);
+        return;
+      }
+      
       const canvas = document.createElement("canvas");
       // Align dimensions to video stream
       canvas.width = Math.min(video.videoWidth, 450);

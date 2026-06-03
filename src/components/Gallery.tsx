@@ -95,7 +95,7 @@ export function Gallery({ submissions, items }: GalleryProps) {
         <img
           src={currentSubmission.imageUrl}
           alt={associatedItem?.title || "Scavenged item"}
-          className="w-full h-full object-contain"
+          className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
         />
 

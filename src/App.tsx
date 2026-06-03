@@ -7,6 +7,7 @@ import { GameMap } from "./components/GameMap";
 import { Chat } from "./components/Chat";
 import { Gallery } from "./components/Gallery";
 import { SlideshowViewer } from "./components/SlideshowViewer";
+import { PhotoApprovalPanel } from "./components/PhotoApprovalPanel";
 import { AdminAuthModal } from "./components/AdminAuthModal";
 import { UserSettingsModal } from "./components/UserSettingsModal";
 import { AdminSettingsModal } from "./components/AdminSettingsModal";
@@ -43,7 +44,8 @@ import {
   Share2,
   QrCode,
   Image as ImageIcon,
-  Film
+  Film,
+  ShieldCheck
 } from "lucide-react";
 
 export default function App() {
@@ -52,7 +54,7 @@ export default function App() {
   const [items, setItems] = useState<ScavengerItem[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [appReady, setAppReady] = useState(false);
-  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows">("missions");
+  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval">("missions");
 
   // Game branding states
   const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "reunion-2026" });
@@ -100,7 +102,7 @@ export default function App() {
   const [slideshowError, setSlideshowError] = useState<string | null>(null);
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
-  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows">("missions");
+  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval">("missions");
 
   // Geolocation states
   const [userLat, setUserLat] = useState<number | null>(null);
@@ -113,7 +115,7 @@ export default function App() {
   // Spinners / error maps per mission
   const [isSubmittingMap, setIsSubmittingMap] = useState<{ [itemId: string]: boolean }>({});
   const [submitErrorMap, setSubmitErrorMap] = useState<{ [itemId: string]: string | null }>({});
-  const [rejectedSubmissionMap, setRejectedSubmissionMap] = useState<{ [itemId: string]: { explanation: string; base64: string } }>({});
+  const [rejectedSubmissionMap, setRejectedSubmissionMap] = useState<{ [itemId: string]: { id: string; explanation: string; base64: string } }>({});
 
   const [registerName, setRegisterName] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -708,7 +710,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   };
 
   // Submit base64 photo with current coordinates to server
-  const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false) => {
+  const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false, submissionId?: string) => {
     if (!profile) return;
 
     setSubmitErrorMap((prev) => ({ ...prev, [itemId]: null }));
@@ -724,7 +726,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           imageBase64: base64Image,
           userLat: userLat,
           userLng: userLng,
-          forceSubmit: forceSubmit
+          forceSubmit: forceSubmit,
+          submissionId: submissionId
         })
       });
 
@@ -739,7 +742,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         // Store the rejected submission for potential force submission
         setRejectedSubmissionMap((prev) => ({
           ...prev,
-          [itemId]: { explanation: payload.explanation, base64: base64Image }
+          [itemId]: { id: payload.submission.id, explanation: payload.explanation, base64: base64Image }
         }));
         throw new Error(payload.explanation || "Verification declined by Referee.");
       }
@@ -767,7 +770,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   const handleForceSubmit = (itemId: string) => {
     const rejected = rejectedSubmissionMap[itemId];
     if (rejected) {
-      handleUploadSubmission(itemId, rejected.base64, true);
+      handleUploadSubmission(itemId, rejected.base64, true, rejected.id);
     }
   };
 
@@ -783,6 +786,42 @@ CREATE TABLE IF NOT EXISTS submissions (
       // Success: automatically visual refresh occurs in periodic loop!
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Approve submission - admin only
+  const handleApproveSubmission = async (subId: string) => {
+    try {
+      const response = await fetch(`/api/submissions/${subId}/manual-approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "approved" })
+      });
+      if (!response.ok) {
+        throw new Error("Could not approve submission.");
+      }
+      // Success: automatically visual refresh occurs in periodic loop!
+    } catch (err) {
+      console.error("Error approving submission:", err);
+      throw err;
+    }
+  };
+
+  // Reject submission - admin only
+  const handleRejectSubmission = async (subId: string) => {
+    try {
+      const response = await fetch(`/api/submissions/${subId}/manual-approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "rejected" })
+      });
+      if (!response.ok) {
+        throw new Error("Could not reject submission.");
+      }
+      // Success: automatically visual refresh occurs in periodic loop!
+    } catch (err) {
+      console.error("Error rejecting submission:", err);
+      throw err;
     }
   };
 
@@ -1362,6 +1401,25 @@ CREATE TABLE IF NOT EXISTS submissions (
             <Film className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
             <span className="hidden sm:inline">Scripts</span>
           </button>
+          {profile?.role === "admin" && (
+            <button
+              onClick={() => setActiveTab("approval")}
+              className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+                activeTab === "approval"
+                  ? "bg-[#5a5a40] text-white shadow-sm"
+                  : "text-brand-muted hover:text-brand-dark"
+              }`}
+              title="Review & approve photos"
+            >
+              <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+              <span className="hidden sm:inline">Approve</span>
+              {submissions.filter(s => s.status === "pending").length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+                  {submissions.filter(s => s.status === "pending").length}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("chat")}
             className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
@@ -1553,6 +1611,16 @@ CREATE TABLE IF NOT EXISTS submissions (
           {activeTab === "slideshows" && (
             <SlideshowViewer
               userId={profile.id}
+            />
+          )}
+
+          {activeTab === "approval" && profile?.role === "admin" && (
+            <PhotoApprovalPanel
+              submissions={submissions}
+              items={items}
+              players={players}
+              onApprove={handleApproveSubmission}
+              onReject={handleRejectSubmission}
             />
           )}
 

@@ -23,7 +23,9 @@ services:
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
     volumes:
       # Mount the uploads volume to persist images
-      - ./uploads:/app/uploads
+      - app-uploads:/app/uploads
+      # Mount db.json for local fallback database persistence
+      - app-data-local:/app/data
     depends_on:
       - kong
       - db
@@ -81,3 +83,5 @@ services:
 
 volumes:
   supabase-db-data:
+  app-uploads:
+  app-data-local:

@@ -35,6 +35,7 @@ export interface Submission {
   imageUrl: string;
   status: "pending" | "approved" | "rejected";
   aiExplanation?: string;
+  pointsAwarded?: number; // Variable points based on match quality and creativity
   forcedApproval?: boolean;
   createdAt: string;
   userLat?: number | null;

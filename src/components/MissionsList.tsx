@@ -32,7 +32,7 @@ interface MissionsListProps {
   onUploadSubmission: (itemId: string, base64Image: string) => Promise<void>;
   isSubmittingMap: { [itemId: string]: boolean };
   submitErrorMap: { [itemId: string]: string | null };
-  rejectedSubmissionMap?: { [itemId: string]: { explanation: string; base64: string } };
+  rejectedSubmissionMap?: { [itemId: string]: { id: string; explanation: string; base64: string } };
   onForceSubmit?: (itemId: string) => void;
   userLat: number | null;
   userLng: number | null;

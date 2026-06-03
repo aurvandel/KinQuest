@@ -16,6 +16,7 @@ import {
   createScavengerChallenge,
   submitHunterProof,
   deleteHunterSubmission,
+  manuallyApproveSubmission,
   getDbMode,
   databaseMode,
   supabaseErrorDescription,
@@ -367,7 +368,7 @@ app.put("/api/challenges/:id", async (req, res) => {
 // 5. Submit capture proof & trigger AI evaluation logic
 app.post("/api/verify-submission", async (req, res) => {
   try {
-    const { userId, itemId, imageBase64, userLat, userLng, forceSubmit } = req.body;
+    const { userId, itemId, imageBase64, userLat, userLng, forceSubmit, submissionId } = req.body;
 
     if (!userId || !itemId || !imageBase64) {
       return res.status(400).json({ error: "Missing required payload context fields" });
@@ -382,6 +383,34 @@ app.post("/api/verify-submission", async (req, res) => {
     const item = db.items[itemId];
     if (!item) {
       return res.status(404).json({ error: "Scavenger challenge object not found" });
+    }
+
+    // Check if this is a force-submit of an existing rejected submission
+    if (submissionId && forceSubmit === true) {
+      const db = await getAppState();
+      const existingSub = db.submissions[submissionId];
+      
+      if (existingSub && existingSub.status === "rejected") {
+        // Update the existing submission instead of creating a new one
+        existingSub.status = "approved";
+        existingSub.forcedApproval = true;
+        existingSub.aiExplanation = "Admin force-approved this submission.";
+        existingSub.pointsAwarded = item.points; // Base points only, no creativity bonus for force-approval
+        
+        await submitHunterProof(existingSub, item.points);
+        
+        // Fetch updated user stats
+        const freshDb = await getAppState();
+        const updatedUser = freshDb.users[userId] || user;
+
+        return res.json({
+          isMatch: true,
+          explanation: "Admin force-approved this submission.",
+          confidence: 100,
+          submission: existingSub,
+          user: updatedUser
+        });
+      }
     }
 
     // Solve GPS metrics if geofenced
@@ -428,6 +457,7 @@ app.post("/api/verify-submission", async (req, res) => {
         imageUrl: imageUrl,
         status: "rejected",
         aiExplanation: gpsExplanation,
+        pointsAwarded: 0,
         createdAt: new Date().toISOString(),
         userLat: userLat ? Number(userLat) : null,
         userLng: userLng ? Number(userLng) : null,
@@ -464,6 +494,7 @@ app.post("/api/verify-submission", async (req, res) => {
         imageUrl: imageUrl,
         status: "approved",
         aiExplanation: "AI verification is currently disabled. Submission auto-approved by system.",
+        pointsAwarded: item.points,
         createdAt: new Date().toISOString(),
         userLat: userLat ? Number(userLat) : null,
         userLng: userLng ? Number(userLng) : null,
@@ -500,15 +531,17 @@ Rules for response:
 1. Since this is a fun scavenger hunt, be open-minded and positive. For example, if the item is "Something shiny", a metal can, shiny wrapping, or keys should easily count.
 2. Accept icons, toys, drawings, or representations of the item if a user was creative, but if the photo lacks any resemblance or correlation to the description, reject it.
 3. Be fair, and always provide feedback explaining what you spotted in the photo to justify your decision.
+4. For creative submissions that go above and beyond, award bonus points by rating creativity on 0-100 scale.
 
 You MUST respond strictly in valid JSON matching this schema:
 {
   "isMatch": boolean,
   "explanation": "Referee explanation (1-2 sentences)",
-  "confidence": number (integer 0-100 score indicating certainty)
+  "confidence": number (integer 0-100 score indicating certainty),
+  "creativityScore": number (integer 0-100; bonus points for creative approaches. 0=literal match, 50=creative twist, 100=amazingly creative)
 }`;
 
-    let parsedResult = { isMatch: false, explanation: "Verification service timed out. Please try again.", confidence: 0 };
+    let parsedResult = { isMatch: false, explanation: "Verification service timed out. Please try again.", confidence: 0, creativityScore: 0 };
     try {
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
@@ -529,9 +562,13 @@ You MUST respond strictly in valid JSON matching this schema:
               confidence: {
                 type: Type.INTEGER,
                 description: "Evaluation confidence score (0 to 100)"
+              },
+              creativityScore: {
+                type: Type.INTEGER,
+                description: "Creativity bonus score (0 to 100) for above-and-beyond submissions"
               }
             },
-            required: ["isMatch", "explanation", "confidence"]
+            required: ["isMatch", "explanation", "confidence", "creativityScore"]
           }
         }
       });
@@ -541,7 +578,8 @@ You MUST respond strictly in valid JSON matching this schema:
       parsedResult = {
         isMatch: true, // fallback to gracious approval in sandbox on live API congestion
         explanation: "The AI scanner experienced a connection hiccup, but because of your explorer spirit, the GPS referee verified your coordinates and approved your hunt!",
-        confidence: 100
+        confidence: 100,
+        creativityScore: 0
       };
     }
 
@@ -549,6 +587,15 @@ You MUST respond strictly in valid JSON matching this schema:
     
     // Check if user wants to force submit a rejected image and if that's allowed
     const canForceSubmit = forceSubmit === true && currentSettings.allowForceSubmit === true && isMatch === false;
+    
+    // Calculate points awarded with creativity bonus capped at 10% of base points
+    let pointsAwarded = 0;
+    if (isMatch || canForceSubmit) {
+      const basePoints = item.points || 10;
+      // Creativity bonus: 0-10% of base points based on creativityScore (0-100)
+      const creativityBonus = (basePoints * (parsedResult.creativityScore || 0)) / 1000; // creativityScore * 0.1 / 100
+      pointsAwarded = basePoints + creativityBonus;
+    }
     
     const finalSubmission: Submission = {
       id: subId,
@@ -558,6 +605,7 @@ You MUST respond strictly in valid JSON matching this schema:
       imageUrl: imageUrl,
       status: canForceSubmit ? "approved" : (isMatch ? "approved" : "rejected"),
       aiExplanation: parsedResult.explanation,
+      pointsAwarded: pointsAwarded,
       forcedApproval: canForceSubmit ? true : undefined,
       createdAt: new Date().toISOString(),
       userLat: userLat ? Number(userLat) : null,
@@ -565,9 +613,8 @@ You MUST respond strictly in valid JSON matching this schema:
       distanceMeters: distanceMeters
     };
 
-    // Commit to Database (use full points if approved or force-approved)
-    const pointsToAward = (isMatch || canForceSubmit) ? item.points : 0;
-    await submitHunterProof(finalSubmission, pointsToAward);
+    // Commit to Database
+    await submitHunterProof(finalSubmission, pointsAwarded);
 
     // Fetch updated user stats representation
     const freshDb = await getAppState();
@@ -601,6 +648,26 @@ app.delete("/api/submissions/:subId", async (req, res) => {
     res.json({ success: true, message: "Submission successfully deleted" });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to delete submission record", details: err.message });
+  }
+});
+
+// 6.1 Manual Admin Approval of submissions
+app.post("/api/submissions/:subId/manual-approve", async (req, res) => {
+  const { subId } = req.params;
+  const { status } = req.body;
+
+  if (!status || !["approved", "rejected"].includes(status)) {
+    return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
+  }
+
+  try {
+    const updated = await manuallyApproveSubmission(subId, status as "approved" | "rejected");
+    if (!updated) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+    res.json({ success: true, submission: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update submission", details: err.message });
   }
 });
 

@@ -19,6 +19,12 @@ GRANT anon TO authenticator;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================
+-- Set Default Privileges for Future Tables
+-- ============================================
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO anon;
+
+-- ============================================
 -- Profiles Table (User Management)
 -- ============================================
 CREATE TABLE IF NOT EXISTS profiles (
@@ -32,6 +38,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON profiles TO anon;
 
 -- ============================================
 -- Items Table (Scavenger Hunt Challenges)
@@ -50,6 +58,8 @@ CREATE TABLE IF NOT EXISTS items (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON items TO anon;
+
 -- ============================================
 -- Submissions Table (Hunter Proof/Evidence)
 -- ============================================
@@ -61,11 +71,15 @@ CREATE TABLE IF NOT EXISTS submissions (
   image_url TEXT NOT NULL,
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
   ai_explanation TEXT,
+  points_awarded INTEGER DEFAULT 0,
+  forced_approval BOOLEAN DEFAULT FALSE,
   user_lat DOUBLE PRECISION,
   user_lng DOUBLE PRECISION,
   distance_meters DOUBLE PRECISION,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON submissions TO anon;
 
 -- ============================================
 -- Messages Table (Chat/Communication)
@@ -78,6 +92,24 @@ CREATE TABLE IF NOT EXISTS messages (
   text TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON messages TO anon;
+
+-- ============================================
+-- Slideshows Table (AI-Generated Slideshow Scripts)
+-- ============================================
+CREATE TABLE IF NOT EXISTS slideshows (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  script TEXT NOT NULL,
+  submission_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
+  created_by TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  is_published BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON slideshows TO anon;
 
 -- ============================================
 -- Indexes for Performance
@@ -92,6 +124,15 @@ CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_slideshows_created_by ON slideshows(created_by);
+CREATE INDEX IF NOT EXISTS idx_slideshows_is_published ON slideshows(is_published);
+CREATE INDEX IF NOT EXISTS idx_slideshows_created_at ON slideshows(created_at DESC);
+
+-- ============================================
+-- Grant Sequence Permissions
+-- ============================================
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+GRANT USAGE ON SCHEMA public TO anon;
 
 -- ============================================
 -- Initial Admin User (Optional)
@@ -163,16 +204,9 @@ INSERT INTO items (id, title, description, points, category, icon, lat, lng, rad
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================
--- Permissions for PostgREST anon role
+-- Role Setup for PostgREST (completed at top)
 -- ============================================
--- Grant usage on schema
-GRANT USAGE ON SCHEMA public TO anon;
-
--- Grant full CRUD access on all tables to anon role (needed for app functionality)
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon;
-
--- Grant read/write access on sequences (for auto-increment IDs)
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+-- Roles already created and permissions granted at beginning
 
 -- ============================================
 -- Row-Level Security Policies (Optional - for future auth)

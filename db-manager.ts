@@ -38,6 +38,7 @@ export interface Submission {
   imageUrl: string;
   status: "pending" | "approved" | "rejected";
   aiExplanation?: string;
+  forcedApproval?: boolean;
   createdAt: string;
   userLat?: number | null;
   userLng?: number | null;
@@ -175,7 +176,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   }
 ];
 
-const DB_FILE = path.join(process.cwd(), "db.json");
+const DB_FILE = path.join(process.cwd(), "data", "db.json");
 
 // Dynamic state tracker for external reporting in frontend
 export let databaseMode: "supabase" | "local_fallback" = "local_fallback";
@@ -744,6 +745,7 @@ export async function submitHunterProof(
       image_url: sub.imageUrl,
       status: sub.status,
       ai_explanation: sub.aiExplanation,
+      points_awarded: sub.pointsAwarded ?? 0,
       created_at: sub.createdAt,
       user_lat: sub.userLat,
       user_lng: sub.userLng,
@@ -857,6 +859,143 @@ export async function deleteHunterSubmission(subId: string): Promise<boolean> {
     delete db.submissions[subId];
     saveLocalDb(db);
     return true;
+  }
+}
+
+export async function manuallyApproveSubmission(
+  subId: string,
+  newStatus: "approved" | "rejected"
+): Promise<Submission | null> {
+  const mode = getDbMode();
+  
+  if (mode === "local_fallback" || !supabase) {
+    const db = loadLocalDb();
+    const submission = db.submissions[subId];
+    if (!submission) return null;
+
+    const oldStatus = submission.status;
+    submission.status = newStatus;
+    submission.forcedApproval = true;
+    
+    // Use pointsAwarded if available, otherwise fallback to item points
+    const item = db.items[submission.itemId];
+    const pointsValue = submission.pointsAwarded ?? (item ? item.points : 0);
+
+    // Handle score updates
+    if (newStatus === "approved" && oldStatus !== "approved") {
+      // Newly approved - add points
+      if (item && db.users[submission.userId]) {
+        db.users[submission.userId].score += pointsValue;
+        db.users[submission.userId].completedCount += 1;
+      }
+    } else if (newStatus !== "approved" && oldStatus === "approved") {
+      // Changed from approved to something else - remove points
+      if (item && db.users[submission.userId]) {
+        db.users[submission.userId].score = Math.max(0, db.users[submission.userId].score - pointsValue);
+        db.users[submission.userId].completedCount = Math.max(0, db.users[submission.userId].completedCount - 1);
+      }
+    }
+
+    saveLocalDb(db);
+    return submission;
+  }
+
+  try {
+    // Get current submission
+    const { data: sub, error: getErr } = await supabase
+      .from("submissions")
+      .select("*")
+      .eq("id", subId)
+      .single();
+
+    if (getErr || !sub) return null;
+
+    const oldStatus = sub.status;
+    
+    // Get item for points
+    const { data: item } = await supabase
+      .from("items")
+      .select("points")
+      .eq("id", sub.item_id)
+      .single();
+
+    // Get current user profile
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("score, completed_count")
+      .eq("id", sub.user_id)
+      .single();
+
+    // Update submission
+    const { error: updateErr } = await supabase
+      .from("submissions")
+      .update({ status: newStatus, forced_approval: true })
+      .eq("id", subId);
+
+    if (updateErr) throw updateErr;
+
+    // Handle score updates - use pointsAwarded if available
+    if (item && prof) {
+      let newScore = prof.score ?? 0;
+      let newCount = prof.completed_count ?? 0;
+      const pointsValue = sub.points_awarded ?? (item.points ?? 10);
+
+      if (newStatus === "approved" && oldStatus !== "approved") {
+        newScore += pointsValue;
+        newCount += 1;
+      } else if (newStatus !== "approved" && oldStatus === "approved") {
+        newScore = Math.max(0, newScore - pointsValue);
+        newCount = Math.max(0, newCount - 1);
+      }
+
+      await supabase
+        .from("profiles")
+        .update({ score: newScore, completed_count: newCount })
+        .eq("id", sub.user_id);
+    }
+
+    // Return updated submission
+    return {
+      id: sub.id,
+      userId: sub.user_id,
+      username: sub.username,
+      itemId: sub.item_id,
+      imageUrl: sub.image_url,
+      status: newStatus,
+      aiExplanation: sub.ai_explanation,
+      forcedApproval: true,
+      createdAt: sub.created_at,
+      userLat: sub.user_lat,
+      userLng: sub.user_lng,
+      distanceMeters: sub.distance_meters
+    };
+  } catch (err) {
+    console.error("Supabase manual approval failed, processing locally:", err);
+    const db = loadLocalDb();
+    const submission = db.submissions[subId];
+    if (!submission) return null;
+
+    const oldStatus = submission.status;
+    submission.status = newStatus;
+    submission.forcedApproval = true;
+
+    // Handle score updates
+    if (newStatus === "approved" && oldStatus !== "approved") {
+      const item = db.items[submission.itemId];
+      if (item && db.users[submission.userId]) {
+        db.users[submission.userId].score += item.points;
+        db.users[submission.userId].completedCount += 1;
+      }
+    } else if (newStatus !== "approved" && oldStatus === "approved") {
+      const item = db.items[submission.itemId];
+      if (item && db.users[submission.userId]) {
+        db.users[submission.userId].score = Math.max(0, db.users[submission.userId].score - item.points);
+        db.users[submission.userId].completedCount = Math.max(0, db.users[submission.userId].completedCount - 1);
+      }
+    }
+
+    saveLocalDb(db);
+    return submission;
   }
 }
 
