@@ -53,11 +53,23 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface Slideshow {
+  id: string;
+  title: string;
+  description?: string;
+  script: string;
+  submissionIds: string[];
+  createdBy: string; // Admin user ID who generated it
+  createdAt: string;
+  isPublished: boolean;
+}
+
 export interface DbStore {
   users: { [id: string]: PlayerProfile };
   items: { [id: string]: ScavengerItem };
   submissions: { [id: string]: Submission };
   messages: ChatMessage[];
+  slideshows: { [id: string]: Slideshow };
 }
 
 // Default initial items
@@ -914,6 +926,128 @@ export async function getChatMessages(): Promise<ChatMessage[]> {
     console.warn("Supabase message retrieve failed, fallback to local storage:", err);
     const db = loadLocalDb();
     return db.messages || [];
+  }
+}
+
+export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
+  const mode = getDbMode();
+  
+  // Always save to local first as backup
+  if (mode === "local_fallback" || !supabase) {
+    const db = loadLocalDb();
+    if (!db.slideshows) {
+      db.slideshows = {};
+    }
+    db.slideshows[slideshow.id] = slideshow;
+    saveLocalDb(db);
+    return slideshow;
+  }
+
+  try {
+    // Save to Supabase
+    const { error } = await supabase
+      .from("slideshows")
+      .upsert([{
+        id: slideshow.id,
+        title: slideshow.title,
+        description: slideshow.description,
+        script: slideshow.script,
+        submission_ids: slideshow.submissionIds,
+        created_by: slideshow.createdBy,
+        created_at: slideshow.createdAt,
+        is_published: slideshow.isPublished
+      }])
+      .select();
+    
+    if (error) throw error;
+    
+    // Also save to local
+    const db = loadLocalDb();
+    if (!db.slideshows) {
+      db.slideshows = {};
+    }
+    db.slideshows[slideshow.id] = slideshow;
+    saveLocalDb(db);
+    
+    return slideshow;
+  } catch (err) {
+    console.error("Supabase slideshow save failed, saving locally:", err);
+    const db = loadLocalDb();
+    if (!db.slideshows) {
+      db.slideshows = {};
+    }
+    db.slideshows[slideshow.id] = slideshow;
+    saveLocalDb(db);
+    return slideshow;
+  }
+}
+
+export async function getSlideshow(id: string): Promise<Slideshow | null> {
+  const mode = getDbMode();
+  
+  if (mode === "local_fallback" || !supabase) {
+    const db = loadLocalDb();
+    return db.slideshows?.[id] || null;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("slideshows")
+      .select("*")
+      .eq("id", id)
+      .single();
+    
+    if (error) throw error;
+    if (!data) return null;
+    
+    return {
+      id: data.id,
+      title: data.title,
+      description: data.description,
+      script: data.script,
+      submissionIds: data.submission_ids,
+      createdBy: data.created_by,
+      createdAt: data.created_at,
+      isPublished: data.is_published
+    };
+  } catch (err) {
+    console.warn("Supabase slideshow retrieve failed, fallback to local storage:", err);
+    const db = loadLocalDb();
+    return db.slideshows?.[id] || null;
+  }
+}
+
+export async function getAllSlideshows(): Promise<Slideshow[]> {
+  const mode = getDbMode();
+  
+  if (mode === "local_fallback" || !supabase) {
+    const db = loadLocalDb();
+    return Object.values(db.slideshows || {});
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("slideshows")
+      .select("*")
+      .eq("is_published", true)
+      .order("created_at", { ascending: false });
+    
+    if (error) throw error;
+    
+    return (data || []).map(s => ({
+      id: s.id,
+      title: s.title,
+      description: s.description,
+      script: s.script,
+      submissionIds: s.submission_ids,
+      createdBy: s.created_by,
+      createdAt: s.created_at,
+      isPublished: s.is_published
+    }));
+  } catch (err) {
+    console.warn("Supabase slideshow retrieve failed, fallback to local storage:", err);
+    const db = loadLocalDb();
+    return Object.values(db.slideshows || {}).filter(s => s.isPublished);
   }
 }
 

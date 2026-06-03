@@ -23,6 +23,10 @@ import {
   saveChatMessage,
   getChatMessages,
   ChatMessage,
+  saveSlideshow,
+  getSlideshow,
+  getAllSlideshows,
+  Slideshow,
   getAppSettings,
   saveAppSettings,
   AppSettings
@@ -600,7 +604,120 @@ app.delete("/api/submissions/:subId", async (req, res) => {
   }
 });
 
-// 7. Get chat messages logs
+// 6.5 Generate AI slideshow script with animations and music
+app.post("/api/slideshow/generate", async (req, res) => {
+  try {
+    const { submissions, createdBy, title } = req.body;
+
+    if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
+      return res.status(400).json({ error: "No submissions provided for slideshow generation" });
+    }
+
+    if (!createdBy) {
+      return res.status(400).json({ error: "Admin user ID is required" });
+    }
+
+    // Prepare image data for AI processing
+    const imageParts: any[] = [];
+    const imageDescriptions: string[] = [];
+
+    for (let i = 0; i < Math.min(submissions.length, 10); i++) {
+      const sub = submissions[i];
+      imageDescriptions.push(`${i + 1}. ${sub.title} (captured by ${sub.username})`);
+    }
+
+    const submissionsList = imageDescriptions.join("\n");
+
+    // Create prompt for Gemini to generate slideshow script
+    const slideshowPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
+
+I have a collection of photos from a family scavenger hunt. Here are the photos:
+${submissionsList}
+
+Please generate a detailed slideshow script that includes:
+
+1. **Slideshow Structure**: Suggest the optimal order and timing for each photo (2-4 seconds per slide)
+2. **Transitions**: Recommend specific transitions for each photo (fade, slide, zoom, etc.)
+3. **Music Recommendations**: Suggest 2-3 background music tracks that would work well (specify genre, mood, and tempo)
+4. **Timing & Pacing**: Provide overall duration estimate and suggest 2-3 music songs that match the pace
+5. **Animation Effects**: Suggest subtle animations for text overlays (title, photographer name, etc.)
+6. **Color Grading**: Suggest any filters or color adjustments to maintain visual consistency
+7. **Voiceover Suggestions**: Optional brief commentary between sections to engage the audience
+
+Format your response as a professional production guide that a video editor or slideshow software operator could follow.
+
+Make it uplifting and celebratory, suitable for a family reunion event!`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: slideshowPrompt,
+            },
+          ],
+        },
+      ],
+    });
+
+    const script = response.response.text();
+
+    // Save slideshow to database
+    const slideshowId = `slideshow_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const slideshow: Slideshow = {
+      id: slideshowId,
+      title: title || `Family Slideshow - ${new Date().toLocaleDateString()}`,
+      script: script,
+      submissionIds: submissions.map((s: any) => s.id),
+      createdBy: createdBy,
+      createdAt: new Date().toISOString(),
+      isPublished: true,
+    };
+
+    await saveSlideshow(slideshow);
+
+    res.json({
+      success: true,
+      slideshow: slideshow,
+      photoCount: submissions.length,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("Slideshow generation error:", err);
+    res.status(500).json({
+      error: "Failed to generate slideshow script",
+      details: err.message || "AI service error",
+    });
+  }
+});
+
+// 7. Get all published slideshows
+app.get("/api/slideshows", async (req, res) => {
+  try {
+    const slideshows = await getAllSlideshows();
+    res.json(slideshows);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to fetch slideshows", details: err.message });
+  }
+});
+
+// 7a. Get specific slideshow by ID
+app.get("/api/slideshows/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const slideshow = await getSlideshow(id);
+    if (!slideshow) {
+      return res.status(404).json({ error: "Slideshow not found" });
+    }
+    res.json(slideshow);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to fetch slideshow", details: err.message });
+  }
+});
+
+// 8. Get chat messages logs
 app.get("/api/chat-history", async (req, res) => {
   try {
     const logs = await getChatMessages();

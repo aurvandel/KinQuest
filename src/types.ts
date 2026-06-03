@@ -51,6 +51,17 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface Slideshow {
+  id: string;
+  title: string;
+  description?: string;
+  script: string;
+  submissionIds: string[];
+  createdBy: string; // Admin user ID who generated it
+  createdAt: string;
+  isPublished: boolean;
+}
+
 export interface AppSettings {
   name: string;
   icon: string | null;

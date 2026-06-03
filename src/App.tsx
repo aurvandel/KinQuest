@@ -5,10 +5,13 @@ import { Leaderboard } from "./components/Leaderboard";
 import { Feed } from "./components/Feed";
 import { GameMap } from "./components/GameMap";
 import { Chat } from "./components/Chat";
+import { Gallery } from "./components/Gallery";
+import { SlideshowViewer } from "./components/SlideshowViewer";
 import { AdminAuthModal } from "./components/AdminAuthModal";
 import { UserSettingsModal } from "./components/UserSettingsModal";
 import { AdminSettingsModal } from "./components/AdminSettingsModal";
 import { CreateMissionModal } from "./components/CreateMissionModal";
+import { SlideshowGeneratorModal } from "./components/SlideshowGeneratorModal";
 
 import {
   Flame,
@@ -38,7 +41,9 @@ import {
   Shield,
   Lock,
   Share2,
-  QrCode
+  QrCode,
+  Image as ImageIcon,
+  Film
 } from "lucide-react";
 
 export default function App() {
@@ -47,7 +52,7 @@ export default function App() {
   const [items, setItems] = useState<ScavengerItem[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [appReady, setAppReady] = useState(false);
-  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat">("missions");
+  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows">("missions");
 
   // Game branding states
   const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "reunion-2026" });
@@ -87,9 +92,15 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [onlinePlayers, setOnlinePlayers] = useState<{ id: string; username: string }[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // Slideshow Generator States
+  const [slideshowGeneratorOpen, setSlideshowGeneratorOpen] = useState(false);
+  const [slideshowGenerating, setSlideshowGenerating] = useState(false);
+  const [slideshowGeneratedScript, setSlideshowGeneratedScript] = useState<string | null>(null);
+  const [slideshowError, setSlideshowError] = useState<string | null>(null);
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
-  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat">("missions");
+  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows">("missions");
 
   // Geolocation states
   const [userLat, setUserLat] = useState<number | null>(null);
@@ -1221,6 +1232,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               const rand = `hunt-${Math.floor(1000 + Math.random() * 9000)}`;
               setAdminActiveInviteCodeInput(rand);
             }}
+            onOpenSlideshowGenerator={() => setSlideshowGeneratorOpen(true)}
           />
         )}
 
@@ -1253,6 +1265,26 @@ CREATE TABLE IF NOT EXISTS submissions (
             onSubmit={handleAddChallenge}
             userLat={userLat}
             userLng={userLng}
+          />
+        )}
+
+        {/* Slideshow Generator Modal - Admin Only */}
+        {profile?.role === "admin" && (
+          <SlideshowGeneratorModal
+            isOpen={slideshowGeneratorOpen}
+            onClose={() => {
+              setSlideshowGeneratorOpen(false);
+              setSlideshowGeneratedScript(null);
+              setSlideshowError(null);
+            }}
+            submissions={submissions}
+            items={items}
+            isLoading={slideshowGenerating}
+            error={slideshowError}
+            generatedScript={slideshowGeneratedScript}
+            onScriptGenerated={(script) => {
+              setSlideshowGeneratedScript(script);
+            }}
           />
         )}
 
@@ -1305,6 +1337,30 @@ CREATE TABLE IF NOT EXISTS submissions (
           >
             <Users className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
             <span className="hidden sm:inline">Feed</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("gallery")}
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "gallery"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+            title="Photo gallery"
+          >
+            <ImageIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Gallery</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("slideshows")}
+            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "slideshows"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark"
+            }`}
+            title="AI slideshows"
+          >
+            <Film className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+            <span className="hidden sm:inline">Scripts</span>
           </button>
           <button
             onClick={() => setActiveTab("chat")}
@@ -1484,6 +1540,19 @@ CREATE TABLE IF NOT EXISTS submissions (
               items={items}
               currentUserId={profile.id}
               onDeleteSubmission={handleDeleteSubmission}
+            />
+          )}
+
+          {activeTab === "gallery" && (
+            <Gallery
+              submissions={submissions}
+              items={items}
+            />
+          )}
+
+          {activeTab === "slideshows" && (
+            <SlideshowViewer
+              userId={profile.id}
             />
           )}
 

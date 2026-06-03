@@ -34,6 +34,7 @@ interface AdminSettingsModalProps {
   onSubmit: (e: React.FormEvent) => void;
   onReset: () => void;
   onGenerateCode: () => void;
+  onOpenSlideshowGenerator?: () => void;
 }
 
 export function AdminSettingsModal({
@@ -67,7 +68,8 @@ export function AdminSettingsModal({
   saveError,
   onSubmit,
   onReset,
-  onGenerateCode
+  onGenerateCode,
+  onOpenSlideshowGenerator
 }: AdminSettingsModalProps) {
   if (!isOpen) return null;
 
@@ -361,7 +363,22 @@ export function AdminSettingsModal({
         </form>
 
         {/* Footer with buttons */}
-        <div className="p-6 border-t border-[#e5e5dd] bg-[#fafaf7] flex gap-2 shrink-0">
+        <div className="p-6 border-t border-[#e5e5dd] bg-[#fafaf7] flex gap-2 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenSlideshowGenerator) {
+                onOpenSlideshowGenerator();
+              }
+            }}
+            className="py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 6h2v7H9V6zm0 9h2v2H9v-2z" />
+            </svg>
+            Generate Slideshow
+          </button>
+
           <button
             type="submit"
             onClick={onSubmit}
