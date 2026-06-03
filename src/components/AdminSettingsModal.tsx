@@ -18,6 +18,10 @@ interface AdminSettingsModalProps {
   onRadiusChange: (value: number) => void;
   aiPromptInput: string;
   onAiPromptChange: (value: string) => void;
+  aiVerificationEnabledInput: boolean;
+  onAiVerificationEnabledChange: (value: boolean) => void;
+  allowForceSubmitInput: boolean;
+  onAllowForceSubmitChange: (value: boolean) => void;
   inviteCodeInput: string;
   onInviteCodeChange: (value: string) => void;
   inviteRequiredInput: boolean;
@@ -48,6 +52,10 @@ export function AdminSettingsModal({
   onRadiusChange,
   aiPromptInput,
   onAiPromptChange,
+  aiVerificationEnabledInput,
+  onAiVerificationEnabledChange,
+  allowForceSubmitInput,
+  onAllowForceSubmitChange,
   inviteCodeInput,
   onInviteCodeChange,
   inviteRequiredInput,
@@ -222,6 +230,32 @@ export function AdminSettingsModal({
                 Defines AI personality, verification rules, and scoring criteria for submission reviews.
               </p>
             </div>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none mt-3">
+              <input
+                type="checkbox"
+                checked={aiVerificationEnabledInput}
+                onChange={(e) => onAiVerificationEnabledChange(e.target.checked)}
+                className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+              />
+              <div className="leading-none">
+                <span className="text-xs font-bold text-[#5a5a40] block">Enable AI Photo Verification</span>
+                <span className="text-[9px] text-[#8c8c82]">When enabled, Gemini AI reviews each submitted photo. When disabled, all submissions auto-approve instantly.</span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none mt-3">
+              <input
+                type="checkbox"
+                checked={allowForceSubmitInput}
+                onChange={(e) => onAllowForceSubmitChange(e.target.checked)}
+                className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+              />
+              <div className="leading-none">
+                <span className="text-xs font-bold text-[#5a5a40] block">Allow Force Submissions</span>
+                <span className="text-[9px] text-[#8c8c82]">When enabled, users can submit even if the AI Judge rejects their photo. Shows the judge's feedback with a badge.</span>
+              </div>
+            </label>
           </div>
 
           {/* Invite & QR Code Section */}

@@ -1,0 +1,282 @@
+{
+  "info": {
+    "_postman_id": "kinquest-items-collection",
+    "name": "KinQuest - Add All Missions",
+    "description": "Postman collection to bulk insert all 27 scavenger hunt items into the local Supabase REST API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "host",
+      "value": "192.168.86.35",
+      "type": "string"
+    },
+    {
+      "key": "baseUrl",
+      "value": "http://{{host}}:8000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Heritage: The Depot Desk",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"id\": \"item_stewart_briefcase\", \"title\": \"The Depot Desk\", \"description\": \"Locate and photograph Grandpa's briefcase from his days at the Tooele Army Depot!\", \"points\": 20, \"category\": \"Heirloom\", \"icon\": \"Briefcase\", \"lat\": null, \"lng\": null, \"radius\": null}"
+        },
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "02 - Heritage: The Teacher's Look",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_dress\", \"title\": \"The Teacher's Look\", \"description\": \"Find Grandma's teacher dress! Bonus points if a grandkid tries it on for the photo.\", \"points\": 25, \"category\": \"Heirloom\", \"icon\": \"Dress\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "03 - Heritage: The World Traveler",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_kimono\", \"title\": \"The World Traveler\", \"description\": \"Find the Kimono from Japan and snap a photo of its beautiful patterns.\", \"points\": 30, \"category\": \"Heirloom\", \"icon\": \"Globe\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "04 - Heritage: The Woodsman",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_hunting\", \"title\": \"The Woodsman\", \"description\": \"Locate the deer hunting clothes and take a photo of someone posing for the hunt!\", \"points\": 20, \"category\": \"Heirloom\", \"icon\": \"Tree\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "05 - Heritage: Holiday Spirit",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_christmas\", \"title\": \"Holiday Spirit\", \"description\": \"Find the legendary Christmas shirt and snap a festive photo!\", \"points\": 15, \"category\": \"Heirloom\", \"icon\": \"Gift\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "06 - Heritage: The Guidebooks",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_texts\", \"title\": \"The Guidebooks\", \"description\": \"Find a photo of the Book of Mormon and the Bible together.\", \"points\": 15, \"category\": \"Heirloom\", \"icon\": \"Book\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "07 - Heritage: The Searchlight",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_flashlight\", \"title\": \"The Searchlight\", \"description\": \"Locate Grandpa's flashlight—the ultimate tool for any adventure!\", \"points\": 10, \"category\": \"Heirloom\", \"icon\": \"Flashlight\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "08 - Heritage: The Signal",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_whistle\", \"title\": \"The Signal\", \"description\": \"Find the whistle used to gather the troops!\", \"points\": 10, \"category\": \"Heirloom\", \"icon\": \"VolumeUp\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "09 - Heritage: The Feast Pot",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_stewart_pot\", \"title\": \"The Feast Pot\", \"description\": \"Find the giant soup pot used for family gatherings.\", \"points\": 15, \"category\": \"Heirloom\", \"icon\": \"Pot\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "10 - Treats: The Family Fizz",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_treat_rootbeer\", \"title\": \"The Family Fizz\", \"description\": \"Capture a photo of some delicious homemade root beer!\", \"points\": 30, \"category\": \"Treats\", \"icon\": \"Glass\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "11 - Treats: The Chilly Treat",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_treat_icecream\", \"title\": \"The Chilly Treat\", \"description\": \"Snap a photo of the homemade ice cream before it melts!\", \"points\": 30, \"category\": \"Treats\", \"icon\": \"IceCream\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "12 - Treats: The Sweet Pull",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_treat_taffy\", \"title\": \"The Sweet Pull\", \"description\": \"Find the homemade taffy and take a \\\"sweet\\\" photo!\", \"points\": 30, \"category\": \"Treats\", \"icon\": \"Candy\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "13 - Treats: Morning Delight",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_treat_donuts\", \"title\": \"Morning Delight\", \"description\": \"Locate and photograph a tray of donuts!\", \"points\": 20, \"category\": \"Treats\", \"icon\": \"Donut\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "14 - Treats: Classic Candy",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_treat_licorice\", \"title\": \"Classic Candy\", \"description\": \"Find the licorice and snap a photo of a piece being eaten!\", \"points\": 20, \"category\": \"Treats\", \"icon\": \"Candy\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "15 - Treats: The Movie Snack",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_treat_popcorn\", \"title\": \"The Movie Snack\", \"description\": \"Find a bowl of popcorn and capture the salty goodness!\", \"points\": 15, \"category\": \"Treats\", \"icon\": \"Popcorn\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "16 - Resort: The Pro Athlete",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_resort_basketball\", \"title\": \"The Pro Athlete\", \"description\": \"Take a photo of a family member posing for a \\\"slam dunk\\\" at the basketball court!\", \"points\": 40, \"category\": \"Resort\", \"icon\": \"Basketball\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "17 - Resort: Hole-in-One",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_resort_golf\", \"title\": \"Hole-in-One\", \"description\": \"Snap a photo of someone putting a ball at the mini-golf course!\", \"points\": 40, \"category\": \"Resort\", \"icon\": \"Golf\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "18 - Resort: Playground Peak",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_resort_playground\", \"title\": \"Playground Peak\", \"description\": \"Capture a photo of the kids (or adults!) conquering the playground equipment!\", \"points\": 30, \"category\": \"Resort\", \"icon\": \"Playground\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "19 - Resort: The Ideal View",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_resort_view\", \"title\": \"The Ideal View\", \"description\": \"Take a photo of the turquoise water—MUST be taken from the grass or a balcony (Stay off the sand!)\", \"points\": 50, \"category\": \"Resort\", \"icon\": \"Water\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "20 - Resort: The Landmark",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_resort_sign\", \"title\": \"The Landmark\", \"description\": \"Find the Ideal Beach Resort signage and snap a group photo in front of it!\", \"points\": 20, \"category\": \"Resort\", \"icon\": \"Sign\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "21 - Resort: The Orchard Shot",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_resort_apple\", \"title\": \"The Orchard Shot\", \"description\": \"Find the apple tree in the yard and take a creative nature photo!\", \"points\": 30, \"category\": \"Resort\", \"icon\": \"Apple\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "22 - Legacy: Monster Sighting",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_lore_monster\", \"title\": \"Monster Sighting\", \"description\": \"Stage a photo of someone \\\"spotting\\\" the Bear Lake Monster from a balcony or porch!\", \"points\": 60, \"category\": \"Legacy\", \"icon\": \"Monster\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "23 - Legacy: The Pioneer Path",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_lore_ephraim\", \"title\": \"The Pioneer Path\", \"description\": \"Capture a photo of someone telling the story of Old Ephraim under the shade of a tree!\", \"points\": 60, \"category\": \"Legacy\", \"icon\": \"Map\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "24 - Legacy: The Parade Marshal",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_lore_parade\", \"title\": \"The Parade Marshal\", \"description\": \"Take a photo of someone marching like they are leading the 24th of July Pioneer Day Parade!\", \"points\": 70, \"category\": \"Legacy\", \"icon\": \"Flag\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "25 - Legacy: High-Stakes Gum",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_lore_poker\", \"title\": \"High-Stakes Gum\", \"description\": \"Photograph two people playing a game of poker in the shade using pieces of gum as chips!\", \"points\": 80, \"category\": \"Legacy\", \"icon\": \"Cards\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "26 - Legacy: The Happy Camper",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_lore_camping\", \"title\": \"The Happy Camper\", \"description\": \"Find some camping gear in the grass and take a \\\"roughing it\\\" photo!\", \"points\": 40, \"category\": \"Legacy\", \"icon\": \"Tent\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "27 - Legacy: The Ammo Load",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_lore_ammo\", \"title\": \"The Ammo Load\", \"description\": \"Find the \\\"ammunition\\\" (water guns) ready for battle on the porch!\", \"points\": 50, \"category\": \"Legacy\", \"icon\": \"WaterDrop\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    },
+    {
+      "name": "28 - Legacy: The Airborne Infantry",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"id\": \"item_finale_army\", \"title\": \"The Airborne Infantry\", \"description\": \"Take a slow-motion video or photo of the Parachute Army Men being launched from the balcony!\", \"points\": 100, \"category\": \"Legacy\", \"icon\": \"Parachute\", \"lat\": null, \"lng\": null, \"radius\": null}"},
+        "url": "{{baseUrl}}/rest/v1/items"
+      }
+    }
+  ]
+}

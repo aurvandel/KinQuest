@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ScavengerItem, Submission } from "../types";
 import { DynamicIcon } from "./DynamicIcon";
 import { CameraCapture } from "./CameraCapture";
+import { EditMissionModal } from "./EditMissionModal";
 import {
   CheckCircle2,
   Clock,
@@ -19,7 +20,8 @@ import {
   Zap,
   Check,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  Edit2
 } from "lucide-react";
 
 interface MissionsListProps {
@@ -30,10 +32,13 @@ interface MissionsListProps {
   onUploadSubmission: (itemId: string, base64Image: string) => Promise<void>;
   isSubmittingMap: { [itemId: string]: boolean };
   submitErrorMap: { [itemId: string]: string | null };
+  rejectedSubmissionMap?: { [itemId: string]: { explanation: string; base64: string } };
+  onForceSubmit?: (itemId: string) => void;
   userLat: number | null;
   userLng: number | null;
   onAddChallenge?: (newChallenge: Omit<ScavengerItem, "id">) => Promise<void>;
   onDeleteMission?: (itemId: string) => Promise<void>;
+  onEditMission?: (itemId: string, updates: Partial<ScavengerItem>) => Promise<void>;
   onShowCreateModal?: () => void;
 }
 
@@ -45,16 +50,21 @@ export function MissionsList({
   onUploadSubmission,
   isSubmittingMap,
   submitErrorMap,
+  rejectedSubmissionMap,
+  onForceSubmit,
   userLat,
   userLng,
   onAddChallenge,
   onDeleteMission,
+  onEditMission,
   onShowCreateModal
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [tempImageMap, setTempImageMap] = useState<{ [itemId: string]: string }>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<ScavengerItem | null>(null);
 
   const categories = ["All", ...Array.from(new Set(items.map((item) => item.category)))];
 
@@ -149,6 +159,36 @@ export function MissionsList({
 
   const canDeleteMission = (item: ScavengerItem) => {
     return currentUserRole === "admin" || item.createdBy === currentUserId;
+  };
+
+  const canEditMission = (item: ScavengerItem) => {
+    return currentUserRole === "admin" || item.createdBy === currentUserId;
+  };
+
+  const handleEditMission = (item: ScavengerItem) => {
+    setEditingItem(item);
+    setEditingId(item.id);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingItem || !onEditMission) return;
+    try {
+      setEditingId(editingItem.id);
+      await onEditMission(editingItem.id, {
+        title: editingItem.title,
+        description: editingItem.description,
+        points: editingItem.points,
+        category: editingItem.category,
+        icon: editingItem.icon,
+        lat: editingItem.lat,
+        lng: editingItem.lng,
+        radius: editingItem.radius
+      });
+      setEditingItem(null);
+      setEditingId(null);
+    } catch (err) {
+      console.error("Failed to edit mission:", err);
+    }
   };
 
   return (
@@ -285,8 +325,22 @@ export function MissionsList({
                     )}
                   </div>
 
-                  {/* Delete button and Expand */}
+                  {/* Edit/Delete buttons and Expand */}
                   <div className="flex items-center gap-2">
+                    {canEditMission(item) && onEditMission && (
+                      <button
+                        onClick={() => handleEditMission(item)}
+                        disabled={editingId === item.id}
+                        className="p-2 text-brand-moss hover:bg-brand-beige-light rounded-lg transition disabled:opacity-50"
+                        title={currentUserRole === "admin" ? "Edit mission (Admin)" : "Edit mission (Created by you)"}
+                      >
+                        {editingId === item.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Edit2 className="h-4 w-4" />
+                        )}
+                      </button>
+                    )}
                     {canDeleteMission(item) && onDeleteMission && (
                       <button
                         onClick={() => handleDeleteMission(item.id)}
@@ -422,9 +476,20 @@ export function MissionsList({
                           />
 
                           {uploadError && (
-                            <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl p-3 text-xs flex items-center gap-2">
-                              <XCircle className="h-4 w-4 shrink-0" />
-                              <p className="font-semibold">{uploadError}</p>
+                            <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl p-3 text-xs space-y-2">
+                              <div className="flex items-center gap-2">
+                                <XCircle className="h-4 w-4 shrink-0" />
+                                <p className="font-semibold">{uploadError}</p>
+                              </div>
+                              {rejectedSubmissionMap?.[item.id] && onForceSubmit && (
+                                <button
+                                  onClick={() => onForceSubmit(item.id)}
+                                  type="button"
+                                  className="w-full px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                >
+                                  ⚠️ Force Submit Anyway
+                                </button>
+                              )}
                             </div>
                           )}
 
@@ -457,6 +522,25 @@ export function MissionsList({
           );
         })}
       </div>
+
+      {/* Edit Mission Modal */}
+      {editingItem && (
+        <EditMissionModal
+          isOpen={!!editingItem}
+          item={editingItem}
+          onClose={() => {
+            setEditingItem(null);
+            setEditingId(null);
+          }}
+          onSubmit={async (updates) => {
+            if (editingItem && onEditMission) {
+              const updated = { ...editingItem, ...updates };
+              setEditingItem(updated);
+              await handleSaveEdit();
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

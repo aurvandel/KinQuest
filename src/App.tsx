@@ -58,6 +58,8 @@ export default function App() {
   const [adminLngInput, setAdminLngInput] = useState(-73.9682);
   const [adminRadiusInput, setAdminRadiusInput] = useState(500);
   const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
+  const [adminAiVerificationEnabledInput, setAdminAiVerificationEnabledInput] = useState(true);
+  const [adminAllowForceSubmitInput, setAdminAllowForceSubmitInput] = useState(false);
   const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("reunion-2026");
   const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
   const [manualInviteCode, setManualInviteCode] = useState("");
@@ -100,6 +102,7 @@ export default function App() {
   // Spinners / error maps per mission
   const [isSubmittingMap, setIsSubmittingMap] = useState<{ [itemId: string]: boolean }>({});
   const [submitErrorMap, setSubmitErrorMap] = useState<{ [itemId: string]: string | null }>({});
+  const [rejectedSubmissionMap, setRejectedSubmissionMap] = useState<{ [itemId: string]: { explanation: string; base64: string } }>({});
 
   const [registerName, setRegisterName] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -517,6 +520,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLng: Number(adminLngInput) || -73.9682,
           defaultRadius: Number(adminRadiusInput) || 500,
           aiPromptCriteria: adminAiPromptCriteriaInput.trim(),
+          aiVerificationEnabled: adminAiVerificationEnabledInput,
+          allowForceSubmit: adminAllowForceSubmitInput,
           activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
           inviteRequired: adminInviteRequiredInput
         })
@@ -552,6 +557,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLng: -73.9682,
           defaultRadius: 500,
           aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+          aiVerificationEnabled: true,
+          allowForceSubmit: false,
           activeInviteCode: "reunion-2026",
           inviteRequired: true
         })
@@ -565,6 +572,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminLngInput(-73.9682);
         setAdminRadiusInput(500);
         setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
+        setAdminAiVerificationEnabledInput(true);
+        setAdminAllowForceSubmitInput(false);
         setAdminActiveInviteCodeInput("reunion-2026");
         setAdminInviteRequiredInput(true);
         setAdminSaveSuccess(true);
@@ -688,7 +697,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   };
 
   // Submit base64 photo with current coordinates to server
-  const handleUploadSubmission = async (itemId: string, base64Image: string) => {
+  const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false) => {
     if (!profile) return;
 
     setSubmitErrorMap((prev) => ({ ...prev, [itemId]: null }));
@@ -703,7 +712,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           itemId: itemId,
           imageBase64: base64Image,
           userLat: userLat,
-          userLng: userLng
+          userLng: userLng,
+          forceSubmit: forceSubmit
         })
       });
 
@@ -714,11 +724,22 @@ CREATE TABLE IF NOT EXISTS submissions (
 
       const payload = await response.json();
       
-      if (payload.submission.status === "rejected") {
+      if (payload.submission.status === "rejected" && !forceSubmit) {
+        // Store the rejected submission for potential force submission
+        setRejectedSubmissionMap((prev) => ({
+          ...prev,
+          [itemId]: { explanation: payload.explanation, base64: base64Image }
+        }));
         throw new Error(payload.explanation || "Verification declined by Referee.");
       }
 
       // Success approval: state updates automatically on next polling sweep!
+      // Clear any rejected submission record
+      setRejectedSubmissionMap((prev) => {
+        const updated = { ...prev };
+        delete updated[itemId];
+        return updated;
+      });
 
     } catch (err: any) {
       console.error("Submission grading error:", err);
@@ -728,6 +749,14 @@ CREATE TABLE IF NOT EXISTS submissions (
       }));
     } finally {
       setIsSubmittingMap((prev) => ({ ...prev, [itemId]: false }));
+    }
+  };
+
+  // Force submit a rejected submission
+  const handleForceSubmit = (itemId: string) => {
+    const rejected = rejectedSubmissionMap[itemId];
+    if (rejected) {
+      handleUploadSubmission(itemId, rejected.base64, true);
     }
   };
 
@@ -782,6 +811,29 @@ CREATE TABLE IF NOT EXISTS submissions (
     } catch (err: any) {
       console.error("Delete mission error:", err);
       alert(err instanceof Error ? err.message : "Failed to delete mission.");
+    }
+  };
+
+  // Edit mission - admin or creator only
+  const handleEditMission = async (itemId: string, updates: Partial<ScavengerItem>) => {
+    try {
+      const response = await fetch(`/api/challenges/${itemId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile?.id, ...updates })
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update mission.");
+      }
+
+      const data = await response.json();
+      
+      // Update local state
+      setItems((prev) => prev.map((item) => (item.id === itemId ? data.item : item)));
+    } catch (err: any) {
+      console.error("Edit mission error:", err);
+      alert(err instanceof Error ? err.message : "Failed to update mission.");
     }
   };
 
@@ -1095,6 +1147,8 @@ CREATE TABLE IF NOT EXISTS submissions (
                     setAdminLngInput(settings.defaultLng ?? -73.9682);
                     setAdminRadiusInput(settings.defaultRadius ?? 500);
                     setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+                    setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
+                    setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
                     setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
                     setAdminInviteRequiredInput(settings.inviteRequired !== false);
                   }
@@ -1143,6 +1197,10 @@ CREATE TABLE IF NOT EXISTS submissions (
             onRadiusChange={setAdminRadiusInput}
             aiPromptInput={adminAiPromptCriteriaInput}
             onAiPromptChange={setAdminAiPromptCriteriaInput}
+            aiVerificationEnabledInput={adminAiVerificationEnabledInput}
+            onAiVerificationEnabledChange={setAdminAiVerificationEnabledInput}
+            allowForceSubmitInput={adminAllowForceSubmitInput}
+            onAllowForceSubmitChange={setAdminAllowForceSubmitInput}
             inviteCodeInput={adminActiveInviteCodeInput}
             onInviteCodeChange={setAdminActiveInviteCodeInput}
             inviteRequiredInput={adminInviteRequiredInput}
@@ -1393,10 +1451,13 @@ CREATE TABLE IF NOT EXISTS submissions (
               onUploadSubmission={handleUploadSubmission}
               isSubmittingMap={isSubmittingMap}
               submitErrorMap={submitErrorMap}
+              rejectedSubmissionMap={rejectedSubmissionMap}
+              onForceSubmit={handleForceSubmit}
               userLat={userLat}
               userLng={userLng}
               onAddChallenge={handleAddChallenge}
               onDeleteMission={handleDeleteMission}
+              onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
             />
           )}

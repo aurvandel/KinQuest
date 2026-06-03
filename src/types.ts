@@ -35,6 +35,7 @@ export interface Submission {
   imageUrl: string;
   status: "pending" | "approved" | "rejected";
   aiExplanation?: string;
+  forcedApproval?: boolean;
   createdAt: string;
   userLat?: number | null;
   userLng?: number | null;
@@ -59,6 +60,8 @@ export interface AppSettings {
   aiPromptCriteria?: string;
   activeInviteCode?: string;
   inviteRequired?: boolean;
+  aiVerificationEnabled?: boolean;
+  allowForceSubmit?: boolean;
 }
 
 

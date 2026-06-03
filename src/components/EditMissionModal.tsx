@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { X, Send, Compass, Check, AlertCircle, Loader2 } from "lucide-react";
 import { ScavengerItem } from "../types";
 import { DynamicIcon } from "./DynamicIcon";
@@ -11,42 +11,32 @@ const AVAILABLE_ICONS = [
   "Palette", "Tv", "Clock", "Flower2", "Coins"
 ];
 
-interface CreateMissionModalProps {
+interface EditMissionModalProps {
   isOpen: boolean;
+  item: ScavengerItem | null;
   onClose: () => void;
-  onSubmit: (challenge: Omit<ScavengerItem, "id">) => Promise<void>;
-  userLat: number | null;
-  userLng: number | null;
+  onSubmit: (updates: Partial<ScavengerItem>) => Promise<void>;
 }
 
-export function CreateMissionModal({
+export function EditMissionModal({
   isOpen,
+  item,
   onClose,
-  onSubmit,
-  userLat,
-  userLng
-}: CreateMissionModalProps) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [points, setPoints] = useState("40");
-  const [category, setCategory] = useState("Exploration");
-  const [icon, setIcon] = useState("Sparkles");
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-  const [radius, setRadius] = useState("200");
+  onSubmit
+}: EditMissionModalProps) {
+  const [title, setTitle] = useState(item?.title || "");
+  const [description, setDescription] = useState(item?.description || "");
+  const [points, setPoints] = useState(String(item?.points || "40"));
+  const [category, setCategory] = useState(item?.category || "Exploration");
+  const [icon, setIcon] = useState(item?.icon || "Sparkles");
+  const [lat, setLat] = useState(item?.lat ? String(item.lat) : "");
+  const [lng, setLng] = useState(item?.lng ? String(item.lng) : "");
+  const [radius, setRadius] = useState(item?.radius ? String(item.radius) : "");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Auto-fill coordinates when modal opens with valid userLat/userLng
-  useEffect(() => {
-    if (isOpen && userLat !== null && userLng !== null && !lat && !lng) {
-      setLat(userLat.toFixed(5));
-      setLng(userLng.toFixed(5));
-    }
-  }, [isOpen, userLat, userLng, lat, lng]);
-
-  if (!isOpen) return null;
+  if (!isOpen || !item) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,7 +44,7 @@ export function CreateMissionModal({
     setSuccess(false);
 
     if (!title || !description) {
-      setError("Title and description/criteria are required.");
+      setError("Title and description are required.");
       return;
     }
 
@@ -80,34 +70,15 @@ export function CreateMissionModal({
         radius: itemRadius
       });
 
-      // Reset form
-      setTitle("");
-      setDescription("");
-      setPoints("40");
-      setCategory("Exploration");
-      setIcon("Sparkles");
-      setLat("");
-      setLng("");
-      setRadius("200");
       setSuccess(true);
-      
       setTimeout(() => {
         setSuccess(false);
         onClose();
       }, 1500);
     } catch (err) {
-      setError("Could not create mission. Server unresponsive.");
+      setError("Could not update mission. Server unresponsive.");
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const autofillCurrentLoc = () => {
-    if (userLat !== null && userLng !== null) {
-      setLat(userLat.toFixed(5));
-      setLng(userLng.toFixed(5));
-    } else {
-      setError("Could not capture Geolocation coordinates to autofill yet.");
     }
   };
 
@@ -116,7 +87,7 @@ export function CreateMissionModal({
       <div className="bg-white rounded-3xl max-w-2xl w-full shadow-lg animate-fadeIn overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#e5e5dd] p-6 shrink-0">
-          <h2 className="text-sm font-bold uppercase tracking-widest text-[#5a5a40]">Create a Custom Hunt Mission</h2>
+          <h2 className="text-sm font-bold uppercase tracking-widest text-[#5a5a40]">Edit Hunt Mission</h2>
           <button
             type="button"
             onClick={onClose}
@@ -168,6 +139,16 @@ export function CreateMissionModal({
                   <option value="Tech">Tech</option>
                   <option value="Animal">Animal</option>
                   <option value="Creative">Creative</option>
+                  <option value="Heirloom">Heirloom</option>
+                  <option value="Treats">Treats</option>
+                  <option value="Resort">Resort</option>
+                  <option value="Legacy">Legacy</option>
+                  <option value="Family">Family</option>
+                  <option value="History">History</option>
+                  <option value="Food">Food</option>
+                  <option value="Genetic">Genetic</option>
+                  <option value="Entertainment">Entertainment</option>
+                  <option value="Joy">Joy</option>
                 </select>
               </div>
             </div>
@@ -210,19 +191,10 @@ export function CreateMissionModal({
 
           {/* Geofencing Section */}
           <div className="bg-[#f5f5f0]/80 border border-[#dcdcd4] rounded-2xl p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-[#5a5a40] flex items-center gap-1">
-                <Compass className="h-4 w-4" />
-                <span>Attach GPS Geofenced Constraint (Optional)</span>
-              </h4>
-              <button
-                type="button"
-                onClick={autofillCurrentLoc}
-                className="text-[10px] font-bold text-[#5a5a40] bg-white rounded-lg px-2 py-1 shadow-sm border border-[#dcdcd4] hover:bg-[#f5f5f0] transition"
-              >
-                📍 Autofill Current GPS
-              </button>
-            </div>
+            <h4 className="text-xs font-bold text-[#5a5a40] flex items-center gap-1">
+              <Compass className="h-4 w-4" />
+              <span>GPS Geofenced Constraint (Optional)</span>
+            </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
@@ -273,7 +245,7 @@ export function CreateMissionModal({
           {success && (
             <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-medium border border-emerald-100 flex items-center gap-1.5 animate-bounce">
               <Check className="h-4 w-4 shrink-0" />
-              <span>Challenge created successfully! It has been live-synchronized!</span>
+              <span>Mission updated successfully!</span>
             </div>
           )}
         </form>
@@ -298,7 +270,7 @@ export function CreateMissionModal({
             ) : (
               <Send className="h-3.5 w-3.5" />
             )}
-            Publish Challenge Live
+            Save Changes
           </button>
         </div>
       </div>

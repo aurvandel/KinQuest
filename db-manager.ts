@@ -926,6 +926,8 @@ export interface AppSettings {
   aiPromptCriteria?: string;
   activeInviteCode?: string;
   inviteRequired?: boolean;
+  aiVerificationEnabled?: boolean;
+  allowForceSubmit?: boolean;
 }
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
@@ -943,7 +945,9 @@ export function getAppSettings(): AppSettings {
         defaultRadius: Number(parsed.defaultRadius) || 500,
         aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
         activeInviteCode: parsed.activeInviteCode || "reunion-2026",
-        inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true
+        inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true,
+        aiVerificationEnabled: parsed.aiVerificationEnabled !== undefined ? !!parsed.aiVerificationEnabled : true,
+        allowForceSubmit: parsed.allowForceSubmit !== undefined ? !!parsed.allowForceSubmit : false
       };
     }
   } catch (err) {
@@ -957,7 +961,9 @@ export function getAppSettings(): AppSettings {
     defaultRadius: 500,
     aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
     activeInviteCode: "reunion-2026",
-    inviteRequired: true
+    inviteRequired: true,
+    aiVerificationEnabled: true,
+    allowForceSubmit: false
   };
 }
 

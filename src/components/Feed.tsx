@@ -1,5 +1,6 @@
+import React, { useState, useEffect, useRef } from "react";
 import { Submission, ScavengerItem } from "../types";
-import { CheckCircle2, XCircle, Clock, Trash2, Sparkles, MessageCircle, RefreshCw } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, Trash2, Sparkles, MessageCircle, RefreshCw, Loader2 } from "lucide-react";
 
 interface FeedProps {
   submissions: Submission[];
@@ -8,11 +9,47 @@ interface FeedProps {
   onDeleteSubmission: (subId: string) => void;
 }
 
+const ITEMS_PER_PAGE = 10;
+
 export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: FeedProps) {
+  const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
   // Sort submissions by newest first
   const sortedSubmissions = [...submissions].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
+
+  // Infinite scroll detection using Intersection Observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && displayLimit < sortedSubmissions.length) {
+          setIsLoadingMore(true);
+          // Simulate a small delay for better UX
+          setTimeout(() => {
+            setDisplayLimit((prev) => Math.min(prev + ITEMS_PER_PAGE, sortedSubmissions.length));
+            setIsLoadingMore(false);
+          }, 300);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (endRef.current) {
+      observer.observe(endRef.current);
+    }
+
+    return () => {
+      if (endRef.current) {
+        observer.unobserve(endRef.current);
+      }
+    };
+  }, [displayLimit, sortedSubmissions.length]);
+
+  // Get only the submissions to display
+  const displayedSubmissions = sortedSubmissions.slice(0, displayLimit);
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
@@ -23,7 +60,7 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: 
         </div>
         <span className="text-xs bg-gray-100 text-gray-500 font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
           <RefreshCw className="h-3 w-3 animate-spin text-amber-500" />
-          {submissions.length} Total Uploads
+          {submissions.length} Total Uploads {displayLimit < sortedSubmissions.length && `(Showing ${displayLimit})`}
         </span>
       </div>
 
@@ -35,7 +72,7 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: 
         </div>
       ) : (
         <div className="space-y-6">
-          {sortedSubmissions.map((sub) => {
+          {displayedSubmissions.map((sub) => {
             const associatedItem = items.find((it) => it.id === sub.itemId);
             const isOwner = sub.userId === currentUserId;
 
@@ -54,7 +91,12 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: 
                   />
                   {/* Status Overlay Badge */}
                   <div className="absolute top-3 left-3 flex items-center shadow-md">
-                    {sub.status === "approved" && (
+                    {sub.status === "approved" && sub.forcedApproval && (
+                      <span className="bg-violet-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                        ⚠️ Force Submitted (+{associatedItem?.points || 0} pts)
+                      </span>
+                    )}
+                    {sub.status === "approved" && !sub.forcedApproval && (
                       <span className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" />
                         Approved (+{associatedItem?.points || 0} pts)
@@ -145,6 +187,25 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: 
               </div>
             );
           })}
+
+          {/* Loading more indicator */}
+          {isLoadingMore && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+            </div>
+          )}
+
+          {/* Infinite scroll sentinel */}
+          {displayLimit < sortedSubmissions.length && (
+            <div ref={endRef} className="h-4" />
+          )}
+
+          {/* End of feed indicator */}
+          {displayLimit >= sortedSubmissions.length && sortedSubmissions.length > 0 && (
+            <div className="text-center py-8 text-gray-400">
+              <p className="text-xs">You've seen all {sortedSubmissions.length} submissions!</p>
+            </div>
+          )}
         </div>
       )}
     </div>

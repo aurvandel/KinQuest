@@ -129,7 +129,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, activeInviteCode, inviteRequired } = req.body;
+  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -140,6 +140,8 @@ app.post("/api/settings", (req, res) => {
     defaultLng: defaultLng !== undefined ? Number(defaultLng) : undefined,
     defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : undefined,
     aiPromptCriteria: aiPromptCriteria !== undefined ? String(aiPromptCriteria).trim() : undefined,
+    aiVerificationEnabled: aiVerificationEnabled !== undefined ? !!aiVerificationEnabled : undefined,
+    allowForceSubmit: allowForceSubmit !== undefined ? !!allowForceSubmit : undefined,
     activeInviteCode: activeInviteCode !== undefined ? String(activeInviteCode).trim().toLowerCase() : undefined,
     inviteRequired: inviteRequired !== undefined ? !!inviteRequired : undefined
   };
@@ -309,10 +311,59 @@ app.delete("/api/challenges/:id", async (req, res) => {
   }
 });
 
+// Update a specific challenge
+app.put("/api/challenges/:id", async (req, res) => {
+  const { id } = req.params;
+  const { userId, title, description, points, category, icon, lat, lng, radius } = req.body;
+
+  if (!id || !userId) {
+    return res.status(400).json({ error: "Missing challenge ID or user ID" });
+  }
+
+  try {
+    const db = await getAppState();
+    const item = db.items[id];
+
+    if (!item) {
+      return res.status(404).json({ error: "Challenge not found" });
+    }
+
+    const user = db.users[userId];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Check permissions: admin or creator
+    const isAdmin = user.role === "admin";
+    const isCreator = item.createdBy === userId;
+
+    if (!isAdmin && !isCreator) {
+      return res.status(403).json({ error: "You don't have permission to edit this mission" });
+    }
+
+    // Update fields
+    if (title !== undefined) item.title = title;
+    if (description !== undefined) item.description = description;
+    if (points !== undefined) item.points = Number(points) || 10;
+    if (category !== undefined) item.category = category;
+    if (icon !== undefined) item.icon = icon;
+    if (lat !== undefined) item.lat = lat ? Number(lat) : null;
+    if (lng !== undefined) item.lng = lng ? Number(lng) : null;
+    if (radius !== undefined) item.radius = radius ? Number(radius) : null;
+
+    // Update in database
+    db.items[id] = item;
+    
+    res.json({ success: true, message: "Mission updated successfully", item });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update mission", details: err.message });
+  }
+});
+
 // 5. Submit capture proof & trigger AI evaluation logic
 app.post("/api/verify-submission", async (req, res) => {
   try {
-    const { userId, itemId, imageBase64, userLat, userLng } = req.body;
+    const { userId, itemId, imageBase64, userLat, userLng, forceSubmit } = req.body;
 
     if (!userId || !itemId || !imageBase64) {
       return res.status(400).json({ error: "Missing required payload context fields" });
@@ -397,6 +448,39 @@ app.post("/api/verify-submission", async (req, res) => {
     };
 
     const currentSettings = getAppSettings();
+
+    // Check if AI verification is disabled - auto-approve if so
+    if (currentSettings.aiVerificationEnabled === false) {
+      const subId2 = `sub_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const autoApprovedSubmission: Submission = {
+        id: subId2,
+        userId: user.id,
+        username: user.username,
+        itemId: itemId,
+        imageUrl: imageUrl,
+        status: "approved",
+        aiExplanation: "AI verification is currently disabled. Submission auto-approved by system.",
+        createdAt: new Date().toISOString(),
+        userLat: userLat ? Number(userLat) : null,
+        userLng: userLng ? Number(userLng) : null,
+        distanceMeters: distanceMeters
+      };
+
+      await submitHunterProof(autoApprovedSubmission, item.points);
+
+      // Fetch updated user stats
+      const freshDb = await getAppState();
+      const updatedUser = freshDb.users[user.id] || user;
+
+      return res.json({
+        isMatch: true,
+        explanation: "AI verification is currently disabled. Submission auto-approved by system.",
+        confidence: 100,
+        submission: autoApprovedSubmission,
+        user: updatedUser
+      });
+    }
+
     const customPromptCriteria = currentSettings.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.";
 
     const promptText = `You are an AI Referee for a mobile Scavenger Hunt game!
@@ -458,22 +542,28 @@ You MUST respond strictly in valid JSON matching this schema:
     }
 
     const isMatch = parsedResult.isMatch === true;
+    
+    // Check if user wants to force submit a rejected image and if that's allowed
+    const canForceSubmit = forceSubmit === true && currentSettings.allowForceSubmit === true && isMatch === false;
+    
     const finalSubmission: Submission = {
       id: subId,
       userId: user.id,
       username: user.username,
       itemId: itemId,
       imageUrl: imageUrl,
-      status: isMatch ? "approved" : "rejected",
+      status: canForceSubmit ? "approved" : (isMatch ? "approved" : "rejected"),
       aiExplanation: parsedResult.explanation,
+      forcedApproval: canForceSubmit ? true : undefined,
       createdAt: new Date().toISOString(),
       userLat: userLat ? Number(userLat) : null,
       userLng: userLng ? Number(userLng) : null,
       distanceMeters: distanceMeters
     };
 
-    // Commit to Database
-    await submitHunterProof(finalSubmission, item.points);
+    // Commit to Database (use full points if approved or force-approved)
+    const pointsToAward = (isMatch || canForceSubmit) ? item.points : 0;
+    await submitHunterProof(finalSubmission, pointsToAward);
 
     // Fetch updated user stats representation
     const freshDb = await getAppState();
