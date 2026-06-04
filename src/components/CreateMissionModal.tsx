@@ -164,9 +164,9 @@ export function CreateMissionModal({
                 >
                   <option value="Exploration">Exploration</option>
                   <option value="Nature">Nature</option>
-                  <option value="Home">Home</option>
-                  <option value="Tech">Tech</option>
-                  <option value="Animal">Animal</option>
+                  <option value="Home">Family</option>
+                  <option value="Tech">Heirloom</option>
+                  <option value="Animal">Legacy</option>
                   <option value="Creative">Creative</option>
                 </select>
               </div>

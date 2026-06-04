@@ -75,6 +75,9 @@ export default function App() {
   const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
   const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
+  const [adminImageCompressionMaxDimInput, setAdminImageCompressionMaxDimInput] = useState(800);
+  const [adminImageCompressionQualityInput, setAdminImageCompressionQualityInput] = useState(0.7);
+  const [storageInfo, setStorageInfo] = useState<any>(null);
 
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
@@ -536,7 +539,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           aiVerificationEnabled: adminAiVerificationEnabledInput,
           allowForceSubmit: adminAllowForceSubmitInput,
           activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
-          inviteRequired: adminInviteRequiredInput
+          inviteRequired: adminInviteRequiredInput,
+          imageCompressionMaxDim: Number(adminImageCompressionMaxDimInput) || 800,
+          imageCompressionQuality: Number(adminImageCompressionQualityInput) || 0.7
         })
       });
       if (res.ok) {
@@ -573,7 +578,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           aiVerificationEnabled: true,
           allowForceSubmit: false,
           activeInviteCode: "stewart-test",
-          inviteRequired: true
+          inviteRequired: true,
+          imageCompressionMaxDim: 800,
+          imageCompressionQuality: 0.7
         })
       });
       if (res.ok) {
@@ -589,6 +596,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminAllowForceSubmitInput(false);
         setAdminActiveInviteCodeInput("stewart-test");
         setAdminInviteRequiredInput(true);
+        setAdminImageCompressionMaxDimInput(800);
+        setAdminImageCompressionQualityInput(0.7);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
       } else {
@@ -786,6 +795,24 @@ CREATE TABLE IF NOT EXISTS submissions (
       // Success: automatically visual refresh occurs in periodic loop!
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Retry pending submission (for rate-limited or timed-out submissions)
+  const handleRetryPendingSubmission = async (subId: string) => {
+    try {
+      const response = await fetch(`/api/submissions/${subId}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Could not retry submission verification.");
+      }
+      // Success: submission is now retrying, UI will refresh on next poll
+    } catch (err: any) {
+      console.error("Retry error:", err);
+      alert(err instanceof Error ? err.message : "Failed to retry submission");
     }
   };
 
@@ -1201,7 +1228,14 @@ CREATE TABLE IF NOT EXISTS submissions (
                     setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
                     setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
                     setAdminInviteRequiredInput(settings.inviteRequired !== false);
+                    setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
+                    setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
                   }
+                  // Fetch storage info when panel opens
+                  fetch("/api/storage-info")
+                    .then(res => res.json())
+                    .then(data => setStorageInfo(data))
+                    .catch(err => console.error("Failed to fetch storage info:", err));
                 }}
                 type="button"
                 className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
@@ -1262,6 +1296,11 @@ CREATE TABLE IF NOT EXISTS submissions (
               setCopiedInviteLink(true);
               setTimeout(() => setCopiedInviteLink(false), 2000);
             }}
+            imageCompressionMaxDimInput={adminImageCompressionMaxDimInput}
+            onImageCompressionMaxDimChange={setAdminImageCompressionMaxDimInput}
+            imageCompressionQualityInput={adminImageCompressionQualityInput}
+            onImageCompressionQualityChange={setAdminImageCompressionQualityInput}
+            storageInfo={storageInfo}
             isLoading={isAdminSaving}
             saveSuccess={adminSaveSuccess}
             saveError={adminSaveError}
@@ -1598,6 +1637,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               items={items}
               currentUserId={profile.id}
               onDeleteSubmission={handleDeleteSubmission}
+              onRetryPending={handleRetryPendingSubmission}
             />
           )}
 

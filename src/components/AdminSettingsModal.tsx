@@ -1,6 +1,19 @@
 import React from "react";
-import { Settings, Upload, Copy, Check, AlertCircle, Loader2, RotateCcw, QrCode, ExternalLink } from "lucide-react";
+import { Settings, Upload, Copy, Check, AlertCircle, Loader2, RotateCcw, QrCode, ExternalLink, HardDrive } from "lucide-react";
 import { AppSettings } from "../types";
+
+interface StorageInfo {
+  freeBytes: number;
+  totalBytes: number;
+  usedBytes: number;
+  freeGb: string;
+  usedGb: string;
+  totalGb: string;
+  estimatedImageSizeKb: number;
+  imageCompressionMaxDim: number;
+  imageCompressionQuality: number;
+  imagesRemainingCapacity: number;
+}
 
 interface AdminSettingsModalProps {
   isOpen: boolean;
@@ -28,6 +41,11 @@ interface AdminSettingsModalProps {
   onInviteRequiredChange: (value: boolean) => void;
   copiedInviteLink: boolean;
   onCopyInviteLink: () => void;
+  imageCompressionMaxDimInput: number;
+  onImageCompressionMaxDimChange: (value: number) => void;
+  imageCompressionQualityInput: number;
+  onImageCompressionQualityChange: (value: number) => void;
+  storageInfo: StorageInfo | null;
   isLoading: boolean;
   saveSuccess: boolean;
   saveError: string | null;
@@ -63,6 +81,11 @@ export function AdminSettingsModal({
   onInviteRequiredChange,
   copiedInviteLink,
   onCopyInviteLink,
+  imageCompressionMaxDimInput,
+  onImageCompressionMaxDimChange,
+  imageCompressionQualityInput,
+  onImageCompressionQualityChange,
+  storageInfo,
   isLoading,
   saveSuccess,
   saveError,
@@ -211,6 +234,78 @@ export function AdminSettingsModal({
                 className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
               />
             </div>
+          </div>
+
+          {/* Image Compression Settings Section */}
+          <div className="space-y-2 pt-2 border-t border-[#e5e5dd]">
+            <h3 className="text-xs font-bold text-[#5a5a40] uppercase tracking-wider">📸 Image Compression Settings</h3>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                Max Image Dimension (pixels)
+              </label>
+              <input
+                type="number"
+                required
+                min={200}
+                max={2000}
+                step={50}
+                value={imageCompressionMaxDimInput}
+                onChange={(e) => onImageCompressionMaxDimChange(parseInt(e.target.value) || 800)}
+                className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
+              />
+              <p className="text-[9px] text-[#8c8c82]">Larger values = better quality but bigger file size (200-2000px recommended)</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                JPEG Quality (0.0 - 1.0)
+              </label>
+              <input
+                type="number"
+                required
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={imageCompressionQualityInput}
+                onChange={(e) => onImageCompressionQualityChange(parseFloat(e.target.value) || 0.7)}
+                className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
+              />
+              <p className="text-[9px] text-[#8c8c82]">Higher values = better quality but larger files (0.5-0.9 recommended)</p>
+            </div>
+
+            {storageInfo && (
+              <div className="space-y-2 mt-3 p-3 bg-sky-50 rounded-2xl border border-sky-100">
+                <div className="flex items-center gap-2 mb-2">
+                  <HardDrive className="h-4 w-4 text-sky-600" />
+                  <span className="text-xs font-bold text-sky-700 uppercase tracking-widest">Storage & Capacity Info</span>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                  <div className="bg-white p-2 rounded-lg border border-sky-100">
+                    <span className="text-[9px] font-bold text-sky-600 block mb-0.5">Used</span>
+                    <span className="text-sky-900 font-bold">{storageInfo.usedGb} GB</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-sky-100">
+                    <span className="text-[9px] font-bold text-sky-600 block mb-0.5">Free</span>
+                    <span className="text-emerald-600 font-bold">{storageInfo.freeGb} GB</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2 rounded-lg border border-sky-100 text-[9px]">
+                  <span className="text-sky-600 font-bold block mb-1">Current Settings Impact:</span>
+                  <div className="space-y-0.5 text-sky-900">
+                    <div className="flex justify-between">
+                      <span>Est. per image:</span>
+                      <span className="font-bold">{storageInfo.estimatedImageSizeKb} KB</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Images before full:</span>
+                      <span className="font-bold text-emerald-600">{storageInfo.imagesRemainingCapacity.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* AI Judge Section */}

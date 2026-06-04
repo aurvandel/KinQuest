@@ -134,7 +134,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired } = req.body;
+  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -148,10 +148,55 @@ app.post("/api/settings", (req, res) => {
     aiVerificationEnabled: aiVerificationEnabled !== undefined ? !!aiVerificationEnabled : undefined,
     allowForceSubmit: allowForceSubmit !== undefined ? !!allowForceSubmit : undefined,
     activeInviteCode: activeInviteCode !== undefined ? String(activeInviteCode).trim().toLowerCase() : undefined,
-    inviteRequired: inviteRequired !== undefined ? !!inviteRequired : undefined
+    inviteRequired: inviteRequired !== undefined ? !!inviteRequired : undefined,
+    imageCompressionMaxDim: imageCompressionMaxDim !== undefined ? Number(imageCompressionMaxDim) : undefined,
+    imageCompressionQuality: imageCompressionQuality !== undefined ? Number(imageCompressionQuality) : undefined
   };
   saveAppSettings(updated);
   res.json({ success: true, settings: updated });
+});
+
+// Storage info endpoint: disk space and expected image payload size
+app.get("/api/storage-info", async (req, res) => {
+  try {
+    const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+    const settings = getAppSettings();
+    
+    // Get disk space using statfs
+    const stats = await fs.promises.statfs(uploadsDir.split("/")[1] ? "/" : uploadsDir);
+    const freeBytes = stats.bavail * stats.bsize;
+    const totalBytes = stats.blocks * stats.bsize;
+    const usedBytes = totalBytes - (stats.bfree * stats.bsize);
+    
+    // Calculate estimated image payload size based on compression settings
+    const maxDim = settings.imageCompressionMaxDim || 800;
+    const quality = settings.imageCompressionQuality || 0.7;
+    
+    // Empirical formula: pixel_count^0.7 * quality_factor
+    // At 800px and 0.7 quality: ~90KB average
+    const pixelArea = maxDim * maxDim;
+    const estimatedKb = Math.round((Math.pow(pixelArea / 1000000, 0.7) * 100) * quality);
+    const estimatedBytes = estimatedKb * 1024;
+    
+    // Calculate how many images could fit
+    const imagesRemainingCapacity = Math.floor(freeBytes / estimatedBytes);
+    
+    res.json({
+      freeBytes,
+      totalBytes,
+      usedBytes,
+      freeGb: (freeBytes / (1024 ** 3)).toFixed(2),
+      usedGb: (usedBytes / (1024 ** 3)).toFixed(2),
+      totalGb: (totalBytes / (1024 ** 3)).toFixed(2),
+      estimatedImageSizeKb: estimatedKb,
+      imageCompressionMaxDim: maxDim,
+      imageCompressionQuality: quality,
+      imagesRemainingCapacity
+    });
+  } catch (err: any) {
+    console.error("Failed to get storage info:", err);
+    res.status(500).json({ error: "Failed to retrieve storage info", details: err.message });
+  }
 });
 
 // 2. Fetch live integrated state of play
@@ -541,7 +586,27 @@ You MUST respond strictly in valid JSON matching this schema:
   "creativityScore": number (integer 0-100; bonus points for creative approaches. 0=literal match, 50=creative twist, 100=amazingly creative)
 }`;
 
+    // Helper to check if error is a Gemini rate limit error
+    function isGeminiRateLimitError(err: any): boolean {
+      const errorMessage = String(err?.message || "").toLowerCase();
+      const errorCode = err?.code || err?.status || "";
+      
+      // Check for common Gemini API rate limit indicators
+      return (
+        errorCode === 429 ||
+        errorCode === "429" ||
+        errorMessage.includes("rate limit") ||
+        errorMessage.includes("quota") ||
+        errorMessage.includes("too many requests") ||
+        errorMessage.includes("resource exhausted") ||
+        errorMessage.includes("RESOURCE_EXHAUSTED")
+      );
+    }
+
     let parsedResult = { isMatch: false, explanation: "Verification service timed out. Please try again.", confidence: 0, creativityScore: 0 };
+    let rateLimited = false;
+    let isTimeout = false;
+    
     try {
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
@@ -575,12 +640,64 @@ You MUST respond strictly in valid JSON matching this schema:
       parsedResult = JSON.parse((response.text || "{}").trim());
     } catch (aiErr: any) {
       console.error("Gemini AI API scanning error:", aiErr);
-      parsedResult = {
-        isMatch: true, // fallback to gracious approval in sandbox on live API congestion
-        explanation: "The AI scanner experienced a connection hiccup, but because of your explorer spirit, the GPS referee verified your coordinates and approved your hunt!",
-        confidence: 100,
-        creativityScore: 0
+      
+      // Check if this is a rate limit error
+      if (isGeminiRateLimitError(aiErr)) {
+        rateLimited = true;
+        console.warn("⚠️ Gemini rate limit detected. Saving submission as pending for retry.");
+      } else if (aiErr?.code === "ECONNABORTED" || aiErr?.message?.includes("timeout")) {
+        isTimeout = true;
+      }
+      
+      // If rate limited or timeout, we'll save as pending for retry
+      // Otherwise, fall back to auto-approval
+      if (!rateLimited && !isTimeout) {
+        parsedResult = {
+          isMatch: true, // fallback to gracious approval in sandbox on live API congestion
+          explanation: "The AI scanner experienced a connection hiccup, but because of your explorer spirit, the GPS referee verified your coordinates and approved your hunt!",
+          confidence: 100,
+          creativityScore: 0
+        };
+      }
+    }
+
+
+    // If rate limited or timeout: save as pending for server-side retry
+    if (rateLimited || isTimeout) {
+      const retryReason = rateLimited ? "rate_limit" : "timeout";
+      const pendingSubmission: Submission = {
+        id: subId,
+        userId: user.id,
+        username: user.username,
+        itemId: itemId,
+        imageUrl: imageUrl,
+        status: "pending",
+        aiExplanation: `Submission queued for verification. The AI referee is temporarily overloaded. Your photo will be reviewed automatically.`,
+        pointsAwarded: 0,
+        createdAt: new Date().toISOString(),
+        userLat: userLat ? Number(userLat) : null,
+        userLng: userLng ? Number(userLng) : null,
+        distanceMeters: distanceMeters,
+        retryCount: 0,
+        retryReason: retryReason,
+        nextRetryAt: new Date(Date.now() + 30000).toISOString() // Retry in 30 seconds
       };
+
+      await submitHunterProof(pendingSubmission, 0);
+
+      // Fetch updated user stats
+      const freshDb = await getAppState();
+      const updatedUser = freshDb.users[user.id] || user;
+
+      return res.json({
+        isMatch: null, // Explicitly indicate pending state
+        explanation: `Submission received and queued. The AI referee will review it within a few minutes.`,
+        confidence: 0,
+        submission: pendingSubmission,
+        user: updatedUser,
+        status: "pending",
+        retryReason: retryReason
+      });
     }
 
     const isMatch = parsedResult.isMatch === true;
@@ -668,6 +785,198 @@ app.post("/api/submissions/:subId/manual-approve", async (req, res) => {
     res.json({ success: true, submission: updated });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to update submission", details: err.message });
+  }
+});
+
+// 6.2 Retry pending submission (for rate-limited or timed-out submissions)
+app.post("/api/submissions/:subId/retry", async (req, res) => {
+  const { subId } = req.params;
+
+  try {
+    const db = await getAppState();
+    const submission = db.submissions[subId];
+
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    if (submission.status !== "pending") {
+      return res.status(400).json({ error: "Only pending submissions can be retried" });
+    }
+
+    // Get the item and user details
+    const item = db.items[submission.itemId];
+    const user = db.users[submission.userId];
+
+    if (!item || !user) {
+      return res.status(404).json({ error: "Associated item or user not found" });
+    }
+
+    // Reconstruct image part from stored image URL or base64
+    let imagePart: any = null;
+    
+    // If imageUrl is a base64 string (starts with data:), use it directly
+    if (submission.imageUrl.startsWith("data:")) {
+      const match = submission.imageUrl.match(/^data:([^;]+);base64,(.*)$/);
+      if (match) {
+        imagePart = {
+          inlineData: {
+            mimeType: match[1],
+            data: match[2],
+          },
+        };
+      }
+    } else {
+      // If it's a URL, we can't easily retry without fetching the image
+      console.warn("Cannot retry submission with URL-based image, would need to fetch first");
+      return res.status(400).json({ error: "Image data not available for retry. Please resubmit." });
+    }
+
+    if (!imagePart) {
+      return res.status(400).json({ error: "Could not process image for retry" });
+    }
+
+    const currentSettings = getAppSettings();
+    const customPromptCriteria = currentSettings.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.";
+
+    const promptText = `You are an AI Referee for a mobile Scavenger Hunt game!
+Your job is to look at this photograph and verify if the user has successfully located the specified item.
+
+Target Item Title: "${item.title}"
+Target Item Description/Criteria: "${item.description}"
+
+Grading Persona & Tone Criteria (Configured by Game Host Admin):
+"${customPromptCriteria}"
+
+Rules for response:
+1. Since this is a fun scavenger hunt, be open-minded and positive. For example, if the item is "Something shiny", a metal can, shiny wrapping, or keys should easily count.
+2. Accept icons, toys, drawings, or representations of the item if a user was creative, but if the photo lacks any resemblance or correlation to the description, reject it.
+3. Be fair, and always provide feedback explaining what you spotted in the photo to justify your decision.
+4. For creative submissions that go above and beyond, award bonus points by rating creativity on 0-100 scale.
+
+You MUST respond strictly in valid JSON matching this schema:
+{
+  "isMatch": boolean,
+  "explanation": "Referee explanation (1-2 sentences)",
+  "confidence": number (integer 0-100 score indicating certainty),
+  "creativityScore": number (integer 0-100; bonus points for creative approaches. 0=literal match, 50=creative twist, 100=amazingly creative)
+}`;
+
+    let parsedResult = { isMatch: false, explanation: "Verification service timed out. Please try again.", confidence: 0, creativityScore: 0 };
+    let rateLimited = false;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: { parts: [imagePart, { text: promptText }] },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              isMatch: {
+                type: Type.BOOLEAN,
+                description: "Whether the picture matches specifications"
+              },
+              explanation: {
+                type: Type.STRING,
+                description: "Short feedback comment to show the user"
+              },
+              confidence: {
+                type: Type.INTEGER,
+                description: "Evaluation confidence score (0 to 100)"
+              },
+              creativityScore: {
+                type: Type.INTEGER,
+                description: "Creativity bonus score (0 to 100) for above-and-beyond submissions"
+              }
+            },
+            required: ["isMatch", "explanation", "confidence", "creativityScore"]
+          }
+        }
+      });
+      parsedResult = JSON.parse((response.text || "{}").trim());
+    } catch (aiErr: any) {
+      console.error("Gemini retry error:", aiErr);
+      
+      // Check if this is still a rate limit error
+      const isRateLimitError = (
+        aiErr?.code === 429 ||
+        String(aiErr?.message || "").toLowerCase().includes("rate limit") ||
+        String(aiErr?.message || "").toLowerCase().includes("resource exhausted")
+      );
+
+      if (isRateLimitError) {
+        // Still rate limited, update retry timestamp
+        const retryCount = (submission.retryCount || 0) + 1;
+        const maxRetries = 5;
+        
+        if (retryCount >= maxRetries) {
+          // Give up after 5 retries
+          submission.status = "rejected";
+          submission.aiExplanation = "AI verification service is temporarily unavailable. Please try again later or contact an admin.";
+          submission.pointsAwarded = 0;
+        } else {
+          // Schedule next retry with exponential backoff
+          const delayMs = Math.min(60000, 30000 * Math.pow(2, retryCount)); // 30s, 1m, 2m, 4m, 8m
+          submission.nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+          submission.retryCount = retryCount;
+        }
+        
+        await submitHunterProof(submission, submission.pointsAwarded || 0);
+        
+        return res.json({
+          status: "pending",
+          message: `Retry scheduled (attempt ${retryCount}). Next retry in ${Math.round(delayMs / 1000)}s.`,
+          submission
+        });
+      }
+
+      // Other error, fall back to approval
+      parsedResult = {
+        isMatch: true,
+        explanation: "The AI referee had trouble evaluating your submission, but approving it to keep the hunt moving!",
+        confidence: 100,
+        creativityScore: 0
+      };
+    }
+
+    const isMatch = parsedResult.isMatch === true;
+
+    // Calculate points awarded with creativity bonus capped at 10% of base points
+    let pointsAwarded = 0;
+    if (isMatch) {
+      const basePoints = item.points || 10;
+      const creativityBonus = (basePoints * (parsedResult.creativityScore || 0)) / 1000;
+      pointsAwarded = basePoints + creativityBonus;
+    }
+
+    // Update submission with retry result
+    submission.status = isMatch ? "approved" : "rejected";
+    submission.aiExplanation = parsedResult.explanation;
+    submission.pointsAwarded = pointsAwarded;
+    submission.retryCount = (submission.retryCount || 0) + 1;
+
+    await submitHunterProof(submission, pointsAwarded);
+
+    // Fetch updated user stats
+    const freshDb = await getAppState();
+    const updatedUser = freshDb.users[submission.userId] || user;
+
+    return res.json({
+      success: true,
+      isMatch,
+      explanation: parsedResult.explanation,
+      confidence: parsedResult.confidence,
+      submission,
+      user: updatedUser
+    });
+  } catch (err: any) {
+    console.error("Retry submission error:", err);
+    return res.status(500).json({
+      error: "Failed to retry submission",
+      details: err instanceof Error ? err.message : String(err)
+    });
   }
 });
 

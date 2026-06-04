@@ -10,15 +10,27 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [compressionSettings, setCompressionSettings] = useState({ maxDim: 800, quality: 0.7 });
   
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Stop camera stream on unmount
+  // Fetch compression settings on mount
   useEffect(() => {
-    return () => {
-      stopCamera();
+    const fetchSettings = async () => {
+      try {
+        const response = await fetch("/api/settings");
+        const settings = await response.json();
+        setCompressionSettings({
+          maxDim: settings.imageCompressionMaxDim || 800,
+          quality: settings.imageCompressionQuality || 0.7
+        });
+      } catch (err) {
+        console.error("Failed to fetch compression settings, using defaults:", err);
+        // Use defaults if fetch fails
+      }
     };
+    fetchSettings();
   }, []);
 
   const stopCamera = () => {
@@ -59,14 +71,14 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
     }
   };
 
-  // Canvas optimization & compression (max 450px dimension, high performance, ~35KB payload size)
+  // Canvas optimization & compression with dynamic settings
   const processImageFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const MAX_DIM = 450;
+        const MAX_DIM = compressionSettings.maxDim;
         let width = img.width;
         let height = img.height;
 
@@ -88,7 +100,7 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75);
+          const compressedBase64 = canvas.toDataURL("image/jpeg", compressionSettings.quality);
           onImageSelected(compressedBase64);
         }
       };
@@ -111,13 +123,13 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
       
       const canvas = document.createElement("canvas");
       // Align dimensions to video stream
-      canvas.width = Math.min(video.videoWidth, 450);
+      canvas.width = Math.min(video.videoWidth, compressionSettings.maxDim);
       canvas.height = (video.videoHeight / video.videoWidth) * canvas.width;
 
       const ctx = canvas.getContext("2d");
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const base64 = canvas.toDataURL("image/jpeg", 0.75);
+        const base64 = canvas.toDataURL("image/jpeg", compressionSettings.quality);
         onImageSelected(base64);
         stopCamera();
         setCameraActive(false);

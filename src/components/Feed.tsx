@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Submission, ScavengerItem } from "../types";
-import { CheckCircle2, XCircle, Clock, Trash2, Sparkles, MessageCircle, RefreshCw, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, Trash2, Sparkles, MessageCircle, RefreshCw, Loader2, AlertCircle } from "lucide-react";
 
 interface FeedProps {
   submissions: Submission[];
   items: ScavengerItem[];
   currentUserId: string | null;
   onDeleteSubmission: (subId: string) => void;
+  onRetryPending?: (subId: string) => Promise<void>;
 }
 
 const ITEMS_PER_PAGE = 10;
 
-export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: FeedProps) {
+export function Feed({ submissions, items, currentUserId, onDeleteSubmission, onRetryPending }: FeedProps) {
   const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [retryingMap, setRetryingMap] = useState<{ [key: string]: boolean }>({});
   const endRef = useRef<HTMLDivElement>(null);
 
   // Sort submissions by newest first
@@ -50,6 +52,16 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: 
 
   // Get only the submissions to display
   const displayedSubmissions = sortedSubmissions.slice(0, displayLimit);
+
+  const handleRetry = async (subId: string) => {
+    if (!onRetryPending) return;
+    setRetryingMap((prev) => ({ ...prev, [subId]: true }));
+    try {
+      await onRetryPending(subId);
+    } finally {
+      setRetryingMap((prev) => ({ ...prev, [subId]: false }));
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
@@ -168,20 +180,62 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission }: 
                         `"${sub.aiExplanation || "Valid proof received. Good job."}"`
                       )}
                     </p>
+                    
+                    {/* Show retry info for rate-limited submissions */}
+                    {sub.status === "pending" && sub.retryReason && (
+                      <div className="mt-2 pt-2 border-t border-gray-100/50">
+                        <div className="flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50/50 p-2 rounded">
+                          <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="font-semibold">
+                              {sub.retryReason === "rate_limit" ? "Rate Limited" : "Timeout"} (Attempt {(sub.retryCount || 0) + 1})
+                            </p>
+                            <p className="text-gray-600 text-[10px] mt-0.5">
+                              The AI referee is overloaded. Auto-retrying in the background.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Footer Stats */}
-                  <div className="flex items-center justify-between text-[11px] text-gray-400 border-t border-gray-50 pt-3">
+                  {/* Footer Stats & Actions */}
+                  <div className="flex items-center justify-between text-[11px] text-gray-400 border-t border-gray-50 pt-3 gap-2">
                     <span className="font-semibold text-gray-600 flex items-center gap-1">
                       <MessageCircle className="h-3.5 w-3.5 text-gray-400" />
                       Submitted by <strong className="text-gray-700 font-bold">{sub.username}</strong>
                     </span>
-                    <span>
-                      {new Date(sub.createdAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                      })}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span>
+                        {new Date(sub.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })}
+                      </span>
+                      
+                      {/* Retry button for pending submissions */}
+                      {sub.status === "pending" && isOwner && onRetryPending && (
+                        <button
+                          onClick={() => handleRetry(sub.id)}
+                          disabled={retryingMap[sub.id]}
+                          type="button"
+                          className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 px-2 py-1 rounded-full transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                          title="Manually trigger retry verification"
+                        >
+                          {retryingMap[sub.id] ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <span className="text-[10px] font-semibold">Retrying...</span>
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              <span className="text-[10px] font-semibold">Retry</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

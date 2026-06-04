@@ -41,6 +41,9 @@ export interface Submission {
   userLat?: number | null;
   userLng?: number | null;
   distanceMeters?: number | null;
+  retryCount?: number; // Track retry attempts for rate-limited submissions
+  retryReason?: "rate_limit" | "timeout" | "error"; // Reason why submission is pending
+  nextRetryAt?: string; // ISO timestamp when next retry should occur
 }
 
 export interface ChatMessage {
@@ -74,6 +77,8 @@ export interface AppSettings {
   inviteRequired?: boolean;
   aiVerificationEnabled?: boolean;
   allowForceSubmit?: boolean;
+  imageCompressionMaxDim?: number;
+  imageCompressionQuality?: number;
 }
 
 

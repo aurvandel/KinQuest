@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   user_lat DOUBLE PRECISION,
   user_lng DOUBLE PRECISION,
   distance_meters DOUBLE PRECISION,
+  retry_count INTEGER DEFAULT 0,
+  retry_reason TEXT CHECK (retry_reason IN ('rate_limit', 'timeout', 'error')),
+  next_retry_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

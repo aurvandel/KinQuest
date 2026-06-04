@@ -43,6 +43,9 @@ export interface Submission {
   userLat?: number | null;
   userLng?: number | null;
   distanceMeters?: number | null;
+  retryCount?: number; // Track retry attempts for rate-limited submissions
+  retryReason?: "rate_limit" | "timeout" | "error"; // Reason why submission is pending
+  nextRetryAt?: string; // ISO timestamp when next retry should occur
 }
 
 export interface ChatMessage {
@@ -1201,6 +1204,8 @@ export interface AppSettings {
   inviteRequired?: boolean;
   aiVerificationEnabled?: boolean;
   allowForceSubmit?: boolean;
+  imageCompressionMaxDim?: number;
+  imageCompressionQuality?: number;
 }
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
@@ -1220,7 +1225,9 @@ export function getAppSettings(): AppSettings {
         activeInviteCode: parsed.activeInviteCode || "stewart-test",
         inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true,
         aiVerificationEnabled: parsed.aiVerificationEnabled !== undefined ? !!parsed.aiVerificationEnabled : true,
-        allowForceSubmit: parsed.allowForceSubmit !== undefined ? !!parsed.allowForceSubmit : false
+        allowForceSubmit: parsed.allowForceSubmit !== undefined ? !!parsed.allowForceSubmit : false,
+        imageCompressionMaxDim: Number(parsed.imageCompressionMaxDim) || 800,
+        imageCompressionQuality: Number(parsed.imageCompressionQuality) || 0.7
       };
     }
   } catch (err) {
@@ -1231,12 +1238,14 @@ export function getAppSettings(): AppSettings {
     icon: null,
     defaultLat: 41.9076,
     defaultLng: -111.3800,
-    defaultRadius:2500,
+    defaultRadius: 2500,
     aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
     activeInviteCode: "stewart-test",
     inviteRequired: true,
     aiVerificationEnabled: true,
-    allowForceSubmit: false
+    allowForceSubmit: false,
+    imageCompressionMaxDim: 800,
+    imageCompressionQuality: 0.7
   };
 }
 
