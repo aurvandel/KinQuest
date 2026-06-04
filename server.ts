@@ -771,14 +771,14 @@ app.delete("/api/submissions/:subId", async (req, res) => {
 // 6.1 Manual Admin Approval of submissions
 app.post("/api/submissions/:subId/manual-approve", async (req, res) => {
   const { subId } = req.params;
-  const { status } = req.body;
+  const { status, points } = req.body;
 
   if (!status || !["approved", "rejected"].includes(status)) {
     return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
   }
 
   try {
-    const updated = await manuallyApproveSubmission(subId, status as "approved" | "rejected");
+    const updated = await manuallyApproveSubmission(subId, status as "approved" | "rejected", points);
     if (!updated) {
       return res.status(404).json({ error: "Submission not found" });
     }
@@ -921,15 +921,15 @@ You MUST respond strictly in valid JSON matching this schema:
           const delayMs = Math.min(60000, 30000 * Math.pow(2, retryCount)); // 30s, 1m, 2m, 4m, 8m
           submission.nextRetryAt = new Date(Date.now() + delayMs).toISOString();
           submission.retryCount = retryCount;
+          
+          await submitHunterProof(submission, submission.pointsAwarded || 0);
+          
+          return res.json({
+            status: "pending",
+            message: `Retry scheduled (attempt ${retryCount}). Next retry in ${Math.round(delayMs / 1000)}s.`,
+            submission
+          });
         }
-        
-        await submitHunterProof(submission, submission.pointsAwarded || 0);
-        
-        return res.json({
-          status: "pending",
-          message: `Retry scheduled (attempt ${retryCount}). Next retry in ${Math.round(delayMs / 1000)}s.`,
-          submission
-        });
       }
 
       // Other error, fall back to approval
@@ -1038,7 +1038,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       ],
     });
 
-    const script = response.response.text();
+    const script = response.text || "";
 
     // Save slideshow to database
     const slideshowId = `slideshow_${Date.now()}_${Math.floor(Math.random() * 1000)}`;

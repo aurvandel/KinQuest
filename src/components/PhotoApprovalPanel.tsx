@@ -6,7 +6,7 @@ interface PhotoApprovalPanelProps {
   submissions: Submission[];
   items: ScavengerItem[];
   players: PlayerProfile[];
-  onApprove: (subId: string) => Promise<void>;
+  onApprove: (subId: string, points?: number) => Promise<void>;
   onReject: (subId: string) => Promise<void>;
 }
 
@@ -20,9 +20,11 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
   const [filter, setFilter] = useState<"all" | "pending" | "forced">("all");
   const [approving, setApproving] = useState<{ [key: string]: boolean }>({});
   const [rejecting, setRejecting] = useState<{ [key: string]: boolean }>({});
+  const [pointsModal, setPointsModal] = useState<{ visible: boolean; subId: string; points: number } | null>(null);
 
-  // Filter submissions
+  // Filter submissions - exclude approved ones from the panel
   const filteredSubmissions = submissions.filter((sub) => {
+    if (sub.status === "approved") return false; // Remove approved submissions from panel
     if (filter === "pending") return sub.status === "pending";
     if (filter === "forced") return sub.forcedApproval === true;
     return true;
@@ -36,12 +38,26 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
     return players.find((p) => p.id === userId)?.displayName || players.find((p) => p.id === userId)?.username || "Unknown Player";
   };
 
-  const handleApprove = async (subId: string) => {
-    setApproving((prev) => ({ ...prev, [subId]: true }));
+  const handleApprove = (subId: string) => {
+    const submission = submissions.find((s) => s.id === subId);
+    if (!submission) return;
+    
+    const item = items.find((i) => i.id === submission.itemId);
+    const maxPoints = item?.points || 0;
+    const defaultPoints = submission.pointsAwarded || maxPoints;
+    
+    setPointsModal({ visible: true, subId, points: defaultPoints });
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!pointsModal) return;
+    
+    setApproving((prev) => ({ ...prev, [pointsModal.subId]: true }));
     try {
-      await onApprove(subId);
+      await onApprove(pointsModal.subId, pointsModal.points);
+      setPointsModal(null);
     } finally {
-      setApproving((prev) => ({ ...prev, [subId]: false }));
+      setApproving((prev) => ({ ...prev, [pointsModal.subId]: false }));
     }
   };
 
@@ -196,7 +212,7 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
                         <p className="text-[#5a5a40] font-mono">
                           {submission.userLat.toFixed(4)}, {submission.userLng.toFixed(4)}
                         </p>
-                        {submission.distanceMeters !== null && (
+                        {submission.distanceMeters !== null && submission.distanceMeters !== undefined && (
                           <p className="text-brand-muted text-[10px]">{submission.distanceMeters.toFixed(0)}m away</p>
                         )}
                       </div>
@@ -238,6 +254,47 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
           </div>
         ))}
       </div>
+
+      {/* Points Adjustment Modal */}
+      {pointsModal?.visible && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl">
+            <h2 className="text-xl font-bold text-[#5a5a40] mb-2">Adjust Points</h2>
+            <p className="text-sm text-[#8c8c82] mb-6">
+              Set the points to award for this submission. This will be recorded as a manual admin approval.
+            </p>
+
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-[#5a5a40] mb-2">Points to Award</label>
+              <input
+                type="number"
+                min="0"
+                value={pointsModal.points}
+                onChange={(e) =>
+                  setPointsModal({ ...pointsModal, points: Math.max(0, Number(e.target.value)) })
+                }
+                className="w-full px-4 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#5a5a40]"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPointsModal(null)}
+                className="flex-1 px-4 py-2 border border-brand-border rounded-lg text-[#5a5a40] font-bold hover:bg-[#f5f5f0] transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmApprove}
+                disabled={approving[pointsModal.subId]}
+                className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition disabled:opacity-50"
+              >
+                {approving[pointsModal.subId] ? "Approving..." : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

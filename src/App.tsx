@@ -817,12 +817,12 @@ CREATE TABLE IF NOT EXISTS submissions (
   };
 
   // Approve submission - admin only
-  const handleApproveSubmission = async (subId: string) => {
+  const handleApproveSubmission = async (subId: string, points?: number) => {
     try {
       const response = await fetch(`/api/submissions/${subId}/manual-approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "approved" })
+        body: JSON.stringify({ status: "approved", points })
       });
       if (!response.ok) {
         throw new Error("Could not approve submission.");
@@ -1139,125 +1139,240 @@ CREATE TABLE IF NOT EXISTS submissions (
   return (
     <div className="min-h-screen bg-[#f5f5f0] text-[#2d2d2d] font-sans flex flex-col">
       {/* Top Header navbar with score indicators */}
-      <header className="h-16 px-3 sm:px-8 flex items-center justify-between border-b border-brand-border bg-[#f5f5f0]/95 backdrop-blur-md sticky top-0 z-[1000] shrink-0">
-        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
-          <div className="w-8 h-8 bg-[#5a5a40] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
-            {settings.icon ? (
-              <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-            ) : (
-              <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
-            )}
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xs sm:text-sm md:text-base font-serif italic text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[80px] sm:max-w-[150px] md:max-w-[200px]">
-              {settings.name}
-            </h1>
-            <span className="text-[8px] sm:text-[9px] font-mono uppercase tracking-widest text-brand-muted hidden sm:block">Docker Node</span>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-2 sm:space-x-4 lg:space-x-6">
-          <div className="hidden md:block text-right">
-            <p className="text-[9px] uppercase tracking-widest font-bold text-brand-muted">Active Hunter</p>
-            <p className="text-xs font-semibold">{profile.username}</p>
+      <header className="flex flex-col border-b border-brand-border bg-[#f5f5f0]/95 backdrop-blur-md sticky top-0 z-[1000] shrink-0">
+        {/* Header Top Row */}
+        <div className="h-16 px-3 sm:px-8 flex items-center justify-between">
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+            <div className="w-8 h-8 bg-[#5a5a40] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+              {settings.icon ? (
+                <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
+              )}
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xs sm:text-sm md:text-base font-serif italic text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[80px] sm:max-w-[150px] md:max-w-[200px]">
+                {settings.name}
+              </h1>
+              <span className="text-[8px] sm:text-[9px] font-mono uppercase tracking-widest text-brand-muted hidden sm:block">Docker Node</span>
+            </div>
           </div>
 
-          <div className="hidden md:block h-8 w-[1px] bg-[#dcdcd4]"></div>
-
-          <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-3">
-            {/* Real-time Score Badge */}
-            <div className="bg-[#5a5a40] text-[#f5f5f0] px-2 sm:px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-[#5a5a40]/10 whitespace-nowrap">
-              <Flame className="h-3.5 sm:h-4 w-3.5 sm:w-4 text-[#c27d56] fill-[#c27d56] animate-pulse flex-shrink-0" />
-              <div className="text-left leading-none hidden sm:block">
-                <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest block opacity-75">TALLY</span>
-                <span className="text-xs font-black font-mono">{profile.score} PTS</span>
-              </div>
-              <span className="text-xs sm:hidden font-black font-mono">{profile.score}</span>
+          <div className="flex items-center space-x-2 sm:space-x-4 lg:space-x-6">
+            <div className="hidden md:block text-right">
+              <p className="text-[9px] uppercase tracking-widest font-bold text-brand-muted">Active Hunter</p>
+              <p className="text-xs font-semibold">{profile.username}</p>
             </div>
 
-            {/* User Preferences Dashboard Button */}
-            <button
-              onClick={() => {
-                setUserDashboardOpen(!userDashboardOpen);
-                setProfileSaveSuccess(false);
-                setProfileSaveError(null);
-                if (profile) {
-                  setProfileDisplayNameInput(profile.displayName || profile.username || "");
-                  setProfileRoleInput(profile.role || "user");
-                }
-              }}
-              type="button"
-              className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                userDashboardOpen
-                  ? "bg-[#5a5a40]/20 text-[#5a5a40] border-[#5a5a40]/30 font-bold"
-                  : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
-              }`}
-              title="User Settings & Persona Dashboard"
-            >
-              <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-            </button>
+            <div className="hidden md:block h-8 w-[1px] bg-[#dcdcd4]"></div>
 
-            {/* Database Status Indicator Icon - visible to all */}
-            <button
-              type="button"
-              className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                dbStatus.mode === "supabase"
-                  ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
-                  : "text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200"
-              }`}
-              title={`Storage: ${dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}`}
-            >
-              <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-            </button>
+            <div className="flex items-center gap-1.5 sm:gap-2 lg:gap-3">
+              {/* Real-time Score Badge */}
+              <div className="bg-[#5a5a40] text-[#f5f5f0] px-2 sm:px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 sm:gap-2 shadow-sm shadow-[#5a5a40]/10 whitespace-nowrap">
+                <Flame className="h-3.5 sm:h-4 w-3.5 sm:w-4 text-[#c27d56] fill-[#c27d56] animate-pulse flex-shrink-0" />
+                <div className="text-left leading-none hidden sm:block">
+                  <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest block opacity-75">TALLY</span>
+                  <span className="text-xs font-black font-mono">{profile.score} PTS</span>
+                </div>
+                <span className="text-xs sm:hidden font-black font-mono">{profile.score}</span>
+              </div>
 
-            {/* Admin Branding Settings Cog */}
-            {profile?.role === "admin" && (
+              {/* User Preferences Dashboard Button */}
               <button
                 onClick={() => {
-                  setAdminPanelOpen(!adminPanelOpen);
-                  setAdminSaveSuccess(false);
-                  setAdminSaveError(null);
-                  if (settings) {
-                    setAdminNameInput(settings.name);
-                    setAdminIconInput(settings.icon);
-                    setAdminLatInput(settings.defaultLat ?? 41.9076);
-                    setAdminLngInput(settings.defaultLng ?? -111.3800);
-                    setAdminRadiusInput(settings.defaultRadius ?? 200);
-                    setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
-                    setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
-                    setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
-                    setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
-                    setAdminInviteRequiredInput(settings.inviteRequired !== false);
-                    setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
-                    setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
+                  setUserDashboardOpen(!userDashboardOpen);
+                  setProfileSaveSuccess(false);
+                  setProfileSaveError(null);
+                  if (profile) {
+                    setProfileDisplayNameInput(profile.displayName || profile.username || "");
+                    setProfileRoleInput(profile.role || "user");
                   }
-                  // Fetch storage info when panel opens
-                  fetch("/api/storage-info")
-                    .then(res => res.json())
-                    .then(data => setStorageInfo(data))
-                    .catch(err => console.error("Failed to fetch storage info:", err));
                 }}
                 type="button"
                 className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                  adminPanelOpen
-                    ? "bg-[#5a5a40] text-white border-transparent"
+                  userDashboardOpen
+                    ? "bg-[#5a5a40]/20 text-[#5a5a40] border-[#5a5a40]/30 font-bold"
                     : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
                 }`}
-                title="Branding Identity Control Panel"
+                title="User Settings & Persona Dashboard"
               >
-                <Settings className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+                <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
               </button>
-            )}
 
-            <button
-              onClick={handleSignOut}
-              type="button"
-              className="text-[#8c8c82] hover:text-red-600 transition p-1.5 sm:p-2 hover:bg-white rounded-xl border border-transparent hover:border-brand-border/40 shrink-0"
-              title="Leave adventure lobby"
-            >
-              <LogOut className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-            </button>
+              {/* Database Status Indicator Icon - visible to all */}
+              <button
+                type="button"
+                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                  dbStatus.mode === "supabase"
+                    ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
+                    : "text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200"
+                }`}
+                title={`Storage: ${dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}`}
+              >
+                <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+              </button>
+
+              {/* Admin Branding Settings Cog */}
+              {profile?.role === "admin" && (
+                <button
+                  onClick={() => {
+                    setAdminPanelOpen(!adminPanelOpen);
+                    setAdminSaveSuccess(false);
+                    setAdminSaveError(null);
+                    if (settings) {
+                      setAdminNameInput(settings.name);
+                      setAdminIconInput(settings.icon);
+                      setAdminLatInput(settings.defaultLat ?? 41.9076);
+                      setAdminLngInput(settings.defaultLng ?? -111.3800);
+                      setAdminRadiusInput(settings.defaultRadius ?? 200);
+                      setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+                      setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
+                      setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
+                      setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
+                      setAdminInviteRequiredInput(settings.inviteRequired !== false);
+                      setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
+                      setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
+                    }
+                    // Fetch storage info when panel opens
+                    fetch("/api/storage-info")
+                      .then(res => res.json())
+                      .then(data => setStorageInfo(data))
+                      .catch(err => console.error("Failed to fetch storage info:", err));
+                  }}
+                  type="button"
+                  className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                    adminPanelOpen
+                      ? "bg-[#5a5a40] text-white border-transparent"
+                      : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
+                  }`}
+                  title="Branding Identity Control Panel"
+                >
+                  <Settings className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+                </button>
+              )}
+
+              <button
+                onClick={handleSignOut}
+                type="button"
+                className="text-[#8c8c82] hover:text-red-600 transition p-1.5 sm:p-2 hover:bg-white rounded-xl border border-transparent hover:border-brand-border/40 shrink-0"
+                title="Leave adventure lobby"
+              >
+                <LogOut className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+              </button>
+            </div>
           </div>
+        </div>
+
+        {/* Navigation tabs - now below the header icons */}
+        <div className="px-3 sm:px-8 pb-2 sm:pb-3 flex justify-center gap-0.5 sm:gap-1 overflow-x-auto">
+          <button
+            onClick={() => setActiveTab("missions")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "missions"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="View missions"
+          >
+            <ListFilter className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Missions</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("map")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "map"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="View live map"
+          >
+            <MapIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Map</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("leaderboard")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "leaderboard"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="View leaderboard"
+          >
+            <Trophy className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Scores</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("feed")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "feed"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="View feed"
+          >
+            <Users className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Feed</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("gallery")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "gallery"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="Photo gallery"
+          >
+            <ImageIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Gallery</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("slideshows")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+              activeTab === "slideshows"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="AI slideshows"
+          >
+            <Film className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Scripts</span>
+          </button>
+          {profile?.role === "admin" && (
+            <button
+              onClick={() => setActiveTab("approval")}
+              className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+                activeTab === "approval"
+                  ? "bg-[#5a5a40] text-white shadow-sm"
+                  : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+              }`}
+              title="Review & approve photos"
+            >
+              <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+              <span className="hidden sm:inline">Approve</span>
+              {submissions.filter(s => s.status === "pending").length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+                  {submissions.filter(s => s.status === "pending").length}
+                </span>
+              )}
+            </button>
+          )}
+          <button
+            onClick={() => setActiveTab("chat")}
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+              activeTab === "chat"
+                ? "bg-[#5a5a40] text-white shadow-sm"
+                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+            }`}
+            title="Chat"
+          >
+            <MessageSquare className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Chat</span>
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+                {unreadCount}
+              </span>
+            )}
+          </button>
         </div>
       </header>
 
@@ -1365,118 +1480,6 @@ CREATE TABLE IF NOT EXISTS submissions (
             }}
           />
         )}
-
-        {/* Navigation tabs */}
-        <div className="sticky top-16 flex bg-white p-0.5 sm:p-1 rounded-2xl border border-brand-border shadow-sm w-full max-w-2xl mx-auto z-[990] gap-0.5 sm:gap-1">
-          <button
-            onClick={() => setActiveTab("missions")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "missions"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="View missions"
-          >
-            <ListFilter className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Missions</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("map")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "map"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="View live map"
-          >
-            <MapIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Map</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("leaderboard")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "leaderboard"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="View leaderboard"
-          >
-            <Trophy className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Scores</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("feed")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "feed"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="View feed"
-          >
-            <Users className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Feed</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("gallery")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "gallery"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="Photo gallery"
-          >
-            <ImageIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Gallery</span>
-          </button>
-          <button
-            onClick={() => setActiveTab("slideshows")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "slideshows"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="AI slideshows"
-          >
-            <Film className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Scripts</span>
-          </button>
-          {profile?.role === "admin" && (
-            <button
-              onClick={() => setActiveTab("approval")}
-              className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
-                activeTab === "approval"
-                  ? "bg-[#5a5a40] text-white shadow-sm"
-                  : "text-brand-muted hover:text-brand-dark"
-              }`}
-              title="Review & approve photos"
-            >
-              <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-              <span className="hidden sm:inline">Approve</span>
-              {submissions.filter(s => s.status === "pending").length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
-                  {submissions.filter(s => s.status === "pending").length}
-                </span>
-              )}
-            </button>
-          )}
-          <button
-            onClick={() => setActiveTab("chat")}
-            className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
-              activeTab === "chat"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark"
-            }`}
-            title="Chat"
-          >
-            <MessageSquare className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
-            <span className="hidden sm:inline">Chat</span>
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
-                {unreadCount}
-              </span>
-            )}
-          </button>
-        </div>
 
         {/* Dynamic Location Indicator */}
         <div className="bg-white/80 border border-brand-border rounded-2xl px-4 py-2.5 max-w-md mx-auto flex items-center justify-between text-xs font-medium text-brand-moss shadow-sm">

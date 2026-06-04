@@ -3,6 +3,7 @@ import path from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 export interface ScavengerItem {
+  createdBy: null;
   id: string;
   title: string;
   description: string;
@@ -31,6 +32,7 @@ export interface PlayerProfile {
 }
 
 export interface Submission {
+  pointsAwarded: number;
   id: string;
   userId: string;
   username: string;
@@ -79,103 +81,112 @@ export interface DbStore {
 // Default initial items
 const DEFAULT_ITEMS: ScavengerItem[] = [
   {
-    id: "item_gen_gap",
-    title: "Generation Gap Smiles",
-    description: "Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!",
-    points: 100,
-    category: "Family",
-    icon: "Users",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_gen_gap",
+      title: "Generation Gap Smiles",
+      description: "Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!",
+      points: 100,
+      category: "Family",
+      icon: "Users",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_family_heirloom",
-    title: "Relic of the Elders",
-    description: "Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.",
-    points: 80,
-    category: "History",
-    icon: "Heart",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_family_heirloom",
+      title: "Relic of the Elders",
+      description: "Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.",
+      points: 80,
+      category: "History",
+      icon: "Heart",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_cousins_selfie",
-    title: "The Multi-Clan Cousin Shot",
-    description: "Take a group selfie with at least three cousins representing at least two different family branches or lineages!",
-    points: 75,
-    category: "Family",
-    icon: "Camera",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_cousins_selfie",
+      title: "The Multi-Clan Cousin Shot",
+      description: "Take a group selfie with at least three cousins representing at least two different family branches or lineages!",
+      points: 75,
+      category: "Family",
+      icon: "Camera",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_bbq_boss",
-    title: "The Grill Master / Feast Chief",
-    description: "Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!",
-    points: 50,
-    category: "Food",
-    icon: "Flame",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_bbq_boss",
+      title: "The Grill Master / Feast Chief",
+      description: "Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!",
+      points: 50,
+      category: "Food",
+      icon: "Flame",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_ uncanny_lookalikes",
-    title: "Uncanny Family Lookalikes",
-    description: "Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.",
-    points: 60,
-    category: "Genetic",
-    icon: "Laugh",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_ uncanny_lookalikes",
+      title: "Uncanny Family Lookalikes",
+      description: "Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.",
+      points: 60,
+      category: "Genetic",
+      icon: "Laugh",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_retro_moves",
-    title: "Old School Cool",
-    description: "Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!",
-    points: 70,
-    category: "Entertainment",
-    icon: "Music",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_retro_moves",
+      title: "Old School Cool",
+      description: "Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!",
+      points: 70,
+      category: "Entertainment",
+      icon: "Music",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_group_hug",
-    title: "Group Hug Extravaganza",
-    description: "A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!",
-    points: 90,
-    category: "Joy",
-    icon: "Sparkles",
-    lat: null,
-    lng: null,
-    radius: null
+      id: "item_group_hug",
+      title: "Group Hug Extravaganza",
+      description: "A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!",
+      points: 90,
+      category: "Joy",
+      icon: "Sparkles",
+      lat: null,
+      lng: null,
+      radius: null,
+      createdBy: null
   },
   {
-    id: "item_reunion_recreation",
-    title: "Nature Walk Keepsake",
-    description: "Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.",
-    points: 40,
-    category: "Nature",
-    icon: "Leaf",
-    lat: 40.7829,
-    lng: -73.9654,
-    radius: 500
+      id: "item_reunion_recreation",
+      title: "Nature Walk Keepsake",
+      description: "Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.",
+      points: 40,
+      category: "Nature",
+      icon: "Leaf",
+      lat: 40.7829,
+      lng: -73.9654,
+      radius: 500,
+      createdBy: null
   },
   {
-    id: "item_family_mascot",
-    title: "Reunion Mascot/Pet",
-    description: "Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.",
-    points: 45,
-    category: "Animal",
-    icon: "Footprints",
-    lat: 40.7812,
-    lng: -73.9665,
-    radius: 1000
+      id: "item_family_mascot",
+      title: "Reunion Mascot/Pet",
+      description: "Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.",
+      points: 45,
+      category: "Animal",
+      icon: "Footprints",
+      lat: 40.7812,
+      lng: -73.9665,
+      radius: 1000,
+      createdBy: null
   }
 ];
 
@@ -268,26 +279,27 @@ function loadLocalDb(): DbStore {
   });
 
   const empty: DbStore = {
-    users: {
-      "user_admin": {
-        id: "user_admin",
-        username: "admin",
-        displayName: "Grand Host Admin",
-        score: 0,
-        completedCount: 0,
-        createdAt: new Date().toISOString(),
-        role: "admin",
-        permissions: {
-          shareLocation: true,
-          allowNotifications: true,
-          makePrivate: false,
-          extendedAiJudge: true
-        }
-      }
-    },
-    items: initialItems,
-    submissions: {},
-    messages: []
+      users: {
+          "user_admin": {
+              id: "user_admin",
+              username: "admin",
+              displayName: "Grand Host Admin",
+              score: 0,
+              completedCount: 0,
+              createdAt: new Date().toISOString(),
+              role: "admin",
+              permissions: {
+                  shareLocation: true,
+                  allowNotifications: true,
+                  makePrivate: false,
+                  extendedAiJudge: true
+              }
+          }
+      },
+      items: initialItems,
+      submissions: {},
+      messages: [],
+      slideshows: {}
   };
   saveLocalDb(empty);
   return empty;
@@ -411,6 +423,10 @@ export async function getAppState(): Promise<DbStore> {
     const { data: subs, error: sErr } = await supabase.from("submissions").select("*");
     if (sErr) throw sErr;
 
+    // 4. Fetch slideshows
+    const { data: slides, error: slErr } = await supabase.from("slideshows").select("*");
+    if (slErr) throw slErr;
+
     // Map into DbStore JSON layout
     const usersMap: { [id: string]: PlayerProfile } = {};
     profiles?.forEach(u => {
@@ -449,7 +465,8 @@ export async function getAppState(): Promise<DbStore> {
         icon: it.icon ?? "Sparkles",
         lat: it.lat,
         lng: it.lng,
-        radius: it.radius
+        radius: it.radius,
+        createdBy: it.created_by
       };
     });
 
@@ -470,6 +487,7 @@ export async function getAppState(): Promise<DbStore> {
         imageUrl: sb.image_url,
         status: sb.status || "pending",
         aiExplanation: sb.ai_explanation,
+        pointsAwarded: sb.points_awarded,
         createdAt: sb.created_at,
         userLat: sb.user_lat,
         userLng: sb.user_lng,
@@ -478,12 +496,27 @@ export async function getAppState(): Promise<DbStore> {
     });
 
     const msgsList = await getChatMessages();
+    
+    const slideshowsMap: { [id: string]: Slideshow } = {};
+    slides?.forEach(slide => {
+      slideshowsMap[slide.id] = {
+        id: slide.id,
+        title: slide.title,
+        description: slide.description,
+        script: slide.script,
+        submissionIds: slide.submission_ids || [],
+        createdBy: slide.created_by,
+        createdAt: slide.created_at,
+        isPublished: slide.is_published ?? false
+      };
+    });
 
     return {
       users: usersMap,
       items: itemsMap,
       submissions: subsMap,
-      messages: msgsList
+      messages: msgsList,
+      slideshows: slideshowsMap
     };
   } catch (err) {
     console.error("Supabase fetch failure, fall back dynamically to cached local storage:", err);
@@ -867,7 +900,8 @@ export async function deleteHunterSubmission(subId: string): Promise<boolean> {
 
 export async function manuallyApproveSubmission(
   subId: string,
-  newStatus: "approved" | "rejected"
+  newStatus: "approved" | "rejected",
+  points?: number
 ): Promise<Submission | null> {
   const mode = getDbMode();
   
@@ -880,8 +914,11 @@ export async function manuallyApproveSubmission(
     submission.status = newStatus;
     submission.forcedApproval = true;
     
-    // Use pointsAwarded if available, otherwise fallback to item points
+    // Use provided points, or existing pointsAwarded, or fallback to item points
     const item = db.items[submission.itemId];
+    if (points !== undefined && newStatus === "approved") {
+      submission.pointsAwarded = points;
+    }
     const pointsValue = submission.pointsAwarded ?? (item ? item.points : 0);
 
     // Handle score updates
@@ -930,9 +967,13 @@ export async function manuallyApproveSubmission(
       .single();
 
     // Update submission
+    const updateData: any = { status: newStatus, forced_approval: true };
+    if (points !== undefined && newStatus === "approved") {
+      updateData.points_awarded = points;
+    }
     const { error: updateErr } = await supabase
       .from("submissions")
-      .update({ status: newStatus, forced_approval: true })
+      .update(updateData)
       .eq("id", subId);
 
     if (updateErr) throw updateErr;
@@ -966,6 +1007,7 @@ export async function manuallyApproveSubmission(
       imageUrl: sub.image_url,
       status: newStatus,
       aiExplanation: sub.ai_explanation,
+      pointsAwarded: points !== undefined ? points : sub.points_awarded,
       forcedApproval: true,
       createdAt: sub.created_at,
       userLat: sub.user_lat,
@@ -982,17 +1024,24 @@ export async function manuallyApproveSubmission(
     submission.status = newStatus;
     submission.forcedApproval = true;
 
+    // Set pointsAwarded if provided
+    if (points !== undefined && newStatus === "approved") {
+      submission.pointsAwarded = points;
+    }
+
     // Handle score updates
     if (newStatus === "approved" && oldStatus !== "approved") {
       const item = db.items[submission.itemId];
+      const pointsValue = points !== undefined ? points : (submission.pointsAwarded ?? item?.points ?? 0);
       if (item && db.users[submission.userId]) {
-        db.users[submission.userId].score += item.points;
+        db.users[submission.userId].score += pointsValue;
         db.users[submission.userId].completedCount += 1;
       }
     } else if (newStatus !== "approved" && oldStatus === "approved") {
       const item = db.items[submission.itemId];
+      const pointsValue = submission.pointsAwarded ?? item?.points ?? 0;
       if (item && db.users[submission.userId]) {
-        db.users[submission.userId].score = Math.max(0, db.users[submission.userId].score - item.points);
+        db.users[submission.userId].score = Math.max(0, db.users[submission.userId].score - pointsValue);
         db.users[submission.userId].completedCount = Math.max(0, db.users[submission.userId].completedCount - 1);
       }
     }
