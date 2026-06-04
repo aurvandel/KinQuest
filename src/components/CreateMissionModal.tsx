@@ -35,16 +35,17 @@ export function CreateMissionModal({
   const [icon, setIcon] = useState("Sparkles");
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
-  const [radius, setRadius] = useState("200");
+  const [radius, setRadius] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Auto-fill coordinates when modal opens with valid userLat/userLng (only when pre-filled from map)
+  // Auto-fill coordinates and radius when modal opens with valid userLat/userLng (only when pre-filled from map)
   useEffect(() => {
     if (preFilledFromMap && isOpen && userLat !== null && userLng !== null && !lat && !lng) {
       setLat(userLat.toFixed(5));
       setLng(userLng.toFixed(5));
+      setRadius("200");
     }
   }, [isOpen, preFilledFromMap, userLat, userLng, lat, lng]);
 
@@ -90,7 +91,7 @@ export function CreateMissionModal({
       setIcon("Sparkles");
       setLat("");
       setLng("");
-      setRadius("200");
+      setRadius("");
       setSuccess(true);
       
       setTimeout(() => {
