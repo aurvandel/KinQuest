@@ -28,6 +28,9 @@ RUN npm ci --only=production
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist ./dist
 
+# Copy public assets (manifest, icons, service worker, etc.)
+COPY public ./dist/
+
 # Create data directory and copy initial database file for local fallback persistence
 RUN mkdir -p /app/data
 COPY db.json ./data/db.json

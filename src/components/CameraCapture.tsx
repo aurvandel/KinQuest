@@ -250,6 +250,7 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
 
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button
+              hidden
               onClick={startCamera}
               type="button"
               className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-semibold text-xs px-4 py-2.5 rounded-full transition flex items-center gap-1.5 shadow-sm"

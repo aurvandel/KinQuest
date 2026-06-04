@@ -1213,11 +1213,11 @@ export function getAppSettings(): AppSettings {
       return {
         name: parsed.name || "KinQuest",
         icon: parsed.icon || null,
-        defaultLat: Number(parsed.defaultLat) || 40.7850,
-        defaultLng: Number(parsed.defaultLng) || -73.9682,
-        defaultRadius: Number(parsed.defaultRadius) || 500,
+        defaultLat: Number(parsed.defaultLat) || 41.9076,
+        defaultLng: Number(parsed.defaultLng) || -111.3800,
+        defaultRadius: Number(parsed.defaultRadius) || 200,
         aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-        activeInviteCode: parsed.activeInviteCode || "reunion-2026",
+        activeInviteCode: parsed.activeInviteCode || "stewart-test",
         inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true,
         aiVerificationEnabled: parsed.aiVerificationEnabled !== undefined ? !!parsed.aiVerificationEnabled : true,
         allowForceSubmit: parsed.allowForceSubmit !== undefined ? !!parsed.allowForceSubmit : false
@@ -1229,11 +1229,11 @@ export function getAppSettings(): AppSettings {
   return {
     name: "KinQuest",
     icon: null,
-    defaultLat: 40.7850,
-    defaultLng: -73.9682,
-    defaultRadius: 500,
+    defaultLat: 41.9076,
+    defaultLng: -111.3800,
+    defaultRadius:2500,
     aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-    activeInviteCode: "reunion-2026",
+    activeInviteCode: "stewart-test",
     inviteRequired: true,
     aiVerificationEnabled: true,
     allowForceSubmit: false

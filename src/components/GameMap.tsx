@@ -38,8 +38,8 @@ export function GameMap({
   const [mapLoaded, setMapLoaded] = useState(false);
 
   // Default coordinate center (Central Park NYC)
-  const defaultLat = 40.7829;
-  const defaultLng = -73.9654;
+  const defaultLat = 41.9076;
+  const defaultLng = -111.3800;
 
   const currentLat = userLat !== null ? userLat : defaultLat;
   const currentLng = userLng !== null ? userLng : defaultLng;
@@ -327,43 +327,6 @@ export function GameMap({
       {/* Map iframe mockup / Leaflet div container */}
       <div className="flex-1 relative min-h-0 bg-[#f5f5f0]">
         <div ref={mapContainerRef} className="w-full h-full z-10" />
-
-        {/* Floating Instruction overlay wrapper inside container */}
-        <div className="absolute bottom-4 left-4 right-4 z-20 pointer-events-none flex flex-col gap-2">
-          <div className="bg-white/95 backdrop-blur-md border border-brand-border rounded-xl p-3 shadow-md max-w-sm pointer-events-auto space-y-2">
-            <p className="text-xs font-bold text-brand-moss flex items-center gap-1.5">
-              <Sparkles className="h-4 w-4" />
-              <span> Geolocation Emulator</span>
-            </p>
-            <p className="text-[10.5px] text-gray-500 leading-normal">
-              Click to emulate GPS movement. Double-click (or long-tap on mobile) to create a new geofenced mission at that location!
-            </p>
-
-            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-brand-border/50">
-              <button
-                onClick={() => onSimulateCoordinates?.(40.7829, -73.9654)}
-                type="button"
-                className="text-[10px] font-bold bg-[#e6e2d3] hover:bg-[#dcdcd4] text-brand-moss px-2 py-1 rounded transition whitespace-nowrap"
-              >
-                📍 Green Leaf Base
-              </button>
-              <button
-                onClick={() => onSimulateCoordinates?.(40.7850, -73.9682)}
-                type="button"
-                className="text-[10px] font-bold bg-[#e6e2d3] hover:bg-[#dcdcd4] text-brand-moss px-2 py-1 rounded transition whitespace-nowrap"
-              >
-                📍 Digit Clock Area
-              </button>
-              <button
-                onClick={() => onSimulateCoordinates?.(40.7812, -73.9665)}
-                type="button"
-                className="text-[10px] font-bold bg-[#e6e2d3] hover:bg-[#dcdcd4] text-brand-moss px-2 py-1 rounded transition whitespace-nowrap"
-              >
-                📍 Furry Pet Zone
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

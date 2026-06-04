@@ -57,17 +57,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval">("missions");
 
   // Game branding states
-  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "reunion-2026" });
+  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "stewart-test" });
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [adminNameInput, setAdminNameInput] = useState("");
   const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
-  const [adminLatInput, setAdminLatInput] = useState(40.7850);
-  const [adminLngInput, setAdminLngInput] = useState(-73.9682);
-  const [adminRadiusInput, setAdminRadiusInput] = useState(500);
+  const [adminLatInput, setAdminLatInput] = useState(41.9076);
+  const [adminLngInput, setAdminLngInput] = useState(-111.3800);
+  const [adminRadiusInput, setAdminRadiusInput] = useState(200);
   const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
   const [adminAiVerificationEnabledInput, setAdminAiVerificationEnabledInput] = useState(true);
   const [adminAllowForceSubmitInput, setAdminAllowForceSubmitInput] = useState(false);
-  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("reunion-2026");
+  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("stewart-test");
   const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
   const [manualInviteCode, setManualInviteCode] = useState("");
   const [manualInviteError, setManualInviteError] = useState<string | null>(null);
@@ -205,14 +205,14 @@ CREATE TABLE IF NOT EXISTS submissions (
         },
         (error) => {
           console.warn("Browser GPS blocked, falling back to simulated NYC coordinates.");
-          setUserLat(40.7829);
-          setUserLng(-73.9654);
+          setUserLat(41.9076);
+          setUserLng(-111.3800);
           setLocationType("simulated");
         }
       );
     } else {
-      setUserLat(40.7829);
-      setUserLng(-73.9654);
+      setUserLat(41.9076);
+      setUserLng(-111.3800);
       setLocationType("simulated");
     }
 
@@ -529,9 +529,9 @@ CREATE TABLE IF NOT EXISTS submissions (
         body: JSON.stringify({
           name: adminNameInput.trim(),
           icon: adminIconInput,
-          defaultLat: Number(adminLatInput) || 40.7850,
-          defaultLng: Number(adminLngInput) || -73.9682,
-          defaultRadius: Number(adminRadiusInput) || 500,
+          defaultLat: Number(adminLatInput) || 41.9076,
+          defaultLng: Number(adminLngInput) || -111.3800,
+          defaultRadius: Number(adminRadiusInput) || 200,
           aiPromptCriteria: adminAiPromptCriteriaInput.trim(),
           aiVerificationEnabled: adminAiVerificationEnabledInput,
           allowForceSubmit: adminAllowForceSubmitInput,
@@ -566,13 +566,13 @@ CREATE TABLE IF NOT EXISTS submissions (
         body: JSON.stringify({
           name: "KinQuest",
           icon: null,
-          defaultLat: 40.7850,
-          defaultLng: -73.9682,
-          defaultRadius: 500,
+          defaultLat: 41.9076,
+          defaultLng: -111.3800,
+          defaultRadius: 200,
           aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
           aiVerificationEnabled: true,
           allowForceSubmit: false,
-          activeInviteCode: "reunion-2026",
+          activeInviteCode: "stewart-test",
           inviteRequired: true
         })
       });
@@ -581,13 +581,13 @@ CREATE TABLE IF NOT EXISTS submissions (
         setSettings(data.settings);
         setAdminNameInput("KinQuest");
         setAdminIconInput(null);
-        setAdminLatInput(40.7850);
-        setAdminLngInput(-73.9682);
-        setAdminRadiusInput(500);
+        setAdminLatInput(41.9076);
+        setAdminLngInput(-111.3800);
+        setAdminRadiusInput(200);
         setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
         setAdminAiVerificationEnabledInput(true);
         setAdminAllowForceSubmitInput(false);
-        setAdminActiveInviteCodeInput("reunion-2026");
+        setAdminActiveInviteCodeInput("stewart-test");
         setAdminInviteRequiredInput(true);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
@@ -1193,9 +1193,9 @@ CREATE TABLE IF NOT EXISTS submissions (
                   if (settings) {
                     setAdminNameInput(settings.name);
                     setAdminIconInput(settings.icon);
-                    setAdminLatInput(settings.defaultLat ?? 40.7850);
-                    setAdminLngInput(settings.defaultLng ?? -73.9682);
-                    setAdminRadiusInput(settings.defaultRadius ?? 500);
+                    setAdminLatInput(settings.defaultLat ?? 41.9076);
+                    setAdminLngInput(settings.defaultLng ?? -111.3800);
+                    setAdminRadiusInput(settings.defaultRadius ?? 200);
                     setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
                     setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
                     setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
@@ -1328,7 +1328,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         )}
 
         {/* Navigation tabs */}
-        <div className="flex bg-white p-0.5 sm:p-1 rounded-2xl border border-brand-border shadow-sm w-full max-w-2xl mx-auto z-[990] gap-0.5 sm:gap-1">
+        <div className="sticky top-16 flex bg-white p-0.5 sm:p-1 rounded-2xl border border-brand-border shadow-sm w-full max-w-2xl mx-auto z-[990] gap-0.5 sm:gap-1">
           <button
             onClick={() => setActiveTab("missions")}
             className={`flex-1 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
