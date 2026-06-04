@@ -206,8 +206,8 @@ Ensure your KinQuest stack is running:
 # Start the full stack
 docker compose up -d
 
-# Verify backend is running
-curl https://kinquest.narcolepsy.ninja/api/db-status
+# Verify backend is running (requires Supabase to be configured)
+curl https://kinquest.narcolepsy.ninja/api/game-state
 
 # Run tests
 k6 run k6-tests/player-behavior.js

@@ -12,6 +12,7 @@ import {
   initializeDatabase,
   getAppState,
   authRegisterPlayer,
+  ensureProfileExists,
   updatePlayerProfile,
   createScavengerChallenge,
   deleteScavengerChallenge,
@@ -19,9 +20,6 @@ import {
   submitHunterProof,
   deleteHunterSubmission,
   manuallyApproveSubmission,
-  getDbMode,
-  databaseMode,
-  supabaseErrorDescription,
   Submission,
   ScavengerItem,
   saveChatMessage,
@@ -180,11 +178,10 @@ console.info = (...args: any[]) => {
   addLogEntry("info", args);
 };
 
-// 1. Database mode & error diagnostic status route for UI reporting
+// 1. Database status route - now exclusively Supabase
 app.get("/api/db-status", (req, res) => {
   res.json({
-    mode: getDbMode(),
-    error: supabaseErrorDescription
+    status: "supabase_required"
   });
 });
 
@@ -1285,6 +1282,14 @@ async function startServer() {
           const { userId, username } = payload;
           console.log("Client joining:", { userId, username });
           if (userId && username) {
+            // Ensure profile exists for this user before allowing them to send messages
+            try {
+              await ensureProfileExists(userId, username);
+              console.log("Profile ensured for user:", userId);
+            } catch (err) {
+              console.error("Failed to ensure profile exists:", err);
+              // Don't prevent join if profile creation fails - we'll let the message send attempt fail
+            }
             activeSockets.set(ws, { userId, username });
             console.log("Added socket to activeSockets, total active:", activeSockets.size);
             // Broadcast active user list

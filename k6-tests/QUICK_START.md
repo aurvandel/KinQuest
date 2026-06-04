@@ -215,8 +215,8 @@ http_req_failed..............: 3.5% ← Too many errors
 docker compose up -d
 npm run dev
 
-# Test backend is ready
-curl https://kinquest.narcolepsy.ninja/api/db-status
+# Test backend is ready (requires Supabase to be configured)
+curl https://kinquest.narcolepsy.ninja/api/game-state
 ```
 
 ### "Too many open files" (Linux)

@@ -108,13 +108,6 @@ else
   echo "  ℹ Server not running, settings will be loaded from file on next start"
 fi
 
-# Also reset db.json local fallback database (remove test users, but keep structure)
-echo "Resetting local database (db.json)..."
-# Use jq to filter out test users created during tests
-if [ -f db.json ]; then
-  jq 'del(.users[] | select(.username | test("player_|spike_|chattester_|endurance_|testplayer|admin_test")))' db.json > db.json.tmp && mv db.json.tmp db.json 2>/dev/null || true
-fi
-
 # Clear uploads directory
 echo "Clearing uploads directory..."
 rm -rf uploads/* 2>/dev/null || true

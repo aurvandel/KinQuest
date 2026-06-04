@@ -25,15 +25,38 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
   const [searchQuery, setSearchQuery] = useState("");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
-  // Auto scroll to bottom
+  // Check if scrolled to bottom
+  const isAtBottom = () => {
+    if (!messagesContainerRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    return scrollHeight - scrollTop - clientHeight < 50; // Within 50px of bottom
+  };
+
+  // Auto scroll to bottom only if user was already at the bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // Track scroll position to detect if user is reading history
+  const handleScroll = () => {
+    shouldAutoScrollRef.current = isAtBottom();
+  };
+
+  // Only auto-scroll if user was already at the bottom or this is their own message
   useEffect(() => {
+    if (shouldAutoScrollRef.current) {
+      scrollToBottom();
+    }
+  }, [chatMessages]);
+
+  // Auto-scroll when switching tabs or recipients
+  useEffect(() => {
+    shouldAutoScrollRef.current = true;
     scrollToBottom();
-  }, [chatMessages, activeSubTab, selectedRecipient]);
+  }, [activeSubTab, selectedRecipient]);
 
   // Check if player is online
   const isOnline = (playerId: string) => {
@@ -221,7 +244,11 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
         </header>
 
         {/* Message Logs Pane */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#fafaf9]/20">
+        <div 
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#fafaf9]/20"
+        >
           {filteredMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-6 text-[#9a9a8f] space-y-2">
               <MessageSquare className="h-8 w-8 text-[#cccbc0]" />

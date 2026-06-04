@@ -132,11 +132,7 @@ export default function App() {
   const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
   const [pendingAdminName, setPendingAdminName] = useState<string | null>(null);
 
-  // DB diagnostic status
-  const [dbStatus, setDbStatus] = useState<{ mode: "supabase" | "local_fallback"; error: string | null }>({
-    mode: "local_fallback",
-    error: null
-  });
+  // App uses Supabase exclusively for data persistence
   const [sqlVisible, setSqlVisible] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
 
@@ -267,13 +263,6 @@ CREATE TABLE IF NOT EXISTS submissions (
               handleSignOut();
             }
           }
-        }
-
-        // Fetch DB Mode Status
-        const dbRes = await fetch("/api/db-status");
-        if (dbRes.ok) {
-          const dStatus = await dbRes.json();
-          setDbStatus(dStatus);
         }
       } catch (err) {
         console.error("Polling game state failed:", err);
@@ -1185,12 +1174,8 @@ CREATE TABLE IF NOT EXISTS submissions (
               {/* Database Status Indicator Icon - visible to all */}
               <button
                 type="button"
-                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                  dbStatus.mode === "supabase"
-                    ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
-                    : "text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200"
-                }`}
-                title={`Storage: ${dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}`}
+                className="p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
+                title="Database: Supabase"
               >
                 <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
               </button>
@@ -1556,92 +1541,18 @@ CREATE TABLE IF NOT EXISTS submissions (
 
         {/* Database Connectivity Status - Admin Only */}
         {profile?.role === "admin" && (
-        <div className="bg-white/80 border border-[#d2d2c8] rounded-2xl p-4 max-w-md mx-auto shadow-sm space-y-3">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2 font-medium text-[#5a5a40]">
-              <Database className="h-4 w-4 text-[#8c8c5a]" />
-              <span>Storage Node:</span>
+          <div className="bg-white/80 border border-[#d2d2c8] rounded-2xl p-4 max-w-md mx-auto shadow-sm space-y-3">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 font-medium text-[#5a5a40]">
+                <Database className="h-4 w-4 text-[#8c8c5a]" />
+                <span>Storage Node:</span>
+              </div>
+              
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-150 text-emerald-800 border border-emerald-200">
+                Supabase Cloud
+              </span>
             </div>
-            
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-              dbStatus.mode === "supabase"
-                ? "bg-emerald-150 text-emerald-800 border border-emerald-200"
-                : "bg-[#eaeaee] text-[#4d4d42] border border-[#d2d2c8]"
-            }`}>
-              {dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}
-            </span>
           </div>
-
-          {dbStatus.mode === "local_fallback" && (
-            <div className="text-[11px] text-[#8c8c78] leading-normal space-y-2">
-              <p>
-                Currently running on **Local isolated Sandbox** storage. To bind persistent game data across systems:
-              </p>
-              <div className="p-2.5 bg-[#f5f5f0] rounded-xl border border-brand-border/60 text-[10px] space-y-1">
-                <p className="font-bold text-[#5a5a40]">Instructions:</p>
-                <ol className="list-decimal list-inside space-y-0.5">
-                  <li>Configure <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> in Server settings.</li>
-                  <li>Click below to copy and execute the database layout script in Supabase!</li>
-                </ol>
-              </div>
-
-              <div className="pt-1 flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSqlVisible(!sqlVisible)}
-                  className="w-full text-center text-[10px] font-bold text-[#5a5a40] hover:text-[#464632] underline hover:no-underline transition cursor-pointer"
-                >
-                  {sqlVisible ? "Hide SQL Seed Script" : "Show Required Supabase SQL Schema"}
-                </button>
-
-                {sqlVisible && (
-                  <div className="p-3 bg-[#2d2d25] rounded-xl text-[#f2f2eb] font-mono text-[9px] relative overflow-hidden max-h-48 overflow-y-auto">
-                    <button
-                      type="button"
-                      onClick={copySqlToClipboard}
-                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-[#3d3d32] hover:bg-[#5a5a40] text-white transition flex items-center gap-1 cursor-pointer"
-                      title="Copy schema SQL"
-                    >
-                      {copiedSql ? (
-                        <Check className="h-3.5 w-3.5 text-green-400" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                      <span>{copiedSql ? "Copied!" : "Copy"}</span>
-                    </button>
-                    <pre className="whitespace-pre-wrap">{SQL_SCHEMA}</pre>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {dbStatus.mode === "supabase" && dbStatus.error && (
-            <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl space-y-1 text-[11px] leading-relaxed">
-              <p className="font-bold">⚠️ DB Schema Missing Warning:</p>
-              <p className="text-[10px] opacity-90">{dbStatus.error}</p>
-              <button
-                type="button"
-                onClick={() => setSqlVisible(!sqlVisible)}
-                className="font-bold underline text-[10px] mt-1 block hover:no-underline"
-              >
-                {sqlVisible ? "Hide SQL Setup Script" : "View Setup SQL"}
-              </button>
-              {sqlVisible && (
-                <div className="mt-1.5 p-2 bg-[#2d2d25] rounded text-white font-mono text-[9px] relative max-h-36 overflow-y-auto">
-                  <button
-                    type="button"
-                    onClick={copySqlToClipboard}
-                    className="absolute top-1 right-1 p-1 bg-[#3d3d32] text-[8px] rounded hover:bg-[#5a5a40] text-white transition"
-                  >
-                    {copiedSql ? "Copied!" : "Copy Code"}
-                  </button>
-                  <pre className="whitespace-pre-wrap">{SQL_SCHEMA}</pre>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
         )}
 
         {/* Dynamic Panel Renders */}

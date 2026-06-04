@@ -190,150 +190,45 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   }
 ];
 
-const DB_FILE = path.join(process.cwd(), "data", "db.json");
-
-// Dynamic state tracker for external reporting in frontend
-export let databaseMode: "supabase" | "local_fallback" = "local_fallback";
-export let supabaseErrorDescription: string | null = null;
-
+// Supabase client instance
+// Note: File system fallback has been removed - app now relies exclusively on Supabase
 let supabase: SupabaseClient | null = null;
 
-// Initialize connection logic lazily
-export function getDbMode() {
+// Initialize Supabase client if not already initialized
+export function getDbMode(): "supabase" {
   const url = process.env.SUPABASE_URL || "";
   const key = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-  if (url && key) {
-    if (!supabase) {
-      try {
-        supabase = createClient(url, key, {
-          auth: { persistSession: false }
-        });
-        databaseMode = "supabase";
-        supabaseErrorDescription = null;
-      } catch (err: any) {
-        console.error("Failed to construct Supabase Client:", err);
-        databaseMode = "local_fallback";
-        supabaseErrorDescription = `Invalid configuration arguments: ${err.message}`;
-      }
-    } else {
-      databaseMode = "supabase";
-    }
-  } else {
-    databaseMode = "local_fallback";
+  if (!url || !key) {
+    throw new Error(
+      "Supabase configuration is required. Please set SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) environment variables."
+    );
   }
-  return databaseMode;
+
+  if (!supabase) {
+    supabase = createClient(url, key, {
+      auth: { persistSession: false }
+    });
+  }
+  return "supabase";
 }
 
 // ----------------------------------------------------
-// File-based Storage engine (Dynamic Local Fallback)
-// ----------------------------------------------------
-function loadLocalDb(): DbStore {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, "utf-8");
-      const parsed = JSON.parse(content) as DbStore;
-      if (!parsed.users) parsed.users = {};
-
-      const adminId = "user_admin";
-      if (!parsed.users[adminId]) {
-        parsed.users[adminId] = {
-          id: adminId,
-          username: "admin",
-          displayName: "Grand Host Admin",
-          score: 0,
-          completedCount: 0,
-          createdAt: new Date().toISOString(),
-          role: "admin",
-          permissions: {
-            shareLocation: true,
-            allowNotifications: true,
-            makePrivate: false,
-            extendedAiJudge: true
-          }
-        };
-        try {
-          fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), "utf-8");
-        } catch (e) {
-          console.error("Failed writing seeded local file db:", e);
-        }
-      }
-
-      if (!parsed.items || Object.keys(parsed.items).length === 0) {
-        parsed.items = {};
-        DEFAULT_ITEMS.forEach(it => {
-          parsed.items[it.id] = it;
-        });
-      }
-      if (!parsed.submissions) parsed.submissions = {};
-      if (!parsed.messages) parsed.messages = [];
-      return parsed;
-    }
-  } catch (err) {
-    console.error("Failed to load local fallback db.json, generating default templates.", err);
-  }
-
-  const initialItems: { [id: string]: ScavengerItem } = {};
-  DEFAULT_ITEMS.forEach(it => {
-    initialItems[it.id] = it;
-  });
-
-  const empty: DbStore = {
-      users: {
-          "user_admin": {
-              id: "user_admin",
-              username: "admin",
-              displayName: "Grand Host Admin",
-              score: 0,
-              completedCount: 0,
-              createdAt: new Date().toISOString(),
-              role: "admin",
-              permissions: {
-                  shareLocation: true,
-                  allowNotifications: true,
-                  makePrivate: false,
-                  extendedAiJudge: true
-              }
-          }
-      },
-      items: initialItems,
-      submissions: {},
-      messages: [],
-      slideshows: {}
-  };
-  saveLocalDb(empty);
-  return empty;
-}
-
-function saveLocalDb(store: DbStore) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Failed writing to local file db:", err);
-  }
-}
-
-// ----------------------------------------------------
-// Dynamic DB manager Hub API
-// ----------------------------------------------------
-
+// Database initialization
+// All data is persisted to Supabase only
 export async function initializeDatabase() {
-  const mode = getDbMode();
-  if (mode === "local_fallback") {
-    console.log("Database initialized: LOCAL FILE FALLBACK mode active.");
-    return;
-  }
+  getDbMode(); // Ensure Supabase client is initialized
 
   try {
     console.log("Checking Supabase connection and tables...");
-    // Let's check if the table "items" has records, if it fails, throw table-not-found error gracefully
+    // Let's check if the table "items" has records
     const { data, error } = await supabase!.from("items").select("id").limit(1);
     
     if (error) {
       if (error.code === "42P01") {
-        databaseMode = "local_fallback";
-        supabaseErrorDescription = "Relation (tables) do not exist yet. Please run the SQL initialization script in your Supabase Dashboard SQL Editor!";
-        console.warn("Supabase check alert:", supabaseErrorDescription);
+        console.warn(
+          "Supabase error: Relation (tables) do not exist yet. Please run the SQL initialization script in your Supabase Dashboard SQL Editor!"
+        );
         return;
       }
       throw error;
@@ -398,33 +293,27 @@ export async function initializeDatabase() {
     
     console.log("Supabase successfully initialized, hydrated, and active!");
   } catch (err: any) {
-    console.error("Supabase live diagnostic fail. Falling back gracefully to local file storage. Error:", err);
-    databaseMode = "local_fallback";
-    supabaseErrorDescription = `Connection or query error: ${err.message || JSON.stringify(err)}`;
+    console.error("Supabase initialization error:", err);
+    throw err;
   }
 }
 
 export async function getAppState(): Promise<DbStore> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    return loadLocalDb();
-  }
-
   try {
     // 1. Fetch profiles
-    const { data: profiles, error: pErr } = await supabase.from("profiles").select("*");
+    const { data: profiles, error: pErr } = await supabase!.from("profiles").select("*");
     if (pErr) throw pErr;
 
     // 2. Fetch items
-    const { data: items, error: iErr } = await supabase.from("items").select("*");
+    const { data: items, error: iErr } = await supabase!.from("items").select("*");
     if (iErr) throw iErr;
 
     // 3. Fetch submissions
-    const { data: subs, error: sErr } = await supabase.from("submissions").select("*");
+    const { data: subs, error: sErr } = await supabase!.from("submissions").select("*");
     if (sErr) throw sErr;
 
     // 4. Fetch slideshows
-    const { data: slides, error: slErr } = await supabase.from("slideshows").select("*");
+    const { data: slides, error: slErr } = await supabase!.from("slideshows").select("*");
     if (slErr) throw slErr;
 
     // Map into DbStore JSON layout
@@ -519,62 +408,21 @@ export async function getAppState(): Promise<DbStore> {
       slideshows: slideshowsMap
     };
   } catch (err) {
-    console.error("Supabase fetch failure, fall back dynamically to cached local storage:", err);
-    // Dynamic runtime fallback so live gameplay never halts!
-    databaseMode = "local_fallback";
-    supabaseErrorDescription = "Supabase query crashed. Falling back to offline cache!";
-    return loadLocalDb();
+    console.error("Supabase fetch failure:", err);
+    throw err;
   }
 }
 
 export async function authRegisterPlayer(username: string, registerRole?: "user" | "admin"): Promise<PlayerProfile> {
-  const mode = getDbMode();
   const cleanName = username.trim();
   const isTargetAdmin = cleanName.toLowerCase() === "admin";
   // Use registerRole parameter if provided, otherwise default based on username
   const assignedRole = registerRole || (isTargetAdmin ? "admin" : "user");
-  console.log("authRegisterPlayer:", { cleanName, registerRole, isTargetAdmin, assignedRole, mode });
-
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    let existingUser = Object.values(db.users).find(
-      u => u.username.toLowerCase() === cleanName.toLowerCase()
-    );
-
-    if (existingUser) {
-      if (existingUser.role !== assignedRole) {
-        console.log("Updating existing user role:", { username: existingUser.username, oldRole: existingUser.role, newRole: assignedRole });
-        existingUser.role = assignedRole;
-        saveLocalDb(db);
-      }
-      console.log("Returning existing user:", { username: existingUser.username, role: existingUser.role });
-      return existingUser;
-    }
-
-    const uid = isTargetAdmin ? "user_admin" : `user_${Math.floor(Math.random() * 899999 + 100000)}`;
-    const newUser: PlayerProfile = {
-      id: uid,
-      username: isTargetAdmin ? "admin" : cleanName,
-      displayName: isTargetAdmin ? "Grand Host Admin" : undefined,
-      score: 0,
-      completedCount: 0,
-      createdAt: new Date().toISOString(),
-      role: assignedRole,
-      permissions: {
-        shareLocation: true,
-        allowNotifications: true,
-        makePrivate: false,
-        extendedAiJudge: isTargetAdmin
-      }
-    };
-    db.users[uid] = newUser;
-    saveLocalDb(db);
-    return newUser;
-  }
+  console.log("authRegisterPlayer:", { cleanName, registerRole, isTargetAdmin, assignedRole });
 
   try {
     // Look up user
-    const { data: existing, error: findErr } = await supabase
+    const { data: existing, error: findErr } = await supabase!
       .from("profiles")
       .select("*")
       .ilike("username", cleanName)
@@ -601,7 +449,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       }
 
       if (finalRole !== u.role) {
-        await supabase.from("profiles").update({ role: finalRole }).eq("id", u.id);
+        await supabase!.from("profiles").update({ role: finalRole }).eq("id", u.id);
       }
 
       return {
@@ -635,7 +483,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       })
     };
 
-    const { error: insErr } = await supabase.from("profiles").insert(newUserRow);
+    const { error: insErr } = await supabase!.from("profiles").insert(newUserRow);
     if (insErr) {
       console.warn("Supabase profile insert has custom columns issue, dropping them:", insErr);
       const baseRow = {
@@ -645,7 +493,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         completed_count: 0,
         created_at: new Date().toISOString()
       };
-      await supabase.from("profiles").insert(baseRow);
+      await supabase!.from("profiles").insert(baseRow);
     }
 
     return {
@@ -664,43 +512,93 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       }
     };
   } catch (err) {
-    console.error("Supabase user register crash, falling back to local storage:", err);
-    const db = loadLocalDb();
-    let existingUser = Object.values(db.users).find(
-      u => u.username.toLowerCase() === cleanName.toLowerCase()
-    );
-    
-    // If user exists and we have an explicit role to assign, update it
-    if (existingUser) {
-      if (registerRole && existingUser.role !== registerRole) {
-        existingUser.role = registerRole;
-        existingUser.permissions = existingUser.permissions || {};
-        existingUser.permissions.extendedAiJudge = registerRole === "admin";
-        saveLocalDb(db);
+    console.error("Supabase user register error:", err);
+    throw err;
+  }
+}
+
+export async function ensureProfileExists(userId: string, username: string): Promise<PlayerProfile> {
+  try {
+    // Check if profile exists by ID
+    const { data: existing, error: findErr } = await supabase!
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .limit(1);
+
+    if (findErr) throw findErr;
+
+    // If profile exists, return it
+    if (existing && existing.length > 0) {
+      const u = existing[0];
+      let parsedPerm = undefined;
+      if (u.permissions) {
+        if (typeof u.permissions === "string") {
+          try { parsedPerm = JSON.parse(u.permissions); } catch { parsedPerm = undefined; }
+        } else {
+          parsedPerm = u.permissions;
+        }
       }
-      return existingUser;
+      return {
+        id: u.id,
+        username: u.username,
+        displayName: u.display_name || undefined,
+        score: u.score ?? 0,
+        completedCount: u.completed_count ?? 0,
+        createdAt: u.created_at,
+        role: (u.role || "user") as "user" | "admin",
+        permissions: parsedPerm
+      };
     }
 
-    const uid = isTargetAdmin ? "user_admin" : `user_cache_${Math.floor(Math.random() * 899999 + 100000)}`;
-    const isAdminUser = assignedRole === "admin";
-    const newUser: PlayerProfile = {
-      id: uid,
-      username: isTargetAdmin ? "admin" : cleanName,
-      displayName: isTargetAdmin ? "Grand Host Admin" : undefined,
+    // Create new profile
+    const newUserRow = {
+      id: userId,
+      username: username.trim(),
+      display_name: username.trim(),
+      score: 0,
+      completed_count: 0,
+      created_at: new Date().toISOString(),
+      role: "user",
+      permissions: JSON.stringify({
+        shareLocation: true,
+        allowNotifications: true,
+        makePrivate: false,
+        extendedAiJudge: false
+      })
+    };
+
+    const { error: insErr } = await supabase!.from("profiles").insert(newUserRow);
+    if (insErr) {
+      console.warn("Supabase profile insert error, trying minimal fields:", insErr);
+      const baseRow = {
+        id: userId,
+        username: username.trim(),
+        score: 0,
+        completed_count: 0,
+        created_at: new Date().toISOString()
+      };
+      await supabase!.from("profiles").insert(baseRow);
+    }
+
+    return {
+      id: userId,
+      username: username.trim(),
+      displayName: username.trim(),
       score: 0,
       completedCount: 0,
-      createdAt: new Date().toISOString(),
-      role: assignedRole,
+      createdAt: newUserRow.created_at,
+      role: "user",
       permissions: {
         shareLocation: true,
         allowNotifications: true,
         makePrivate: false,
-        extendedAiJudge: isAdminUser
+        extendedAiJudge: false
       }
     };
-    db.users[uid] = newUser;
-    saveLocalDb(db);
-    return newUser;
+  } catch (err) {
+    console.error("Error ensuring profile exists:", err);
+    throw err;
   }
 }
 
@@ -719,14 +617,6 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
     createdBy: item.createdBy
   };
 
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    db.items[itemId] = newItem;
-    saveLocalDb(db);
-    return newItem;
-  }
-
   try {
     const row = {
       id: itemId,
@@ -741,42 +631,19 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
       created_by: newItem.createdBy || null
     };
 
-    const { error } = await supabase.from("items").insert(row);
+    const { error } = await supabase!.from("items").insert(row);
     if (error) throw error;
     return newItem;
   } catch (err) {
-    console.error("Supabase challenge write issue, saving locally:", err);
-    const db = loadLocalDb();
-    db.items[itemId] = newItem;
-    saveLocalDb(db);
-    return newItem;
+    console.error("Supabase challenge write error:", err);
+    throw err;
   }
 }
 
 export async function deleteScavengerChallenge(itemId: string): Promise<boolean> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    const item = db.items[itemId];
-    if (!item) return false;
-
-    // Delete the item
-    delete db.items[itemId];
-
-    // Also delete associated submissions
-    Object.keys(db.submissions).forEach((subId) => {
-      if (db.submissions[subId].itemId === itemId) {
-        delete db.submissions[subId];
-      }
-    });
-
-    saveLocalDb(db);
-    return true;
-  }
-
   try {
     // Delete associated submissions from Supabase first
-    const { error: subErr } = await supabase
+    const { error: subErr } = await supabase!
       .from("submissions")
       .delete()
       .eq("item_id", itemId);
@@ -784,7 +651,7 @@ export async function deleteScavengerChallenge(itemId: string): Promise<boolean>
     if (subErr) throw subErr;
 
     // Delete the item
-    const { error: itemErr } = await supabase
+    const { error: itemErr } = await supabase!
       .from("items")
       .delete()
       .eq("id", itemId);
@@ -792,20 +659,8 @@ export async function deleteScavengerChallenge(itemId: string): Promise<boolean>
     if (itemErr) throw itemErr;
     return true;
   } catch (err) {
-    console.error("Supabase deletion crash, processing locally:", err);
-    const db = loadLocalDb();
-    const item = db.items[itemId];
-    if (!item) return false;
-
-    delete db.items[itemId];
-    Object.keys(db.submissions).forEach((subId) => {
-      if (db.submissions[subId].itemId === itemId) {
-        delete db.submissions[subId];
-      }
-    });
-
-    saveLocalDb(db);
-    return true;
+    console.error("Supabase deletion error:", err);
+    throw err;
   }
 }
 
@@ -813,22 +668,6 @@ export async function updateScavengerChallenge(
   itemId: string,
   updates: Partial<ScavengerItem>
 ): Promise<ScavengerItem | null> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    const item = db.items[itemId];
-    if (!item) return null;
-
-    const updatedItem: ScavengerItem = {
-      ...item,
-      ...updates,
-      id: item.id // Ensure ID doesn't change
-    };
-    db.items[itemId] = updatedItem;
-    saveLocalDb(db);
-    return updatedItem;
-  }
-
   try {
     const updateRow: any = {};
     if (updates.title !== undefined) updateRow.title = updates.title;
@@ -840,7 +679,7 @@ export async function updateScavengerChallenge(
     if (updates.lng !== undefined) updateRow.lng = updates.lng;
     if (updates.radius !== undefined) updateRow.radius = updates.radius;
 
-    const { data, error } = await supabase
+    const { data, error } = await supabase!
       .from("items")
       .update(updateRow)
       .eq("id", itemId)
@@ -863,19 +702,8 @@ export async function updateScavengerChallenge(
       createdBy: data.created_by
     };
   } catch (err) {
-    console.error("Supabase update crash, processing locally:", err);
-    const db = loadLocalDb();
-    const item = db.items[itemId];
-    if (!item) return null;
-
-    const updatedItem: ScavengerItem = {
-      ...item,
-      ...updates,
-      id: item.id
-    };
-    db.items[itemId] = updatedItem;
-    saveLocalDb(db);
-    return updatedItem;
+    console.error("Supabase update error:", err);
+    throw err;
   }
 }
 
@@ -883,20 +711,6 @@ export async function submitHunterProof(
   sub: Submission,
   incrementPoints: number
 ): Promise<Submission> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    db.submissions[sub.id] = sub;
-
-    // Update player stats
-    if (sub.status === "approved" && db.users[sub.userId]) {
-      db.users[sub.userId].score += incrementPoints;
-      db.users[sub.userId].completedCount += 1;
-    }
-    saveLocalDb(db);
-    return sub;
-  }
-
   try {
     // 1. Save Submissions row
     const row = {
@@ -914,13 +728,13 @@ export async function submitHunterProof(
       distance_meters: sub.distanceMeters
     };
 
-    const { error: sErr } = await supabase.from("submissions").insert(row);
+    const { error: sErr } = await supabase!.from("submissions").insert(row);
     if (sErr) throw sErr;
 
     // 2. Perform score increment if approved
     if (sub.status === "approved") {
       // Get current profile metrics
-      const { data: prof, error: getErr } = await supabase
+      const { data: prof, error: getErr } = await supabase!
         .from("profiles")
         .select("score, completed_count")
         .eq("id", sub.userId)
@@ -930,7 +744,7 @@ export async function submitHunterProof(
         const newScore = (prof.score ?? 0) + incrementPoints;
         const newCount = (prof.completed_count ?? 0) + 1;
 
-        await supabase
+        await supabase!
           .from("profiles")
           .update({ score: newScore, completed_count: newCount })
           .eq("id", sub.userId);
@@ -939,42 +753,15 @@ export async function submitHunterProof(
 
     return sub;
   } catch (err) {
-    console.error("Supabase submission error, storing locally:", err);
-    const db = loadLocalDb();
-    db.submissions[sub.id] = sub;
-    if (sub.status === "approved" && db.users[sub.userId]) {
-      db.users[sub.userId].score += incrementPoints;
-      db.users[sub.userId].completedCount += 1;
-    }
-    saveLocalDb(db);
-    return sub;
+    console.error("Supabase submission error:", err);
+    throw err;
   }
 }
 
 export async function deleteHunterSubmission(subId: string): Promise<boolean> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    const submission = db.submissions[subId];
-    if (!submission) return false;
-
-    if (submission.status === "approved") {
-      const user = db.users[submission.userId];
-      const item = db.items[submission.itemId];
-      if (user && item) {
-        user.score = Math.max(0, user.score - item.points);
-        user.completedCount = Math.max(0, user.completedCount - 1);
-      }
-    }
-
-    delete db.submissions[subId];
-    saveLocalDb(db);
-    return true;
-  }
-
   try {
     // Read submission detail to resolve score deduction
-    const { data: sub, error: getErr } = await supabase
+    const { data: sub, error: getErr } = await supabase!
       .from("submissions")
       .select("*")
       .eq("id", subId)
@@ -984,14 +771,14 @@ export async function deleteHunterSubmission(subId: string): Promise<boolean> {
 
     // Deduct
     if (sub.status === "approved") {
-      const { data: item } = await supabase.from("items").select("points").eq("id", sub.item_id).single();
-      const { data: prof } = await supabase.from("profiles").select("score, completed_count").eq("id", sub.user_id).single();
+      const { data: item } = await supabase!.from("items").select("points").eq("id", sub.item_id).single();
+      const { data: prof } = await supabase!.from("profiles").select("score, completed_count").eq("id", sub.user_id).single();
       
       if (prof && item) {
         const newScore = Math.max(0, (prof.score ?? 0) - (item.points ?? 10));
         const newCount = Math.max(0, (prof.completed_count ?? 0) - 1);
 
-        await supabase
+        await supabase!
           .from("profiles")
           .update({ score: newScore, completed_count: newCount })
           .eq("id", sub.user_id);
@@ -999,28 +786,13 @@ export async function deleteHunterSubmission(subId: string): Promise<boolean> {
     }
 
     // Delete submission
-    const { error: delErr } = await supabase.from("submissions").delete().eq("id", subId);
+    const { error: delErr } = await supabase!.from("submissions").delete().eq("id", subId);
     if (delErr) throw delErr;
 
     return true;
   } catch (err) {
-    console.error("Supabase deletion crash, processing locally:", err);
-    const db = loadLocalDb();
-    const submission = db.submissions[subId];
-    if (!submission) return false;
-
-    if (submission.status === "approved") {
-      const user = db.users[submission.userId];
-      const item = db.items[submission.itemId];
-      if (user && item) {
-        user.score = Math.max(0, user.score - item.points);
-        user.completedCount = Math.max(0, user.completedCount - 1);
-      }
-    }
-
-    delete db.submissions[subId];
-    saveLocalDb(db);
-    return true;
+    console.error("Supabase deletion error:", err);
+    throw err;
   }
 }
 
@@ -1029,46 +801,9 @@ export async function manuallyApproveSubmission(
   newStatus: "approved" | "rejected",
   points?: number
 ): Promise<Submission | null> {
-  const mode = getDbMode();
-  
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    const submission = db.submissions[subId];
-    if (!submission) return null;
-
-    const oldStatus = submission.status;
-    submission.status = newStatus;
-    submission.forcedApproval = true;
-    
-    // Use provided points, or existing pointsAwarded, or fallback to item points
-    const item = db.items[submission.itemId];
-    if (points !== undefined && newStatus === "approved") {
-      submission.pointsAwarded = points;
-    }
-    const pointsValue = submission.pointsAwarded ?? (item ? item.points : 0);
-
-    // Handle score updates
-    if (newStatus === "approved" && oldStatus !== "approved") {
-      // Newly approved - add points
-      if (item && db.users[submission.userId]) {
-        db.users[submission.userId].score += pointsValue;
-        db.users[submission.userId].completedCount += 1;
-      }
-    } else if (newStatus !== "approved" && oldStatus === "approved") {
-      // Changed from approved to something else - remove points
-      if (item && db.users[submission.userId]) {
-        db.users[submission.userId].score = Math.max(0, db.users[submission.userId].score - pointsValue);
-        db.users[submission.userId].completedCount = Math.max(0, db.users[submission.userId].completedCount - 1);
-      }
-    }
-
-    saveLocalDb(db);
-    return submission;
-  }
-
   try {
     // Get current submission
-    const { data: sub, error: getErr } = await supabase
+    const { data: sub, error: getErr } = await supabase!
       .from("submissions")
       .select("*")
       .eq("id", subId)
@@ -1079,14 +814,14 @@ export async function manuallyApproveSubmission(
     const oldStatus = sub.status;
     
     // Get item for points
-    const { data: item } = await supabase
+    const { data: item } = await supabase!
       .from("items")
       .select("points")
       .eq("id", sub.item_id)
       .single();
 
     // Get current user profile
-    const { data: prof } = await supabase
+    const { data: prof } = await supabase!
       .from("profiles")
       .select("score, completed_count")
       .eq("id", sub.user_id)
@@ -1097,7 +832,7 @@ export async function manuallyApproveSubmission(
     if (points !== undefined && newStatus === "approved") {
       updateData.points_awarded = points;
     }
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await supabase!
       .from("submissions")
       .update(updateData)
       .eq("id", subId);
@@ -1118,7 +853,7 @@ export async function manuallyApproveSubmission(
         newCount = Math.max(0, newCount - 1);
       }
 
-      await supabase
+      await supabase!
         .from("profiles")
         .update({ score: newScore, completed_count: newCount })
         .eq("id", sub.user_id);
@@ -1141,54 +876,12 @@ export async function manuallyApproveSubmission(
       distanceMeters: sub.distance_meters
     };
   } catch (err) {
-    console.error("Supabase manual approval failed, processing locally:", err);
-    const db = loadLocalDb();
-    const submission = db.submissions[subId];
-    if (!submission) return null;
-
-    const oldStatus = submission.status;
-    submission.status = newStatus;
-    submission.forcedApproval = true;
-
-    // Set pointsAwarded if provided
-    if (points !== undefined && newStatus === "approved") {
-      submission.pointsAwarded = points;
-    }
-
-    // Handle score updates
-    if (newStatus === "approved" && oldStatus !== "approved") {
-      const item = db.items[submission.itemId];
-      const pointsValue = points !== undefined ? points : (submission.pointsAwarded ?? item?.points ?? 0);
-      if (item && db.users[submission.userId]) {
-        db.users[submission.userId].score += pointsValue;
-        db.users[submission.userId].completedCount += 1;
-      }
-    } else if (newStatus !== "approved" && oldStatus === "approved") {
-      const item = db.items[submission.itemId];
-      const pointsValue = submission.pointsAwarded ?? item?.points ?? 0;
-      if (item && db.users[submission.userId]) {
-        db.users[submission.userId].score = Math.max(0, db.users[submission.userId].score - pointsValue);
-        db.users[submission.userId].completedCount = Math.max(0, db.users[submission.userId].completedCount - 1);
-      }
-    }
-
-    saveLocalDb(db);
-    return submission;
+    console.error("Supabase manual approval error:", err);
+    throw err;
   }
 }
 
 export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    db.messages.push(msg);
-    if (db.messages.length > 400) {
-      db.messages = db.messages.slice(-400);
-    }
-    saveLocalDb(db);
-    return msg;
-  }
-
   try {
     const row = {
       id: msg.id,
@@ -1198,33 +891,20 @@ export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
       text: msg.text,
       created_at: msg.createdAt
     };
-    const { error } = await supabase.from("messages").insert(row);
+    const { error } = await supabase!.from("messages").insert(row);
     if (error) {
-      // If table doesn't exist, just use fallback
       throw error;
     }
     return msg;
   } catch (err) {
-    console.warn("Supabase message insert failed, fallback to local storage:", err);
-    const db = loadLocalDb();
-    db.messages.push(msg);
-    if (db.messages.length > 400) {
-      db.messages = db.messages.slice(-400);
-    }
-    saveLocalDb(db);
-    return msg;
+    console.warn("Supabase message insert error:", err);
+    throw err;
   }
 }
 
 export async function getChatMessages(): Promise<ChatMessage[]> {
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    return db.messages || [];
-  }
-
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabase!
       .from("messages")
       .select("*")
       .order("created_at", { ascending: true })
@@ -1240,29 +920,15 @@ export async function getChatMessages(): Promise<ChatMessage[]> {
       createdAt: m.created_at
     }));
   } catch (err) {
-    console.warn("Supabase message retrieve failed, fallback to local storage:", err);
-    const db = loadLocalDb();
-    return db.messages || [];
+    console.warn("Supabase message retrieve error:", err);
+    throw err;
   }
 }
 
 export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
-  const mode = getDbMode();
-  
-  // Always save to local first as backup
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    if (!db.slideshows) {
-      db.slideshows = {};
-    }
-    db.slideshows[slideshow.id] = slideshow;
-    saveLocalDb(db);
-    return slideshow;
-  }
-
   try {
     // Save to Supabase
-    const { error } = await supabase
+    const { error } = await supabase!
       .from("slideshows")
       .upsert([{
         id: slideshow.id,
@@ -1277,38 +943,16 @@ export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
       .select();
     
     if (error) throw error;
-    
-    // Also save to local
-    const db = loadLocalDb();
-    if (!db.slideshows) {
-      db.slideshows = {};
-    }
-    db.slideshows[slideshow.id] = slideshow;
-    saveLocalDb(db);
-    
     return slideshow;
   } catch (err) {
-    console.error("Supabase slideshow save failed, saving locally:", err);
-    const db = loadLocalDb();
-    if (!db.slideshows) {
-      db.slideshows = {};
-    }
-    db.slideshows[slideshow.id] = slideshow;
-    saveLocalDb(db);
-    return slideshow;
+    console.error("Supabase slideshow save error:", err);
+    throw err;
   }
 }
 
 export async function getSlideshow(id: string): Promise<Slideshow | null> {
-  const mode = getDbMode();
-  
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    return db.slideshows?.[id] || null;
-  }
-
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabase!
       .from("slideshows")
       .select("*")
       .eq("id", id)
@@ -1328,22 +972,14 @@ export async function getSlideshow(id: string): Promise<Slideshow | null> {
       isPublished: data.is_published
     };
   } catch (err) {
-    console.warn("Supabase slideshow retrieve failed, fallback to local storage:", err);
-    const db = loadLocalDb();
-    return db.slideshows?.[id] || null;
+    console.warn("Supabase slideshow retrieve error:", err);
+    throw err;
   }
 }
 
 export async function getAllSlideshows(): Promise<Slideshow[]> {
-  const mode = getDbMode();
-  
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    return Object.values(db.slideshows || {});
-  }
-
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabase!
       .from("slideshows")
       .select("*")
       .eq("is_published", true)
@@ -1362,9 +998,8 @@ export async function getAllSlideshows(): Promise<Slideshow[]> {
       isPublished: s.is_published
     }));
   } catch (err) {
-    console.warn("Supabase slideshow retrieve failed, fallback to local storage:", err);
-    const db = loadLocalDb();
-    return Object.values(db.slideshows || {}).filter(s => s.isPublished);
+    console.warn("Supabase slideshow retrieve error:", err);
+    throw err;
   }
 }
 
@@ -1445,21 +1080,6 @@ export async function updatePlayerProfile(
     };
   }
 ): Promise<PlayerProfile | null> {
-  const db = loadLocalDb();
-  let user = db.users[userId];
-  
-  if (user) {
-    if (updates.displayName !== undefined) user.displayName = updates.displayName;
-    if (updates.role !== undefined) user.role = updates.role;
-    if (updates.permissions !== undefined) user.permissions = updates.permissions;
-    saveLocalDb(db);
-  }
-
-  const mode = getDbMode();
-  if (mode === "local_fallback" || !supabase) {
-    return user || null;
-  }
-
   try {
     const serializedPermissions = updates.permissions ? JSON.stringify(updates.permissions) : undefined;
     const updRow: any = {};
@@ -1468,14 +1088,15 @@ export async function updatePlayerProfile(
     if (serializedPermissions !== undefined) updRow.permissions = serializedPermissions;
 
     if (Object.keys(updRow).length > 0) {
-      const { data, error } = await supabase
+      const { data, error } = await supabase!
         .from("profiles")
         .update(updRow)
         .eq("id", userId)
         .select("*");
       
       if (error) {
-        console.warn("Supabase profile update warning / col may be missing:", error);
+        console.warn("Supabase profile update error:", error);
+        throw error;
       } else if (data && data.length > 0) {
         const u = data[0];
         let parsedPerm = undefined;
@@ -1498,9 +1119,10 @@ export async function updatePlayerProfile(
         };
       }
     }
+    return null;
   } catch (err) {
-    console.warn("Catch-all profile update warning:", err);
+    console.warn("Supabase profile update error:", err);
+    throw err;
   }
-  return user || null;
 }
 
