@@ -11,7 +11,17 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:k6:smoke": "k6 run k6-tests/player-behavior.js --vus 5 --duration 1m",
+    "test:k6:player": "k6 run k6-tests/player-behavior.js --vus 50 --duration 5m",
+    "test:k6:spike": "k6 run k6-tests/spike-load.js",
+    "test:k6:endurance": "k6 run k6-tests/endurance.js --vus 20 --duration 10m",
+    "test:k6:admin": "k6 run k6-tests/admin-operations.js -e ADMIN_PASSWORD=password",
+    "test:k6:chat": "k6 run k6-tests/chat-load.js",
+    "test:k6:all": "bash k6-tests/run-tests.sh all",
+    "test:k6:runner": "bash k6-tests/run-tests.sh",
+    "test:k6:cleanup": "bash k6-tests/cleanup.sh",
+    "test:k6:cleanup-full": "bash k6-tests/cleanup.sh full"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

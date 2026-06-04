@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ScavengerItem, Submission } from "../types";
+import { ScavengerItem, Submission, PlayerProfile } from "../types";
 import { DynamicIcon } from "./DynamicIcon";
 import { CameraCapture } from "./CameraCapture";
 import { EditMissionModal } from "./EditMissionModal";
@@ -21,13 +21,15 @@ import {
   Check,
   Trash2,
   AlertCircle,
-  Edit2
+  Edit2,
+  UserCheck
 } from "lucide-react";
 
 interface MissionsListProps {
   items: ScavengerItem[];
   submissions: Submission[];
   currentUserId: string;
+  players?: PlayerProfile[];
   currentUserRole: "user" | "admin";
   onUploadSubmission: (itemId: string, base64Image: string) => Promise<void>;
   isSubmittingMap: { [itemId: string]: boolean };
@@ -57,7 +59,8 @@ export function MissionsList({
   onAddChallenge,
   onDeleteMission,
   onEditMission,
-  onShowCreateModal
+  onShowCreateModal,
+  players
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
@@ -65,6 +68,13 @@ export function MissionsList({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<ScavengerItem | null>(null);
+
+  // Helper to get creator display name
+  const getCreatorName = (createdBy?: string | null): string => {
+    if (!createdBy || !players) return "Unknown";
+    const creator = players.find((p) => p.id === createdBy);
+    return creator?.displayName || creator?.username || "Unknown";
+  };
 
   const categories = ["All", ...Array.from(new Set(items.map((item) => item.category)))];
 
@@ -272,7 +282,7 @@ export function MissionsList({
                   </div>
 
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[10px] font-bold text-brand-muted capitalize bg-brand-beige-light px-2 py-0.5 rounded-md border border-brand-border/40">
                         {item.category}
                       </span>
@@ -293,6 +303,14 @@ export function MissionsList({
                     >
                       {item.title}
                     </h3>
+                    {item.createdBy && (
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <UserCheck className="h-3 w-3 text-brand-moss/70" />
+                        <span className="text-[9px] text-brand-muted font-medium">
+                          Created by <span className="font-bold text-brand-moss">{getCreatorName(item.createdBy)}</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

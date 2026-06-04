@@ -1,0 +1,14 @@
+{
+  "name": "KinQuest",
+  "icon": null,
+  "defaultLat": 41.9076,
+  "defaultLng": -111.3800,
+  "defaultRadius": 2500,
+  "aiPromptCriteria": "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+  "activeInviteCode": "stewart-test",
+  "inviteRequired": true,
+  "aiVerificationEnabled": true,
+  "allowForceSubmit": false,
+  "imageCompressionMaxDim": 800,
+  "imageCompressionQuality": 0.7
+}

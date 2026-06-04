@@ -17,6 +17,7 @@ interface CreateMissionModalProps {
   onSubmit: (challenge: Omit<ScavengerItem, "id">) => Promise<void>;
   userLat: number | null;
   userLng: number | null;
+  preFilledFromMap?: boolean;
 }
 
 export function CreateMissionModal({
@@ -24,7 +25,8 @@ export function CreateMissionModal({
   onClose,
   onSubmit,
   userLat,
-  userLng
+  userLng,
+  preFilledFromMap = false
 }: CreateMissionModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -38,13 +40,13 @@ export function CreateMissionModal({
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Auto-fill coordinates when modal opens with valid userLat/userLng
+  // Auto-fill coordinates when modal opens with valid userLat/userLng (only when pre-filled from map)
   useEffect(() => {
-    if (isOpen && userLat !== null && userLng !== null && !lat && !lng) {
+    if (preFilledFromMap && isOpen && userLat !== null && userLng !== null && !lat && !lng) {
       setLat(userLat.toFixed(5));
       setLng(userLng.toFixed(5));
     }
-  }, [isOpen, userLat, userLng, lat, lng]);
+  }, [isOpen, preFilledFromMap, userLat, userLng, lat, lng]);
 
   if (!isOpen) return null;
 

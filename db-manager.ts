@@ -753,6 +753,132 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
   }
 }
 
+export async function deleteScavengerChallenge(itemId: string): Promise<boolean> {
+  const mode = getDbMode();
+  if (mode === "local_fallback" || !supabase) {
+    const db = loadLocalDb();
+    const item = db.items[itemId];
+    if (!item) return false;
+
+    // Delete the item
+    delete db.items[itemId];
+
+    // Also delete associated submissions
+    Object.keys(db.submissions).forEach((subId) => {
+      if (db.submissions[subId].itemId === itemId) {
+        delete db.submissions[subId];
+      }
+    });
+
+    saveLocalDb(db);
+    return true;
+  }
+
+  try {
+    // Delete associated submissions from Supabase first
+    const { error: subErr } = await supabase
+      .from("submissions")
+      .delete()
+      .eq("item_id", itemId);
+    
+    if (subErr) throw subErr;
+
+    // Delete the item
+    const { error: itemErr } = await supabase
+      .from("items")
+      .delete()
+      .eq("id", itemId);
+    
+    if (itemErr) throw itemErr;
+    return true;
+  } catch (err) {
+    console.error("Supabase deletion crash, processing locally:", err);
+    const db = loadLocalDb();
+    const item = db.items[itemId];
+    if (!item) return false;
+
+    delete db.items[itemId];
+    Object.keys(db.submissions).forEach((subId) => {
+      if (db.submissions[subId].itemId === itemId) {
+        delete db.submissions[subId];
+      }
+    });
+
+    saveLocalDb(db);
+    return true;
+  }
+}
+
+export async function updateScavengerChallenge(
+  itemId: string,
+  updates: Partial<ScavengerItem>
+): Promise<ScavengerItem | null> {
+  const mode = getDbMode();
+  if (mode === "local_fallback" || !supabase) {
+    const db = loadLocalDb();
+    const item = db.items[itemId];
+    if (!item) return null;
+
+    const updatedItem: ScavengerItem = {
+      ...item,
+      ...updates,
+      id: item.id // Ensure ID doesn't change
+    };
+    db.items[itemId] = updatedItem;
+    saveLocalDb(db);
+    return updatedItem;
+  }
+
+  try {
+    const updateRow: any = {};
+    if (updates.title !== undefined) updateRow.title = updates.title;
+    if (updates.description !== undefined) updateRow.description = updates.description;
+    if (updates.points !== undefined) updateRow.points = updates.points;
+    if (updates.category !== undefined) updateRow.category = updates.category;
+    if (updates.icon !== undefined) updateRow.icon = updates.icon;
+    if (updates.lat !== undefined) updateRow.lat = updates.lat;
+    if (updates.lng !== undefined) updateRow.lng = updates.lng;
+    if (updates.radius !== undefined) updateRow.radius = updates.radius;
+
+    const { data, error } = await supabase
+      .from("items")
+      .update(updateRow)
+      .eq("id", itemId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      title: data.title,
+      description: data.description,
+      points: data.points ?? 10,
+      category: data.category ?? "General",
+      icon: data.icon ?? "Sparkles",
+      lat: data.lat,
+      lng: data.lng,
+      radius: data.radius,
+      createdBy: data.created_by
+    };
+  } catch (err) {
+    console.error("Supabase update crash, processing locally:", err);
+    const db = loadLocalDb();
+    const item = db.items[itemId];
+    if (!item) return null;
+
+    const updatedItem: ScavengerItem = {
+      ...item,
+      ...updates,
+      id: item.id
+    };
+    db.items[itemId] = updatedItem;
+    saveLocalDb(db);
+    return updatedItem;
+  }
+}
+
 export async function submitHunterProof(
   sub: Submission,
   incrementPoints: number

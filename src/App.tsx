@@ -13,6 +13,7 @@ import { UserSettingsModal } from "./components/UserSettingsModal";
 import { AdminSettingsModal } from "./components/AdminSettingsModal";
 import { CreateMissionModal } from "./components/CreateMissionModal";
 import { SlideshowGeneratorModal } from "./components/SlideshowGeneratorModal";
+import { ServerLogs } from "./components/ServerLogs";
 
 import {
   Flame,
@@ -45,7 +46,9 @@ import {
   QrCode,
   Image as ImageIcon,
   Film,
-  ShieldCheck
+  ShieldCheck,
+  Satellite,
+  X
 } from "lucide-react";
 
 export default function App() {
@@ -54,7 +57,7 @@ export default function App() {
   const [items, setItems] = useState<ScavengerItem[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [appReady, setAppReady] = useState(false);
-  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval">("missions");
+  const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
 
   // Game branding states
   const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "stewart-test" });
@@ -82,6 +85,7 @@ export default function App() {
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
   const [showCreateMissionModal, setShowCreateMissionModal] = useState(false);
+  const [creatingFromMap, setCreatingFromMap] = useState(false);
   const [profileDisplayNameInput, setProfileDisplayNameInput] = useState("");
   const [profileRoleInput, setProfileRoleInput] = useState<"user" | "admin" | "">("user");
   const [profileShareLocation, setProfileShareLocation] = useState(true);
@@ -105,7 +109,7 @@ export default function App() {
   const [slideshowError, setSlideshowError] = useState<string | null>(null);
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
-  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval">("missions");
+  const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
 
   // Geolocation states
   const [userLat, setUserLat] = useState<number | null>(null);
@@ -943,6 +947,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     // Pre-set the map coordinates for the new mission
     setUserLat(lat);
     setUserLng(lng);
+    setCreatingFromMap(true);
     setShowCreateMissionModal(true);
   };
 
@@ -1177,6 +1182,42 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <span className="text-xs sm:hidden font-black font-mono">{profile.score}</span>
               </div>
 
+              {/* Database Status Indicator Icon - visible to all */}
+              <button
+                type="button"
+                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
+                  dbStatus.mode === "supabase"
+                    ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
+                    : "text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200"
+                }`}
+                title={`Storage: ${dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}`}
+              >
+                <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+              </button>
+
+              {/* GPS Status Indicator Icon */}
+              <button
+                type="button"
+                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 relative group ${
+                  locationType === "gps"
+                    ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
+                    : "text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-transparent hover:border-amber-200"
+                }`}
+                title={`GPS: ${locationType === "gps" ? "Active" : "Emulated"} (${userLat?.toFixed(4)}, ${userLng?.toFixed(4)})`}
+              >
+                <div className="relative">
+                  <Satellite className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+                  {locationType === "simulated" && (
+                    <X className="h-3 sm:h-3.5 w-3 sm:w-3.5 absolute -top-1 -right-1 stroke-[3]" />
+                  )}
+                </div>
+                {/* Tooltip */}
+                <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 bg-[#2d2d2d] text-white px-3 py-2 rounded-lg text-[11px] font-semibold whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-50 shadow-lg">
+                  <div className="font-bold">{locationType === "gps" ? "📡 Active GPS" : "🎮 Emulated GPS"}</div>
+                  <div className="text-[10px] opacity-90 font-mono mt-0.5">{userLat?.toFixed(4)}, {userLng?.toFixed(4)}</div>
+                </div>
+              </button>
+
               {/* User Preferences Dashboard Button */}
               <button
                 onClick={() => {
@@ -1197,19 +1238,6 @@ CREATE TABLE IF NOT EXISTS submissions (
                 title="User Settings & Persona Dashboard"
               >
                 <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-              </button>
-
-              {/* Database Status Indicator Icon - visible to all */}
-              <button
-                type="button"
-                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                  dbStatus.mode === "supabase"
-                    ? "text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
-                    : "text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200"
-                }`}
-                title={`Storage: ${dbStatus.mode === "supabase" ? "Supabase Cloud" : "Local db.json"}`}
-              >
-                <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
               </button>
 
               {/* Admin Branding Settings Cog */}
@@ -1338,23 +1366,39 @@ CREATE TABLE IF NOT EXISTS submissions (
             <span className="hidden sm:inline">Scripts</span>
           </button>
           {profile?.role === "admin" && (
-            <button
-              onClick={() => setActiveTab("approval")}
-              className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
-                activeTab === "approval"
-                  ? "bg-[#5a5a40] text-white shadow-sm"
-                  : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
-              }`}
-              title="Review & approve photos"
-            >
-              <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
-              <span className="hidden sm:inline">Approve</span>
-              {submissions.filter(s => s.status === "pending").length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
-                  {submissions.filter(s => s.status === "pending").length}
-                </span>
-              )}
-            </button>
+            <>
+              <button
+                onClick={() => setActiveTab("approval")}
+                className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+                  activeTab === "approval"
+                    ? "bg-[#5a5a40] text-white shadow-sm"
+                    : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+                }`}
+                title="Review & approve photos"
+              >
+                <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+                <span className="hidden sm:inline">Approve</span>
+                {submissions.filter(s => s.status === "pending").length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+                    {submissions.filter(s => s.status === "pending").length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab("logs")}
+                className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+                  activeTab === "logs"
+                    ? "bg-[#5a5a40] text-white shadow-sm"
+                    : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+                }`}
+                title="View server logs"
+              >
+                <svg className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" />
+                </svg>
+                <span className="hidden sm:inline">Logs</span>
+              </button>
+            </>
           )}
           <button
             onClick={() => setActiveTab("chat")}
@@ -1454,10 +1498,14 @@ CREATE TABLE IF NOT EXISTS submissions (
         {profile && (
           <CreateMissionModal
             isOpen={showCreateMissionModal}
-            onClose={() => setShowCreateMissionModal(false)}
+            onClose={() => {
+              setShowCreateMissionModal(false);
+              setCreatingFromMap(false);
+            }}
             onSubmit={handleAddChallenge}
             userLat={userLat}
             userLng={userLng}
+            preFilledFromMap={creatingFromMap}
           />
         )}
 
@@ -1481,8 +1529,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           />
         )}
 
-        {/* Dynamic Location Indicator */}
-        <div className="bg-white/80 border border-brand-border rounded-2xl px-4 py-2.5 max-w-md mx-auto flex items-center justify-between text-xs font-medium text-brand-moss shadow-sm">
+        {/* Dynamic Location Indicator - HIDDEN (moved to header icon) */}
+        <div className="hidden">
           <div className="flex items-center gap-1.5">
             <Compass className="h-4 w-4 text-brand-terracotta" />
             <span className="text-[11px]">
@@ -1615,6 +1663,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               onDeleteMission={handleDeleteMission}
               onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
+              players={players}
             />
           )}
 
@@ -1665,6 +1714,10 @@ CREATE TABLE IF NOT EXISTS submissions (
               onApprove={handleApproveSubmission}
               onReject={handleRejectSubmission}
             />
+          )}
+
+          {activeTab === "logs" && profile?.role === "admin" && (
+            <ServerLogs />
           )}
 
           {activeTab === "chat" && (

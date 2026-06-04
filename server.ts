@@ -14,6 +14,8 @@ import {
   authRegisterPlayer,
   updatePlayerProfile,
   createScavengerChallenge,
+  deleteScavengerChallenge,
+  updateScavengerChallenge,
   submitHunterProof,
   deleteHunterSubmission,
   manuallyApproveSubmission,
@@ -21,6 +23,7 @@ import {
   databaseMode,
   supabaseErrorDescription,
   Submission,
+  ScavengerItem,
   saveChatMessage,
   getChatMessages,
   ChatMessage,
@@ -120,12 +123,79 @@ function saveImageToDisk(base64Data: string, mimeType: string): { url: string; f
   }
 }
 
+// ========== SERVER LOGGING SYSTEM ==========
+// In-memory circular buffer for server logs (last 1000 entries)
+const MAX_LOG_ENTRIES = 1000;
+interface LogEntry {
+  timestamp: string;
+  level: "log" | "error" | "warn" | "info";
+  message: string;
+}
+const logBuffer: LogEntry[] = [];
+
+// Capture console output
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+const originalInfo = console.info;
+
+const addLogEntry = (level: "log" | "error" | "warn" | "info", args: any[]) => {
+  const message = args.map(arg => {
+    if (typeof arg === "object") {
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    }
+    return String(arg);
+  }).join(" ");
+
+  const timestamp = new Date().toISOString().split("T")[1].split(".")[0]; // HH:MM:SS format
+  const entry: LogEntry = { timestamp, level, message };
+  
+  logBuffer.push(entry);
+  if (logBuffer.length > MAX_LOG_ENTRIES) {
+    logBuffer.shift(); // Remove oldest entry
+  }
+};
+
+console.log = (...args: any[]) => {
+  originalLog(...args);
+  addLogEntry("log", args);
+};
+
+console.error = (...args: any[]) => {
+  originalError(...args);
+  addLogEntry("error", args);
+};
+
+console.warn = (...args: any[]) => {
+  originalWarn(...args);
+  addLogEntry("warn", args);
+};
+
+console.info = (...args: any[]) => {
+  originalInfo(...args);
+  addLogEntry("info", args);
+};
+
 // 1. Database mode & error diagnostic status route for UI reporting
 app.get("/api/db-status", (req, res) => {
   res.json({
     mode: getDbMode(),
     error: supabaseErrorDescription
   });
+});
+
+// Server logs endpoints (admin only)
+app.get("/api/server-logs", (req, res) => {
+  res.json({ logs: logBuffer });
+});
+
+app.delete("/api/server-logs", (req, res) => {
+  logBuffer.length = 0;
+  res.json({ message: "Logs cleared" });
 });
 
 // App settings endpoints
@@ -344,17 +414,12 @@ app.delete("/api/challenges/:id", async (req, res) => {
     }
 
     // Delete from database
-    delete db.items[id];
+    const success = await deleteScavengerChallenge(id);
     
-    // Also delete associated submissions for this item
-    Object.keys(db.submissions).forEach((subId) => {
-      if (db.submissions[subId].itemId === id) {
-        delete db.submissions[subId];
-      }
-    });
+    if (!success) {
+      return res.status(500).json({ error: "Failed to delete mission" });
+    }
 
-    // Note: Changes are auto-persisted through the db system
-    // The local fallback handles this automatically
     res.json({ success: true, message: "Mission deleted successfully" });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to delete mission", details: err.message });
@@ -391,20 +456,25 @@ app.put("/api/challenges/:id", async (req, res) => {
       return res.status(403).json({ error: "You don't have permission to edit this mission" });
     }
 
-    // Update fields
-    if (title !== undefined) item.title = title;
-    if (description !== undefined) item.description = description;
-    if (points !== undefined) item.points = Number(points) || 10;
-    if (category !== undefined) item.category = category;
-    if (icon !== undefined) item.icon = icon;
-    if (lat !== undefined) item.lat = lat ? Number(lat) : null;
-    if (lng !== undefined) item.lng = lng ? Number(lng) : null;
-    if (radius !== undefined) item.radius = radius ? Number(radius) : null;
+    // Prepare updates
+    const updates: Partial<ScavengerItem> = {};
+    if (title !== undefined) updates.title = title;
+    if (description !== undefined) updates.description = description;
+    if (points !== undefined) updates.points = Number(points) || 10;
+    if (category !== undefined) updates.category = category;
+    if (icon !== undefined) updates.icon = icon;
+    if (lat !== undefined) updates.lat = lat ? Number(lat) : null;
+    if (lng !== undefined) updates.lng = lng ? Number(lng) : null;
+    if (radius !== undefined) updates.radius = radius ? Number(radius) : null;
 
     // Update in database
-    db.items[id] = item;
+    const updatedItem = await updateScavengerChallenge(id, updates);
     
-    res.json({ success: true, message: "Mission updated successfully", item });
+    if (!updatedItem) {
+      return res.status(500).json({ error: "Failed to update mission" });
+    }
+
+    res.json({ success: true, message: "Mission updated successfully", item: updatedItem });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to update mission", details: err.message });
   }
