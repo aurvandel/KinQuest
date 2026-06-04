@@ -71,13 +71,14 @@ docker compose exec -T db psql -U postgres -d postgres -c \
 
 echo "  • Removing test users..."
 docker compose exec -T db psql -U postgres -d postgres -c \
-  "DELETE FROM profiles WHERE username LIKE 'player_%' OR username LIKE 'spike_%' OR username LIKE 'chattester_%' OR username LIKE 'endurance_%' OR username LIKE 'testplayer%';" \
+  "DELETE FROM profiles WHERE username LIKE 'player_%' OR username LIKE 'spike_%' OR username LIKE 'chattester_%' OR username LIKE 'endurance_%' OR username LIKE 'testplayer%' OR username LIKE 'admin_test%';" \
   2>/dev/null || echo "  • Test user cleanup may have encountered an issue"
 
 # Reset admin settings to defaults
 echo "Resetting admin settings..."
-cat > settings.json << 'EOF'
-{
+
+# Default settings object
+DEFAULT_SETTINGS='{
   "name": "KinQuest",
   "icon": null,
   "defaultLat": 41.9076,
@@ -90,8 +91,29 @@ cat > settings.json << 'EOF'
   "allowForceSubmit": false,
   "imageCompressionMaxDim": 800,
   "imageCompressionQuality": 0.7
-}
-EOF
+}'
+
+# Write default settings to file
+echo "$DEFAULT_SETTINGS" > settings.json
+
+# Try to reset settings via API if server is running
+echo "Attempting to reset settings via API..."
+if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+  echo "  ✓ Server is running, resetting settings via API..."
+  curl -X POST http://localhost:3000/api/settings \
+    -H "Content-Type: application/json" \
+    -d "$DEFAULT_SETTINGS" \
+    2>/dev/null || echo "  ⚠ Settings API call failed (server may not be ready yet)"
+else
+  echo "  ℹ Server not running, settings will be loaded from file on next start"
+fi
+
+# Also reset db.json local fallback database (remove test users, but keep structure)
+echo "Resetting local database (db.json)..."
+# Use jq to filter out test users created during tests
+if [ -f db.json ]; then
+  jq 'del(.users[] | select(.username | test("player_|spike_|chattester_|endurance_|testplayer|admin_test")))' db.json > db.json.tmp && mv db.json.tmp db.json 2>/dev/null || true
+fi
 
 # Clear uploads directory
 echo "Clearing uploads directory..."
@@ -100,6 +122,10 @@ rm -rf uploads/* 2>/dev/null || true
 echo ""
 echo -e "${GREEN}✅ Cleanup complete!${NC}"
 echo "Test data has been removed from the database"
+echo ""
+echo "📝 Settings have been reset to defaults in settings.json"
+echo "⚠️  ${YELLOW}If the server is running, restart it to load fresh settings:${NC}"
+echo "    pkill -f 'npm run dev' && npm run dev"
 echo ""
 echo "Statistics:"
 docker compose exec -T db psql -U postgres -d postgres -c \

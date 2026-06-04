@@ -11,9 +11,12 @@ import path from "path";
  */
 
 const PASSWORDS_FILE = path.join(process.cwd(), ".admin-passwords.json");
+const ADMIN_SESSIONS_FILE = path.join(process.cwd(), ".admin-sessions.json");
 const SALT_ROUNDS = 12;
 const HASH_ITERATIONS = 100000;
 const HASH_ALGORITHM = "sha256";
+const MAX_CONCURRENT_SESSIONS = 2;
+const SESSION_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export interface AdminPassword {
   id: string;
@@ -29,6 +32,50 @@ export interface PasswordStoreData {
   adminId: string;
   passwords: AdminPassword[];
   lastModified: string;
+}
+
+export interface AdminSession {
+  id: string;
+  createdAt: string;
+  lastActivityAt: string;
+  expiresAt: string;
+}
+
+export interface AdminSessionStore {
+  sessions: AdminSession[];
+  lastModified: string;
+}
+
+/**
+ * Load admin sessions from storage
+ */
+function loadSessionStore(): AdminSessionStore {
+  try {
+    if (fs.existsSync(ADMIN_SESSIONS_FILE)) {
+      const content = fs.readFileSync(ADMIN_SESSIONS_FILE, "utf-8");
+      const parsed = JSON.parse(content) as AdminSessionStore;
+      return parsed;
+    }
+  } catch (err) {
+    console.error("Failed to load admin session store:", err);
+  }
+
+  return {
+    sessions: [],
+    lastModified: new Date().toISOString()
+  };
+}
+
+/**
+ * Save admin sessions to storage
+ */
+function saveSessionStore(store: AdminSessionStore): void {
+  try {
+    fs.writeFileSync(ADMIN_SESSIONS_FILE, JSON.stringify(store, null, 2), "utf-8");
+    fs.chmodSync(ADMIN_SESSIONS_FILE, 0o600);
+  } catch (err) {
+    console.error("Failed to save admin session store:", err);
+  }
 }
 
 /**
@@ -261,7 +308,7 @@ export function getPasswordAuditLog(): {
       log.push({
         passwordId: pwd.id,
         action: "deactivated",
-        timestamp: pwd.lastModified || new Date().toISOString()
+        timestamp: new Date().toISOString()
       });
     }
   }
@@ -269,6 +316,90 @@ export function getPasswordAuditLog(): {
   return log.sort((a, b) => 
     new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
+}
+
+/**
+ * Create a new admin session
+ * Returns session ID if successful, throws error if max sessions reached
+ */
+export function createAdminSession(): AdminSession {
+  const store = loadSessionStore();
+  
+  // Remove expired sessions
+  const now = new Date();
+  store.sessions = store.sessions.filter(session => 
+    new Date(session.expiresAt).getTime() > now.getTime()
+  );
+  
+  // Check if we've hit max concurrent sessions
+  if (store.sessions.length >= MAX_CONCURRENT_SESSIONS) {
+    throw new Error(
+      `Maximum concurrent admin sessions (${MAX_CONCURRENT_SESSIONS}) reached. Please close an existing session.`
+    );
+  }
+  
+  // Create new session
+  const expiresAt = new Date(now.getTime() + SESSION_TIMEOUT_MS).toISOString();
+  const newSession: AdminSession = {
+    id: `sess_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+    createdAt: now.toISOString(),
+    lastActivityAt: now.toISOString(),
+    expiresAt
+  };
+  
+  store.sessions.push(newSession);
+  store.lastModified = now.toISOString();
+  saveSessionStore(store);
+  
+  console.log(`[ADMIN] New session created: ${newSession.id}`);
+  return newSession;
+}
+
+/**
+ * Update session activity timestamp
+ */
+export function updateAdminSessionActivity(sessionId: string): boolean {
+  const store = loadSessionStore();
+  const session = store.sessions.find(s => s.id === sessionId);
+  
+  if (!session) {
+    return false;
+  }
+  
+  session.lastActivityAt = new Date().toISOString();
+  store.lastModified = new Date().toISOString();
+  saveSessionStore(store);
+  return true;
+}
+
+/**
+ * End an admin session
+ */
+export function endAdminSession(sessionId: string): boolean {
+  const store = loadSessionStore();
+  const index = store.sessions.findIndex(s => s.id === sessionId);
+  
+  if (index === -1) {
+    return false;
+  }
+  
+  store.sessions.splice(index, 1);
+  store.lastModified = new Date().toISOString();
+  saveSessionStore(store);
+  
+  console.log(`[ADMIN] Session ended: ${sessionId}`);
+  return true;
+}
+
+/**
+ * Get active sessions count
+ */
+export function getActiveSessionsCount(): number {
+  const store = loadSessionStore();
+  const now = new Date();
+  return store.sessions.filter(session => 
+    new Date(session.expiresAt).getTime() > now.getTime()
+  ).length;
 }
 
 /**

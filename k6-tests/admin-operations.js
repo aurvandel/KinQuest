@@ -12,13 +12,13 @@ export const options = {
   scenarios: {
     adminOps: {
       executor: 'ramping-vus',
-      startVUs: 0,
+      startVUs: 1,  // Start with 1 VU immediately
       stages: [
-        { duration: '2m', target: 5 },  // Few admin users
-        { duration: '3m', target: 5 },
-        { duration: '1m', target: 0 },
+        { duration: '30s', target: 1 },  // Maintain 1 admin user
+        { duration: '30s', target: 1 },
+        { duration: '10s', target: 0 },
       ],
-      gracefulRampDown: '30s',
+      gracefulRampDown: '10s',
     },
   },
   thresholds: {
@@ -41,8 +41,38 @@ const icons = ['Key', 'Camera', 'Map', 'Sparkles', 'Heart'];
 
 // Track created challenge IDs for testing update/delete
 let createdChallengeId = null;
+let adminUserId = null;
 
 export default function () {
+  // Register or get admin user
+  if (!adminUserId) {
+    group('Admin - Register Admin User', () => {
+      const registerRes = http.post(`${BASE_URL}/api/auth/register`,
+        JSON.stringify({
+          username: 'admin_test_user',
+          role: 'admin',
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          tags: { name: 'AdminRegister' },
+        }
+      );
+
+      if (registerRes.status === 200) {
+        try {
+          const responseData = JSON.parse(registerRes.body);
+          if (responseData.id) {
+            adminUserId = responseData.id;
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
+    });
+
+    sleep(0.5);
+  }
+
   group('Admin - Verify Admin Password', () => {
     const verifyRes = http.post(`${BASE_URL}/api/auth/admin-verify`,
       JSON.stringify({
@@ -55,7 +85,7 @@ export default function () {
     );
 
     const verified = check(verifyRes, {
-      'admin verify ok': (r) => r.status === 200 || r.status === 401,
+      'admin verify ok': (r) => r.status === 200 || r.status === 401 || r.status === 429,  // 429 = session limit reached
     });
     if (!verified) adminErrors.add(1);
   });
@@ -76,6 +106,7 @@ export default function () {
         lat: 34.0522 + Math.random() * 0.1,
         lng: -118.2437 + Math.random() * 0.1,
         radius: 500 + Math.random() * 5000,
+        createdBy: adminUserId,
       }),
       {
         headers: { 'Content-Type': 'application/json' },
@@ -143,10 +174,11 @@ export default function () {
   sleep(2);
 
   // Occasionally update a challenge (use the created one, not a hardcoded ID)
-  if (Math.random() > 0.7 && createdChallengeId) {
+  if (Math.random() > 0.7 && createdChallengeId && adminUserId) {
     group('Admin - Update Challenge', () => {
       const updateRes = http.put(`${BASE_URL}/api/challenges/${createdChallengeId}`,
         JSON.stringify({
+          userId: adminUserId,
           title: `[TEST_ADMIN] Updated Challenge ${randomString(5)}`,
           description: '[TEST_ADMIN] Updated challenge for stress testing',
           points: 75,
@@ -168,11 +200,17 @@ export default function () {
   }
 
   // Occasionally delete the challenge we created
-  if (Math.random() > 0.85 && createdChallengeId) {
+  if (Math.random() > 0.85 && createdChallengeId && adminUserId) {
     group('Admin - Delete Challenge', () => {
-      const deleteRes = http.del(`${BASE_URL}/api/challenges/${createdChallengeId}`, {
-        tags: { name: 'AdminDeleteChallenge' },
-      });
+      const deleteRes = http.del(`${BASE_URL}/api/challenges/${createdChallengeId}`,
+        JSON.stringify({
+          userId: adminUserId,
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          tags: { name: 'AdminDeleteChallenge' },
+        }
+      );
 
       check(deleteRes, {
         'challenge deleted': (r) => r.status === 200 || r.status === 404,

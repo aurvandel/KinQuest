@@ -35,7 +35,7 @@ import {
   saveAppSettings,
   AppSettings
 } from "./db-manager";
-import { hasActiveAdminPassword, verifyAdminPassword } from "./password-manager";
+import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getActiveSessionsCount } from "./password-manager";
 
 dotenv.config();
 
@@ -305,14 +305,26 @@ app.post("/api/auth/admin-verify", (req, res) => {
 
   if (!hasEnvPassword && !hasStorePassword) {
     console.warn("Admin password verification is not configured; allowing admin login without enforcement.");
-    return res.json({ success: true, passwordConfigured: false });
+    return res.json({ success: true, passwordConfigured: false, sessionId: null });
   }
 
   if (!envMatch && !storeMatch) {
     return res.status(401).json({ error: "Invalid admin password" });
   }
 
-  res.json({ success: true, passwordConfigured: true });
+  // Password verified - create a new session
+  try {
+    const session = createAdminSession();
+    res.json({ success: true, passwordConfigured: true, sessionId: session.id });
+  } catch (err: any) {
+    // Session limit reached
+    const activeSessions = getActiveSessionsCount();
+    res.status(429).json({ 
+      error: err.message || "Admin session limit reached",
+      activeSessions,
+      maxSessions: 2
+    });
+  }
 });
 
 app.post("/api/auth/register", async (req, res) => {

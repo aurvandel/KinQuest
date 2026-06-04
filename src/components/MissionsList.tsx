@@ -78,11 +78,6 @@ export function MissionsList({
 
   const categories = ["All", ...Array.from(new Set(items.map((item) => item.category)))];
 
-  const filteredItems =
-    selectedCategory === "All"
-      ? items
-      : items.filter((item) => item.category === selectedCategory);
-
   const getMissionStatus = (itemId: string) => {
     const itemSubmissions = submissions.filter((sub) => sub.itemId === itemId && sub.userId === currentUserId);
     if (itemSubmissions.some((sub) => sub.status === "approved")) {
@@ -96,6 +91,26 @@ export function MissionsList({
     }
     return { status: "open", score: null };
   };
+
+  const filteredItems = (() => {
+    const base =
+      selectedCategory === "All"
+        ? items
+        : items.filter((item) => item.category === selectedCategory);
+
+    // Sort so completed (approved) missions move to the bottom
+    return base.sort((a, b) => {
+      const statusA = getMissionStatus(a.id).status;
+      const statusB = getMissionStatus(b.id).status;
+
+      // If one is approved and the other isn't, approved goes to the bottom
+      if (statusA === "approved" && statusB !== "approved") return 1;
+      if (statusA !== "approved" && statusB === "approved") return -1;
+
+      // Otherwise maintain original order
+      return 0;
+    });
+  })();
 
   const handleToggleExpand = (itemId: string) => {
     setExpandedItemId(expandedItemId === itemId ? null : itemId);

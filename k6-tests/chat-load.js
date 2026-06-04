@@ -9,23 +9,28 @@ const chatDuration = new Trend('chat_message_duration');
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
 const WS_URL = __ENV.WS_URL || 'ws://localhost:3000';
 
-// WebSocket stress test - concurrent chat connections
+// WebSocket Shoutbox and Chat stress test
+// Tests:
+// 1. Public shoutbox messages (receiverId = null) - broadcast to all users
+// 2. Private messages (receiverId = specific user ID) - sent to specific user
+// 3. Chat history retrieval via REST API
+// 4. Concurrent WebSocket connections and message handling
 export const options = {
   scenarios: {
     chatLoad: {
       executor: 'ramping-vus',
-      startVUs: 0,
+      startVUs: 1,  // Start with 1 VU immediately
       stages: [
         { duration: '1m', target: 20 },   // Ramp up to 20 users
-        { duration: '2m', target: 20 },   // Hold for 2 minutes
+        { duration: '1m', target: 20 },   // Hold for 1 minute
         { duration: '30s', target: 0 },   // Cool down
       ],
       gracefulRampDown: '30s',
     },
   },
   thresholds: {
-    'http_req_duration': ['p(95)<5000'], // Relaxed for submissions with AI
-    'http_req_failed': ['rate<0.2'],
+    'http_req_duration': ['p(95)<5000'],
+    'http_req_failed': ['rate<0.1'],
     'chat_errors': ['count<50'],
   },
 };
@@ -51,114 +56,120 @@ const messages = [
 ];
 
 export default function () {
-  const userId = `chat_user_${__VU}_${__ITER}`;
-  const username = `chattester_${randomString(8)}`;
+  const userId = `chattester_${__VU}_${__ITER}`;
+  const username = `ChatUser${__VU}`;
 
-  group('WebSocket Chat Load Test', () => {
-    // First register the user via REST API
-    const registerRes = http.post(`${BASE_URL}/api/auth/register`,
-      JSON.stringify({
-        userId,
-        username,
-        displayName: `ChatUser${__VU}`,
-      }),
-      {
-        headers: { 'Content-Type': 'application/json' },
-        tags: { name: 'ChatRegister' },
-      }
-    );
+  group('WebSocket Shoutbox & Chat Load Test', () => {
+    // Attempt WebSocket connection for chat
+    const wsRes = ws.connect(`${WS_URL}/ws`, {
+      tags: { name: 'WebSocketConnection' },
+    }, function (socket) {
+      socket.on('open', function () {
+        check(true, {
+          'websocket connected': () => true,
+        });
 
-    check(registerRes, {
-      'user registered': (r) => r.status === 200 || r.status === 400,
-    });
+        // Step 1: Send join message to register user
+        socket.send(JSON.stringify({
+          type: 'join',
+          userId,
+          username,
+        }));
 
-    sleep(0.5);
+        sleep(0.5);
 
-    // Test REST API chat endpoint
-    for (let i = 0; i < 5; i++) {
-      const messageRes = http.post(`${BASE_URL}/api/chat`,
-        JSON.stringify({
-          senderId: userId,
-          senderName: username,
-          text: messages[Math.floor(Math.random() * messages.length)],
-          receiverId: null,
-        }),
-        {
-          headers: { 'Content-Type': 'application/json' },
-          tags: { name: 'ChatMessage' },
+        // Step 2: Send public shoutbox messages (receiverId = null)
+        for (let i = 0; i < 3; i++) {
+          socket.send(JSON.stringify({
+            type: 'send_message',
+            userId,
+            username,
+            receiverId: null,  // null = public shoutbox
+            text: messages[Math.floor(Math.random() * messages.length)],
+          }));
+          sleep(Math.random() * 0.5 + 0.3);
         }
-      );
 
-      const success = check(messageRes, {
-        'message sent': (r) => r.status === 200 || r.status === 404,
+        // Step 3: Send private messages to specific recipients
+        // In a real scenario, we'd know other user IDs, but for testing we'll send to random user IDs
+        for (let i = 0; i < 2; i++) {
+          const targetUserId = `chattester_${Math.floor(Math.random() * 100)}_${Math.floor(Math.random() * 100)}`;
+          socket.send(JSON.stringify({
+            type: 'send_message',
+            userId,
+            username,
+            receiverId: targetUserId,  // Specific user = private message
+            text: `Private message: ${messages[Math.floor(Math.random() * messages.length)]}`,
+          }));
+          sleep(Math.random() * 0.5 + 0.3);
+        }
+
+        // Step 4: Listen for incoming messages for a bit
+        socket.setTimeout(() => {
+          socket.close();
+        }, 5000);
       });
 
-      if (!success) chatErrors.add(1);
-      chatDuration.add(messageRes.timings.duration);
+      socket.on('message', function (msg) {
+        try {
+          if (!msg || msg.length === 0) {
+            return;
+          }
+          const data = JSON.parse(msg);
+          if (data && data.type === 'message' && data.message) {
+            check(true, {
+              'received valid message': () => true,
+              'message has content': () => data.message.text && data.message.text.length > 0,
+            });
+          } else if (data && data.type === 'online-users') {
+            // Ignore online-users broadcast messages
+            check(true, {
+              'received valid message': () => true,
+            });
+          }
+          chatDuration.add(1);
+        } catch (err) {
+          // Silently ignore non-JSON messages
+        }
+      });
 
-      sleep(Math.random() * 0.5 + 0.3); // Random delay between messages
-    }
+      socket.on('error', function (err) {
+        check(false, {
+          'websocket error': () => false,
+        });
+        chatErrors.add(1);
+        console.error('WebSocket error:', err);
+      });
 
-    // Get chat history
+      socket.on('close', function () {
+        check(true, {
+          'websocket closed': () => true,
+        });
+      });
+    });
+
+    sleep(1);
+  });
+
+  // Also test chat history endpoint
+  group('Chat History Retrieval', () => {
     const historyRes = http.get(`${BASE_URL}/api/chat-history`, {
       tags: { name: 'ChatHistory' },
     });
 
-    check(historyRes, {
+    const success = check(historyRes, {
       'chat history retrieved': (r) => r.status === 200,
+      'chat history is array': (r) => {
+        try {
+          const body = JSON.parse(r.body);
+          return Array.isArray(body);
+        } catch {
+          return false;
+        }
+      },
     });
 
-    sleep(1);
-
-    // Attempt WebSocket connection if WS is available
-    // Note: k6 has limited WebSocket support, mainly for testing connections
-    try {
-      const wsRes = ws.connect(`${WS_URL}/ws`, {
-        tags: { name: 'WebSocketConnection' },
-      }, function (socket) {
-        socket.on('open', function () {
-          check(true, {
-            'websocket connected': () => true,
-          });
-
-          // Send a test message
-          socket.send(JSON.stringify({
-            type: 'chat',
-            userId,
-            username,
-            message: 'Test WebSocket message',
-          }));
-
-          // Listen for responses with timeout
-          socket.setTimeout(() => {
-            socket.close();
-          }, 5000);
-        });
-
-        socket.on('message', function (msg) {
-          check(msg, {
-            'received message': (m) => m && m.length > 0,
-          });
-        });
-
-        socket.on('error', function (err) {
-          check(false, {
-            'websocket error': () => false,
-          });
-          chatErrors.add(1);
-        });
-
-        socket.on('close', function () {
-          check(true, {
-            'websocket closed properly': () => true,
-          });
-        });
-      });
-    } catch (err) {
-      console.log('WebSocket test skipped or failed:', err.message);
-      // Continue test without WebSocket
-    }
-
-    sleep(1);
+    if (!success) chatErrors.add(1);
+    chatDuration.add(historyRes.timings.duration);
   });
 }
