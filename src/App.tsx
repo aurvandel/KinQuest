@@ -24,6 +24,7 @@ import {
   getQueueStatusText,
   PendingSubmission,
 } from "./utils/submissionRetryQueue";
+import { useMeshNetwork } from "./utils/useMeshNetwork";
 
 import {
   Flame,
@@ -147,6 +148,80 @@ export default function App() {
 
   // Database connection state
   const [dbError, setDbError] = useState<boolean>(false);
+
+  // Mesh Network states
+  const [meshNetworkEnabled, setMeshNetworkEnabled] = useState(true);
+  const [meshConnectedPeers, setMeshConnectedPeers] = useState<any[]>([]);
+  const [meshSyncStatus, setMeshSyncStatus] = useState({
+    isSyncing: false,
+    lastSyncTime: 0,
+    pendingCount: 0,
+    failedCount: 0
+  });
+
+  // Initialize mesh network
+  const {
+    isInitialized: meshInitialized,
+    meshEnabled,
+    connectedPeers,
+    syncStatus,
+    sendMessage: sendMeshMessage,
+    queueSubmission,
+    getQueuedSubmissions,
+    manualSync: meshManualSync,
+    getSyncReport,
+    getPeers
+  } = useMeshNetwork({
+    username: profile?.username || "Guest",
+    enabled: meshNetworkEnabled,
+    onMessage: (msg) => {
+      if (msg.type === "chat") {
+        console.log("[Mesh] Received chat message:", msg.payload);
+        // Add to chat messages
+        setChatMessages(prev => [...prev, msg.payload]);
+      } else if (msg.type === "submission") {
+        console.log("[Mesh] Received submission from peer:", msg.payload);
+      }
+    },
+    onPeerConnected: (peer) => {
+      console.log(`[Mesh] Peer connected: ${peer.username}`);
+      setMeshConnectedPeers(prev => [...prev, peer]);
+    },
+    onPeerDisconnected: (peer) => {
+      console.log(`[Mesh] Peer disconnected: ${peer.peerId}`);
+      setMeshConnectedPeers(prev => prev.filter(p => p.peerId !== peer.peerId));
+    },
+    onSyncProgress: (progress) => {
+      console.log(`[Mesh] Sync progress: ${progress.completed}/${progress.submissions.length}`);
+      setMeshSyncStatus(prev => ({
+        ...prev,
+        isSyncing: true,
+        pendingCount: progress.submissions.length - progress.completed
+      }));
+    },
+    onSyncComplete: (results) => {
+      console.log("[Mesh] Sync complete:", results);
+      const successful = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
+      setMeshSyncStatus(prev => ({
+        ...prev,
+        isSyncing: false,
+        lastSyncTime: Date.now(),
+        failedCount: failed,
+        pendingCount: 0
+      }));
+      if (failed > 0) {
+        console.warn(`[Mesh] ${failed} submissions failed to sync`);
+      }
+    },
+    onSyncError: (error) => {
+      console.error("[Mesh] Sync error:", error);
+      setMeshSyncStatus(prev => ({
+        ...prev,
+        isSyncing: false
+      }));
+    }
+  });
 
   // Expanded card linkage
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
@@ -571,13 +646,61 @@ CREATE TABLE IF NOT EXISTS submissions (
   }, [activeTab]);
 
   const handleSendMessage = (text: string, receiverId: string | null) => {
-    console.log("handleSendMessage called:", { text, receiverId, hasProfile: !!profile, socketState: socket?.readyState });
+    console.log("handleSendMessage called:", { text, receiverId, hasProfile: !!profile, socketState: socket?.readyState, onLine: navigator.onLine });
     
     if (!profile) {
       console.error("Cannot send message: profile is null");
       return;
     }
-    
+
+    // Try online path first
+    if (navigator.onLine && socket && socket.readyState === WebSocket.OPEN) {
+      const message = {
+        type: "send_message",
+        userId: profile.id,
+        username: profile.username,
+        receiverId,
+        text
+      };
+      
+      console.log("📤 Sending message via WebSocket:", message);
+      socket.send(JSON.stringify(message));
+      return;
+    }
+
+    // Offline path: try mesh network
+    if (!navigator.onLine && meshEnabled && connectedPeers.length > 0) {
+      const messagePayload: ChatMessage = {
+        id: `msg_${Date.now()}`,
+        senderId: profile.id,
+        senderName: profile.username,
+        text: text,
+        receiverId: receiverId || null,
+        createdAt: new Date().toISOString(),
+        isRead: true
+      };
+
+      try {
+        sendMeshMessage(
+          "chat",
+          messagePayload,
+          receiverId || undefined
+        );
+        // Add to local state immediately
+        setChatMessages(prev => [...prev, messagePayload]);
+        console.log("📡 Message sent via mesh network");
+        return;
+      } catch (error) {
+        console.error("[Mesh] Failed to send message via mesh:", error);
+      }
+    }
+
+    // Fallback: retry later if socket not ready
+    if (!navigator.onLine) {
+      console.warn("You are offline and mesh network is not available. Message not sent.");
+      return;
+    }
+
     if (!socket) {
       console.warn("Socket not ready yet, will retry in 500ms");
       setTimeout(() => handleSendMessage(text, receiverId), 500);
@@ -589,17 +712,6 @@ CREATE TABLE IF NOT EXISTS submissions (
       setTimeout(() => handleSendMessage(text, receiverId), 500);
       return;
     }
-    
-    const message = {
-      type: "send_message",
-      userId: profile.id,
-      username: profile.username,
-      receiverId,
-      text
-    };
-    
-    console.log("📤 Sending message via WebSocket:", message);
-    socket.send(JSON.stringify(message));
   };
 
   // Admin action handlers for chat moderation
@@ -1039,6 +1151,40 @@ CREATE TABLE IF NOT EXISTS submissions (
     setIsSubmittingMap((prev) => ({ ...prev, [itemId]: true }));
 
     try {
+      // Check if we're offline
+      if (!navigator.onLine) {
+        // Offline flow: queue the submission locally
+        console.log("[Offline] Queuing submission for later sync");
+        
+        const queued = await queueSubmission(
+          profile.id,
+          profile.username,
+          itemId,
+          base64Image,
+          userLat || undefined,
+          userLng || undefined
+        );
+
+        setSubmitErrorMap((prev) => ({
+          ...prev,
+          [itemId]: "📡 Offline: Photo saved locally. Will verify when you're back online."
+        }));
+
+        // Attempt to share with mesh peers if available
+        if (meshEnabled && connectedPeers.length > 0) {
+          try {
+            await sendMeshMessage("submission", queued);
+            console.log("[Mesh] Shared submission with peers");
+          } catch (error) {
+            console.warn("[Mesh] Could not share submission with peers:", error);
+          }
+        }
+
+        setIsSubmittingMap((prev) => ({ ...prev, [itemId]: false }));
+        return;
+      }
+
+      // Online flow: send to server immediately (existing code)
       const response = await fetch("/api/verify-submission", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1882,6 +2028,41 @@ CREATE TABLE IF NOT EXISTS submissions (
           </button>
         </div>
       </header>
+
+      {/* Offline & Mesh Network Status Banners */}
+      {!navigator.onLine && (
+        <div className="bg-red-100 border-b border-red-300 text-red-700 px-3 sm:px-8 py-2 text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>⚠️ You are offline.</span>
+            {meshEnabled && connectedPeers.length > 0 && (
+              <span className="ml-2 text-green-700 bg-green-100 px-2 py-1 rounded text-[11px] font-bold">
+                ✓ {connectedPeers.length} mesh peer{connectedPeers.length !== 1 ? 's' : ''} connected
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Mesh Sync Progress Banner */}
+      {meshSyncStatus.isSyncing && (
+        <div className="bg-blue-100 border-b border-blue-300 text-blue-700 px-3 sm:px-8 py-2 text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+            <span>⤵️ Syncing {meshSyncStatus.pendingCount} submission{meshSyncStatus.pendingCount !== 1 ? 's' : ''}...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Sync Failure Banner */}
+      {!meshSyncStatus.isSyncing && meshSyncStatus.failedCount > 0 && (
+        <div className="bg-yellow-100 border-b border-yellow-300 text-yellow-700 px-3 sm:px-8 py-2 text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>⚠️ {meshSyncStatus.failedCount} submission{meshSyncStatus.failedCount !== 1 ? 's' : ''} failed to sync</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
