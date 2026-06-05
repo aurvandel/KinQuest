@@ -86,6 +86,8 @@ export interface AppSettings {
   allowForceSubmit?: boolean;
   imageCompressionMaxDim?: number;
   imageCompressionQuality?: number;
+  showTitle?: boolean;
+  showLogo?: boolean;
 }
 
 

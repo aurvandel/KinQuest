@@ -45,6 +45,10 @@ interface AdminSettingsModalProps {
   onImageCompressionMaxDimChange: (value: number) => void;
   imageCompressionQualityInput: number;
   onImageCompressionQualityChange: (value: number) => void;
+  showTitleInput: boolean;
+  onShowTitleChange: (value: boolean) => void;
+  showLogoInput: boolean;
+  onShowLogoChange: (value: boolean) => void;
   storageInfo: StorageInfo | null;
   isLoading: boolean;
   saveSuccess: boolean;
@@ -85,6 +89,10 @@ export function AdminSettingsModal({
   onImageCompressionMaxDimChange,
   imageCompressionQualityInput,
   onImageCompressionQualityChange,
+  showTitleInput,
+  onShowTitleChange,
+  showLogoInput,
+  onShowLogoChange,
   storageInfo,
   isLoading,
   saveSuccess,
@@ -197,6 +205,37 @@ export function AdminSettingsModal({
                   <p className="text-[9px] text-[#8c8c82]">PNG, JPG (under 2MB)</p>
                 </div>
               </div>
+            </div>
+
+            {/* Branding Visibility Toggles */}
+            <div className="space-y-2 pt-2 border-t border-[#e5e5dd]">
+              <p className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider">Header Branding Display</p>
+              
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showTitleInput}
+                  onChange={(e) => onShowTitleChange(e.target.checked)}
+                  className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                />
+                <div className="leading-none">
+                  <span className="text-xs font-bold text-[#5a5a40] block">Show Game Title</span>
+                  <span className="text-[9px] text-[#8c8c82]">Display the app name in the header. When both title and logo are shown, they'll merge together visually.</span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showLogoInput}
+                  onChange={(e) => onShowLogoChange(e.target.checked)}
+                  className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+                />
+                <div className="leading-none">
+                  <span className="text-xs font-bold text-[#5a5a40] block">Show Branding Logo</span>
+                  <span className="text-[9px] text-[#8c8c82]">Display the custom logo icon in the header. When both title and logo are shown, they'll merge together visually.</span>
+                </div>
+              </label>
             </div>
           </div>
 

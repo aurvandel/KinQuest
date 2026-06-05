@@ -205,7 +205,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality } = req.body;
+  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -221,7 +221,9 @@ app.post("/api/settings", (req, res) => {
     activeInviteCode: activeInviteCode !== undefined ? String(activeInviteCode).trim().toLowerCase() : undefined,
     inviteRequired: inviteRequired !== undefined ? !!inviteRequired : undefined,
     imageCompressionMaxDim: imageCompressionMaxDim !== undefined ? Number(imageCompressionMaxDim) : undefined,
-    imageCompressionQuality: imageCompressionQuality !== undefined ? Number(imageCompressionQuality) : undefined
+    imageCompressionQuality: imageCompressionQuality !== undefined ? Number(imageCompressionQuality) : undefined,
+    showTitle: showTitle !== undefined ? !!showTitle : undefined,
+    showLogo: showLogo !== undefined ? !!showLogo : undefined
   };
   saveAppSettings(updated);
   res.json({ success: true, settings: updated });

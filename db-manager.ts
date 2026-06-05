@@ -1102,6 +1102,8 @@ export interface AppSettings {
   allowForceSubmit?: boolean;
   imageCompressionMaxDim?: number;
   imageCompressionQuality?: number;
+  showTitle?: boolean;
+  showLogo?: boolean;
 }
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
@@ -1113,7 +1115,7 @@ export function getAppSettings(): AppSettings {
       const parsed = JSON.parse(content);
       return {
         name: parsed.name || "KinQuest",
-        icon: parsed.icon || null,
+        icon: parsed.icon || "/kinquest_logo.png",
         defaultLat: Number(parsed.defaultLat) || 41.9076,
         defaultLng: Number(parsed.defaultLng) || -111.3800,
         defaultRadius: Number(parsed.defaultRadius) || 200,
@@ -1123,7 +1125,9 @@ export function getAppSettings(): AppSettings {
         aiVerificationEnabled: parsed.aiVerificationEnabled !== undefined ? !!parsed.aiVerificationEnabled : true,
         allowForceSubmit: parsed.allowForceSubmit !== undefined ? !!parsed.allowForceSubmit : false,
         imageCompressionMaxDim: Number(parsed.imageCompressionMaxDim) || 800,
-        imageCompressionQuality: Number(parsed.imageCompressionQuality) || 0.7
+        imageCompressionQuality: Number(parsed.imageCompressionQuality) || 0.7,
+        showTitle: parsed.showTitle !== undefined ? !!parsed.showTitle : true,
+        showLogo: parsed.showLogo !== undefined ? !!parsed.showLogo : true
       };
     }
   } catch (err) {
@@ -1131,7 +1135,7 @@ export function getAppSettings(): AppSettings {
   }
   return {
     name: "KinQuest",
-    icon: null,
+    icon: "/kinquest_logo.png",
     defaultLat: 41.9076,
     defaultLng: -111.3800,
     defaultRadius: 2500,
@@ -1141,7 +1145,9 @@ export function getAppSettings(): AppSettings {
     aiVerificationEnabled: true,
     allowForceSubmit: false,
     imageCompressionMaxDim: 800,
-    imageCompressionQuality: 0.7
+    imageCompressionQuality: 0.7,
+    showTitle: true,
+    showLogo: true
   };
 }
 

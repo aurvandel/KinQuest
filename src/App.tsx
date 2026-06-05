@@ -82,6 +82,8 @@ export default function App() {
   const [adminImageCompressionMaxDimInput, setAdminImageCompressionMaxDimInput] = useState(800);
   const [adminImageCompressionQualityInput, setAdminImageCompressionQualityInput] = useState(0.7);
   const [storageInfo, setStorageInfo] = useState<any>(null);
+  const [adminShowTitleInput, setAdminShowTitleInput] = useState(true);
+  const [adminShowLogoInput, setAdminShowLogoInput] = useState(true);
 
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
@@ -501,6 +503,8 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminInviteRequiredInput(settings.inviteRequired !== false);
       setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
       setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
+      setAdminShowTitleInput(settings.showTitle !== false);
+      setAdminShowLogoInput(settings.showLogo !== false);
       initializedAdminFormRef.current = true;
     } else if (!adminPanelOpen) {
       // Reset the flag when panel closes so it can initialize again when reopened
@@ -610,7 +614,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
           inviteRequired: adminInviteRequiredInput,
           imageCompressionMaxDim: Number(adminImageCompressionMaxDimInput) || 800,
-          imageCompressionQuality: Number(adminImageCompressionQualityInput) || 0.7
+          imageCompressionQuality: Number(adminImageCompressionQualityInput) || 0.7,
+          showTitle: adminShowTitleInput,
+          showLogo: adminShowLogoInput
         })
       });
       if (res.ok) {
@@ -649,7 +655,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           activeInviteCode: "stewart-test",
           inviteRequired: true,
           imageCompressionMaxDim: 800,
-          imageCompressionQuality: 0.7
+          imageCompressionQuality: 0.7,
+          showTitle: true,
+          showLogo: true
         })
       });
       if (res.ok) {
@@ -667,6 +675,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminInviteRequiredInput(true);
         setAdminImageCompressionMaxDimInput(800);
         setAdminImageCompressionQualityInput(0.7);
+        setAdminShowTitleInput(true);
+        setAdminShowLogoInput(true);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
       } else {
@@ -1212,19 +1222,40 @@ CREATE TABLE IF NOT EXISTS submissions (
       <header className="flex flex-col border-b border-brand-border bg-[#f5f5f0]/95 backdrop-blur-md sticky top-0 z-[1000] shrink-0">
         {/* Header Top Row */}
         <div className="h-16 px-3 sm:px-8 flex items-center justify-between">
-          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
-            <div className="w-8 h-8 bg-[#5a5a40] rounded-lg flex items-center justify-center overflow-hidden shrink-0">
-              {settings.icon ? (
-                <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
-              )}
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-xs sm:text-sm md:text-base font-serif text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[80px] sm:max-w-[150px] md:max-w-[200px]">
-                {settings.name}
-              </h1>
-            </div>
+          <div className="flex items-center min-w-0">
+            {/* Logo and Title merged when both are shown */}
+            {settings.showLogo && settings.showTitle ? (
+              <div className="flex items-center space-x-2 sm:space-x-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#5a5a40] rounded-xl flex items-center justify-center overflow-hidden shrink-0 shadow-md">
+                  {settings.icon ? (
+                    <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-sm sm:text-base md:text-lg font-serif text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[100px] sm:max-w-[180px] md:max-w-[240px]">
+                    {settings.name}
+                  </h1>
+                </div>
+              </div>
+            ) : settings.showLogo ? (
+              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#5a5a40] rounded-xl flex items-center justify-center overflow-hidden shrink-0 shadow-md">
+                {settings.icon ? (
+                  <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
+                )}
+              </div>
+            ) : settings.showTitle ? (
+              <div className="min-w-0">
+                <h1 className="text-sm sm:text-base md:text-lg font-serif text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[100px] sm:max-w-[180px] md:max-w-[240px]">
+                  {settings.name}
+                </h1>
+              </div>
+            ) : (
+              <div className="w-8 h-8 sm:w-10 sm:h-10"></div>
+            )}
           </div>
 
           <div className="flex items-center space-x-2 sm:space-x-4 lg:space-x-6">
@@ -1507,6 +1538,10 @@ CREATE TABLE IF NOT EXISTS submissions (
             onImageCompressionMaxDimChange={setAdminImageCompressionMaxDimInput}
             imageCompressionQualityInput={adminImageCompressionQualityInput}
             onImageCompressionQualityChange={setAdminImageCompressionQualityInput}
+            showTitleInput={adminShowTitleInput}
+            onShowTitleChange={setAdminShowTitleInput}
+            showLogoInput={adminShowLogoInput}
+            onShowLogoChange={setAdminShowLogoInput}
             storageInfo={storageInfo}
             isLoading={isAdminSaving}
             saveSuccess={adminSaveSuccess}
@@ -1723,14 +1758,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         </button>
       )}
 
-      {/* Footer credits bar */}
-      <footer className="h-12 bg-[#5a5a40] text-white/60 px-4 sm:px-8 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] font-bold shrink-0 mt-auto">
-        <span>Self-Hosted Instance: v2.0.0-stable</span>
-        <div className="hidden md:flex space-x-6">
-          <span>Real-time Dynamic Sync Active</span>
-          <span>Docker Node: {profile?.id.substring(0, 10)}</span>
-        </div>
-      </footer>
+
     </div>
   );
 }
