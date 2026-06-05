@@ -29,6 +29,8 @@ choco install k6
 - Photo submissions (AI verification)
 - Chat messages
 - Leaderboard access
+- Slideshow retrieval and viewing
+- Specific slideshow details
 
 **Run**:
 ```bash
@@ -87,6 +89,9 @@ k6 run k6-tests/endurance.js -e VU_COUNT=30 -e TEST_DURATION=1h
 - Updating game settings
 - Modifying challenges
 - Deleting challenges
+- Slideshow generation with AI
+- Slideshow retrieval (all users)
+- Specific slideshow detail view
 
 **Run**:
 ```bash
@@ -107,6 +112,27 @@ k6 run k6-tests/admin-operations.js -e ADMIN_PASSWORD=yourpassword
 ```bash
 k6 run k6-tests/chat-load.js
 ```
+
+### 6. Image Upload & Serving Test (`image-upload-serve.js`)
+**Purpose**: Tests image persistence and file serving under load
+**Load Profile**: Ramp up to 10 concurrent users
+**What it tests**:
+- Photo submission (saves images to disk)
+- Retrieval of submitted images via `/api/uploads/:filename`
+- Image caching headers and persistence
+- Concurrent image serving to multiple users
+- File system performance
+
+**Run**:
+```bash
+k6 run k6-tests/image-upload-serve.js
+```
+
+**Key features**:
+- Verifies images persist to disk after submission
+- Tests image serving endpoint with caching
+- Validates Cache-Control headers
+- Simulates multiple users accessing images concurrently
 
 ## Running Tests with Environment Variables
 

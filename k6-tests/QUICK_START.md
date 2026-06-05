@@ -6,11 +6,12 @@
 
 | Test | File | Purpose | Duration | VUs |
 |------|------|---------|----------|-----|
-| **Player Behavior** | `player-behavior.js` | Typical player activities | 30s-5m | 10-50 |
+| **Player Behavior** | `player-behavior.js` | Typical player activities + slideshows | 30s-5m | 10-50 |
 | **Spike Load** | `spike-load.js` | Sudden traffic spikes | 4m | 10→100→10 |
 | **Endurance** | `endurance.js` | Long-term stability | 10m-1h | 20+ |
-| **Admin Operations** | `admin-operations.js` | Admin-only features | 6m | 5 |
+| **Admin Operations** | `admin-operations.js` | Admin features + slideshow generation | 6m | 5 |
 | **Chat Load** | `chat-load.js` | Chat stress testing | 3.5m | 0→20 |
+| **Image Serving** | `image-upload-serve.js` | Photo persistence & file serving | 2.5m | 1→10 |
 
 ## Quick Start
 
@@ -69,12 +70,15 @@ npm run test:k6:endurance
 # Admin operations (5 admin VUs for 6 minutes)
 npm run test:k6:admin
 
+# Image upload & serving test (10 VUs for 2.5 minutes)
+npm run test:k6:images
+
 # All tests in sequence (complete suite)
 npm run test:k6:all
 
 # Interactive test runner
 npm run test:k6:runner
-# Then choose: smoke, player, spike, endurance, admin, all, help
+# Then choose: smoke, player, spike, endurance, admin, images, all, help
 ```
 
 ## CLI Usage Examples

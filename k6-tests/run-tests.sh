@@ -52,23 +52,34 @@ run_admin_ops() {
     -e ADMIN_PASSWORD="$ADMIN_PASSWORD"
 }
 
+run_image_upload() {
+  echo -e "${GREEN}📸 Running Image Upload & Serving Test${NC}"
+  
+  k6 run k6-tests/image-upload-serve.js \
+    -e BASE_URL="$BASE_URL"
+}
+
 run_all_tests() {
   echo -e "${GREEN}🚀 Running All Tests in Sequence${NC}"
   
   run_player_behavior
-  echo -e "${YELLOW}Test 1/4 complete - waiting 30s...${NC}"
+  echo -e "${YELLOW}Test 1/5 complete - waiting 30s...${NC}"
   sleep 30
   
   run_admin_ops
-  echo -e "${YELLOW}Test 2/4 complete - waiting 30s...${NC}"
+  echo -e "${YELLOW}Test 2/5 complete - waiting 30s...${NC}"
+  sleep 30
+  
+  run_image_upload
+  echo -e "${YELLOW}Test 3/5 complete - waiting 30s...${NC}"
   sleep 30
   
   run_endurance
-  echo -e "${YELLOW}Test 3/4 complete - waiting 30s...${NC}"
+  echo -e "${YELLOW}Test 4/5 complete - waiting 30s...${NC}"
   sleep 30
   
   run_spike_test
-  echo -e "${YELLOW}Test 4/4 complete${NC}"
+  echo -e "${YELLOW}Test 5/5 complete${NC}"
 }
 
 run_quick_smoke() {
@@ -90,6 +101,7 @@ COMMANDS:
   spike         Run spike load test
   endurance     Run endurance test (10m default)
   admin         Run admin operations test
+  images        Run image upload & serving test
   smoke         Quick 1-minute smoke test
   all           Run all tests in sequence
   help          Show this help message
@@ -153,6 +165,11 @@ case "$COMMAND" in
     shift
     for arg in "$@"; do export "$arg"; done
     run_admin_ops
+  images)
+    shift
+    for arg in "$@"; do export "$arg"; done
+    run_image_upload
+    ;;
     ;;
   smoke)
     shift

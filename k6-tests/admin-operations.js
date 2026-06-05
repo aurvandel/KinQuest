@@ -4,6 +4,7 @@ import { Trend, Counter } from 'k6/metrics';
 
 const adminOpDuration = new Trend('admin_op_duration');
 const adminErrors = new Counter('admin_errors');
+const slideshowGenerationDuration = new Trend('slideshow_generation_duration');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
 const ADMIN_PASSWORD = __ENV.ADMIN_PASSWORD || 'password';
@@ -42,6 +43,7 @@ const icons = ['Key', 'Camera', 'Map', 'Sparkles', 'Heart'];
 // Track created challenge IDs for testing update/delete
 let createdChallengeId = null;
 let adminUserId = null;
+let submissionIdForSlideshow = null;
 
 export default function () {
   // Register or get admin user
@@ -219,5 +221,99 @@ export default function () {
     });
 
     sleep(1);
+  }
+
+  sleep(1);
+
+  // Get slideshows (everyone can access this)
+  group('Admin - Get All Slideshows', () => {
+    const slideshowsRes = http.get(`${BASE_URL}/api/slideshows`, {
+      tags: { name: 'GetSlideshows' },
+    });
+
+    const slideshowsSuccess = check(slideshowsRes, {
+      'slideshows retrieved': (r) => r.status === 200,
+      'slideshows response valid': (r) => r.body && r.body.length > 0,
+    });
+
+    if (!slideshowsSuccess) adminErrors.add(1);
+    adminOpDuration.add(slideshowsRes.timings.duration);
+
+    // Extract a slideshow ID if available for retrieval test
+    if (slideshowsRes.status === 200) {
+      try {
+        const slideshows = JSON.parse(slideshowsRes.body);
+        if (Array.isArray(slideshows) && slideshows.length > 0) {
+          const slideshowId = slideshows[0].id;
+
+          sleep(0.5);
+
+          // Get specific slideshow details
+          group('Admin - Get Specific Slideshow', () => {
+            const specificRes = http.get(`${BASE_URL}/api/slideshows/${slideshowId}`, {
+              tags: { name: 'GetSpecificSlideshow' },
+            });
+
+            check(specificRes, {
+              'specific slideshow retrieved': (r) => r.status === 200 || r.status === 404,
+            });
+            adminOpDuration.add(specificRes.timings.duration);
+          });
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+  });
+
+  sleep(2);
+
+  // Occasionally generate a slideshow (simulating admin creating content)
+  if (Math.random() > 0.6) {
+    group('Admin - Generate Slideshow', () => {
+      // For this test, we'll generate a slideshow with mock submission IDs
+      // In real scenarios, these would be approved submission IDs from the database
+      const slideshowPayload = {
+        submissionIds: [
+          `submission_test_1_${randomString(4)}`,
+          `submission_test_2_${randomString(4)}`,
+          `submission_test_3_${randomString(4)}`,
+        ],
+        title: `[TEST_ADMIN] Slideshow ${randomString(5)} - ${new Date().toISOString().split('T')[0]}`,
+        description: `[TEST_ADMIN] Stress test slideshow for performance testing`,
+        createdBy: adminUserId,
+      };
+
+      const generateRes = http.post(
+        `${BASE_URL}/api/slideshow/generate`,
+        JSON.stringify(slideshowPayload),
+        {
+          headers: { 'Content-Type': 'application/json' },
+          tags: { name: 'GenerateSlideshow' },
+          timeout: '60s', // Slideshow generation with AI can take longer
+        }
+      );
+
+      const generateSuccess = check(generateRes, {
+        'slideshow generated': (r) => r.status === 200 || r.status === 400, // 400 for missing submissions is acceptable in load test
+      });
+
+      if (!generateSuccess) adminErrors.add(1);
+      slideshowGenerationDuration.add(generateRes.timings.duration);
+
+      // Extract slideshow ID if successful
+      if (generateRes.status === 200) {
+        try {
+          const slideshowData = JSON.parse(generateRes.body);
+          if (slideshowData.id) {
+            submissionIdForSlideshow = slideshowData.id;
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
+    });
+
+    sleep(2);
   }
 }

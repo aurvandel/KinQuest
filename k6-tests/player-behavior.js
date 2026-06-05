@@ -8,6 +8,7 @@ const challengesFetchDuration = new Trend('challenges_fetch_duration');
 const submissionDuration = new Trend('submission_duration');
 const chatMessageDuration = new Trend('chat_message_duration');
 const leaderboardDuration = new Trend('leaderboard_duration');
+const slideshowDuration = new Trend('slideshow_duration');
 const errorRate = new Counter('errors');
 
 // Configuration
@@ -191,6 +192,64 @@ export default function () {
     });
 
     if (!chatHistorySuccess) errorRate.add(1);
+  });
+
+  sleep(1);
+
+  group('Get Leaderboard', () => {
+    const leaderboardRes = http.get(`${BASE_URL}/api/game-state`, {
+      tags: { name: 'Leaderboard' },
+    });
+
+    const leaderboardSuccess = check(leaderboardRes, {
+      'leaderboard status is 200': (r) => r.status === 200,
+      'leaderboard has profiles': (r) => r.body && r.body.includes('profiles'),
+    });
+
+    leaderboardDuration.add(leaderboardRes.timings.duration);
+    if (!leaderboardSuccess) errorRate.add(1);
+  });
+
+  sleep(1);
+
+  // Retrieve available slideshows (simulating Scripts tab viewing)
+  group('Get Available Slideshows', () => {
+    const slideshowsRes = http.get(`${BASE_URL}/api/slideshows`, {
+      tags: { name: 'ViewSlideshows' },
+    });
+
+    const slideshowsSuccess = check(slideshowsRes, {
+      'slideshows status is 200': (r) => r.status === 200,
+      'slideshows response valid': (r) => r.body && r.body.length >= 0, // Can be empty array
+    });
+
+    slideshowDuration.add(slideshowsRes.timings.duration);
+    if (!slideshowsSuccess) errorRate.add(1);
+
+    // Occasionally fetch a specific slideshow
+    if (slideshowsRes.status === 200 && Math.random() > 0.6) {
+      try {
+        const slideshows = JSON.parse(slideshowsRes.body);
+        if (Array.isArray(slideshows) && slideshows.length > 0) {
+          const randomSlideshow = slideshows[Math.floor(Math.random() * slideshows.length)];
+
+          sleep(0.5);
+
+          group('Get Specific Slideshow', () => {
+            const specificRes = http.get(`${BASE_URL}/api/slideshows/${randomSlideshow.id}`, {
+              tags: { name: 'GetSlideshow' },
+            });
+
+            check(specificRes, {
+              'specific slideshow retrieved': (r) => r.status === 200 || r.status === 404,
+            });
+            slideshowDuration.add(specificRes.timings.duration);
+          });
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
   });
 
   sleep(2);
