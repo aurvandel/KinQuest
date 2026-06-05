@@ -86,6 +86,13 @@ export default function App() {
   const [adminShowTitleInput, setAdminShowTitleInput] = useState(true);
   const [adminShowLogoInput, setAdminShowLogoInput] = useState(true);
 
+  // Admin password change states
+  const [adminCurrentPasswordInput, setAdminCurrentPasswordInput] = useState("");
+  const [adminNewPasswordInput, setAdminNewPasswordInput] = useState("");
+  const [adminConfirmPasswordInput, setAdminConfirmPasswordInput] = useState("");
+  const [adminPasswordChangeSuccess, setAdminPasswordChangeSuccess] = useState(false);
+  const [adminPasswordChangeError, setAdminPasswordChangeError] = useState<string | null>(null);
+
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -739,6 +746,66 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminSaveError(err.message || "Network error resetting settings");
     } finally {
       setIsAdminSaving(false);
+    }
+  };
+
+  const handleAdminPasswordChange = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    
+    // Clear previous messages
+    setAdminPasswordChangeError(null);
+    setAdminPasswordChangeSuccess(false);
+
+    // Validation
+    if (!adminCurrentPasswordInput.trim()) {
+      setAdminPasswordChangeError("Current password is required");
+      return;
+    }
+    if (!adminNewPasswordInput.trim()) {
+      setAdminPasswordChangeError("New password is required");
+      return;
+    }
+    if (!adminConfirmPasswordInput.trim()) {
+      setAdminPasswordChangeError("Password confirmation is required");
+      return;
+    }
+    if (adminNewPasswordInput !== adminConfirmPasswordInput) {
+      setAdminPasswordChangeError("New passwords do not match");
+      return;
+    }
+    if (adminNewPasswordInput.length < 6) {
+      setAdminPasswordChangeError("New password must be at least 6 characters");
+      return;
+    }
+    if (adminCurrentPasswordInput === adminNewPasswordInput) {
+      setAdminPasswordChangeError("New password must be different from current password");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/admin/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: adminCurrentPasswordInput,
+          newPassword: adminNewPasswordInput
+        })
+      });
+
+      if (res.ok) {
+        setAdminPasswordChangeSuccess(true);
+        // Clear form
+        setAdminCurrentPasswordInput("");
+        setAdminNewPasswordInput("");
+        setAdminConfirmPasswordInput("");
+        // Clear success message after 3 seconds
+        setTimeout(() => setAdminPasswordChangeSuccess(false), 3000);
+      } else {
+        const errData = await res.json();
+        setAdminPasswordChangeError(errData.error || "Failed to change password");
+      }
+    } catch (err: any) {
+      setAdminPasswordChangeError(err.message || "Network error changing password");
     }
   };
 
@@ -1451,14 +1518,14 @@ CREATE TABLE IF NOT EXISTS submissions (
         <div className="px-3 sm:px-8 pt-2 pb-5 sm:pb-6 flex justify-center gap-0.5 sm:gap-1 overflow-x-auto">
           <button
             onClick={() => setActiveTab("missions")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
               activeTab === "missions"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="View missions"
           >
-            <ListFilter className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <ListFilter className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Missions</span>
             {newMissionsCount > 0 && (
               <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] font-bold rounded-full h-5 w-5 flex items-center justify-center z-[1050]">
@@ -1468,76 +1535,76 @@ CREATE TABLE IF NOT EXISTS submissions (
           </button>
           <button
             onClick={() => setActiveTab("map")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "map"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="View live map"
           >
-            <MapIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <MapIcon className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Map</span>
           </button>
           <button
             onClick={() => setActiveTab("leaderboard")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "leaderboard"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="View leaderboard"
           >
-            <Trophy className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <Trophy className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Scores</span>
           </button>
           <button
             onClick={() => setActiveTab("feed")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "feed"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="View feed"
           >
-            <Users className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <Users className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Feed</span>
           </button>
           <button
             onClick={() => setActiveTab("gallery")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "gallery"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="Photo gallery"
           >
-            <ImageIcon className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <ImageIcon className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Gallery</span>
           </button>
           <button
             onClick={() => setActiveTab("slideshows")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
               activeTab === "slideshows"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="AI slideshows"
           >
-            <Film className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <Film className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Scripts</span>
           </button>
           {profile?.role === "admin" && (
             <>
               <button
                 onClick={() => setActiveTab("approval")}
-                className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+                className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
                   activeTab === "approval"
                     ? "bg-[#5a5a40] text-white shadow-sm"
                     : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
                 }`}
                 title="Review & approve photos"
               >
-                <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+                <ShieldCheck className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
                 <span className="hidden sm:inline">Approve</span>
                 {submissions.filter(s => s.status === "pending").length > 0 && (
                   <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1050]">
@@ -1547,14 +1614,14 @@ CREATE TABLE IF NOT EXISTS submissions (
               </button>
               <button
                 onClick={() => setActiveTab("logs")}
-                className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+                className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
                   activeTab === "logs"
                     ? "bg-[#5a5a40] text-white shadow-sm"
                     : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
                 }`}
                 title="View server logs"
               >
-                <svg className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <svg className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" />
                 </svg>
                 <span className="hidden sm:inline">Logs</span>
@@ -1563,14 +1630,14 @@ CREATE TABLE IF NOT EXISTS submissions (
           )}
           <button
             onClick={() => setActiveTab("chat")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
+            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
               activeTab === "chat"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
             title="Chat"
           >
-            <MessageSquare className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
+            <MessageSquare className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
             <span className="hidden sm:inline">Chat</span>
             {unreadCount > 0 && (
               <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1050]">
@@ -1635,6 +1702,15 @@ CREATE TABLE IF NOT EXISTS submissions (
               setAdminActiveInviteCodeInput(rand);
             }}
             onOpenSlideshowGenerator={() => setSlideshowGeneratorOpen(true)}
+            currentPasswordInput={adminCurrentPasswordInput}
+            onCurrentPasswordChange={setAdminCurrentPasswordInput}
+            newPasswordInput={adminNewPasswordInput}
+            onNewPasswordChange={setAdminNewPasswordInput}
+            confirmPasswordInput={adminConfirmPasswordInput}
+            onConfirmPasswordChange={setAdminConfirmPasswordInput}
+            passwordChangeSuccess={adminPasswordChangeSuccess}
+            passwordChangeError={adminPasswordChangeError}
+            onSubmitPasswordChange={handleAdminPasswordChange}
           />
         )}
 

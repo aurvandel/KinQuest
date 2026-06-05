@@ -57,6 +57,15 @@ interface AdminSettingsModalProps {
   onReset: () => void;
   onGenerateCode: () => void;
   onOpenSlideshowGenerator?: () => void;
+  currentPasswordInput?: string;
+  onCurrentPasswordChange?: (value: string) => void;
+  newPasswordInput?: string;
+  onNewPasswordChange?: (value: string) => void;
+  confirmPasswordInput?: string;
+  onConfirmPasswordChange?: (value: string) => void;
+  passwordChangeSuccess?: boolean;
+  passwordChangeError?: string | null;
+  onSubmitPasswordChange?: (e: React.FormEvent) => void;
 }
 
 export function AdminSettingsModal({
@@ -100,7 +109,16 @@ export function AdminSettingsModal({
   onSubmit,
   onReset,
   onGenerateCode,
-  onOpenSlideshowGenerator
+  onOpenSlideshowGenerator,
+  currentPasswordInput = "",
+  onCurrentPasswordChange,
+  newPasswordInput = "",
+  onNewPasswordChange,
+  confirmPasswordInput = "",
+  onConfirmPasswordChange,
+  passwordChangeSuccess = false,
+  passwordChangeError = null,
+  onSubmitPasswordChange
 }: AdminSettingsModalProps) {
   if (!isOpen) return null;
 
@@ -491,6 +509,62 @@ export function AdminSettingsModal({
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Admin Password Change Section */}
+          <div className="space-y-2 pt-4 border-t border-[#e5e5dd]">
+            <h3 className="text-xs font-bold text-[#5a5a40] uppercase tracking-wider">🔐 Security</h3>
+            
+            <div className="space-y-2 p-3 bg-blue-50 rounded-2xl border border-blue-100">
+              <p className="text-[9px] text-blue-700 font-semibold">Change Admin Password</p>
+              
+              <input
+                type="password"
+                placeholder="Current Password"
+                value={currentPasswordInput}
+                onChange={(e) => onCurrentPasswordChange?.(e.target.value)}
+                className="w-full text-xs bg-white border border-blue-200 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              
+              <input
+                type="password"
+                placeholder="New Password"
+                value={newPasswordInput}
+                onChange={(e) => onNewPasswordChange?.(e.target.value)}
+                className="w-full text-xs bg-white border border-blue-200 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              
+              <input
+                type="password"
+                placeholder="Confirm New Password"
+                value={confirmPasswordInput}
+                onChange={(e) => onConfirmPasswordChange?.(e.target.value)}
+                className="w-full text-xs bg-white border border-blue-200 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              
+              <button
+                type="button"
+                onClick={onSubmitPasswordChange}
+                disabled={!currentPasswordInput || !newPasswordInput || !confirmPasswordInput || newPasswordInput !== confirmPasswordInput}
+                className="w-full text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-lg px-3 py-2 transition cursor-pointer"
+              >
+                Update Password
+              </button>
+              
+              {passwordChangeError && (
+                <div className="p-2 bg-red-50 text-red-700 rounded-lg text-[9px] font-medium border border-red-100 flex items-center gap-1.5">
+                  <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
+                  <span>{passwordChangeError}</span>
+                </div>
+              )}
+              
+              {passwordChangeSuccess && (
+                <div className="p-2 bg-emerald-50 text-emerald-700 rounded-lg text-[9px] font-medium border border-emerald-100 flex items-center gap-1.5">
+                  <Check className="h-3 w-3 shrink-0 text-emerald-600" />
+                  <span>Admin password updated successfully!</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Notifications */}

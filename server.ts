@@ -38,7 +38,7 @@ import {
   saveAppSettings,
   AppSettings
 } from "./db-manager";
-import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getActiveSessionsCount } from "./password-manager";
+import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getActiveSessionsCount, changeAdminPassword } from "./password-manager";
 
 dotenv.config();
 
@@ -328,6 +328,34 @@ app.post("/api/auth/admin-verify", (req, res) => {
       activeSessions,
       maxSessions: 2
     });
+  }
+});
+
+// Change admin password endpoint
+app.post("/api/admin/change-password", (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  
+  if (!currentPassword || typeof currentPassword !== "string") {
+    return res.status(400).json({ error: "Current password is required" });
+  }
+  
+  if (!newPassword || typeof newPassword !== "string") {
+    return res.status(400).json({ error: "New password is required" });
+  }
+  
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: "New password must be at least 6 characters" });
+  }
+  
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ error: "New password must be different from current password" });
+  }
+  
+  try {
+    changeAdminPassword(currentPassword, newPassword, "Admin changed password");
+    res.json({ success: true, message: "Admin password changed successfully" });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to change admin password" });
   }
 });
 

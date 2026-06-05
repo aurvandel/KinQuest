@@ -128,6 +128,7 @@ export function MissionsList({
       delete copy[itemId];
       return copy;
     });
+    setExpandedItemId(null);
   };
 
   // Helper distance solver

@@ -183,7 +183,7 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
           <div className="absolute top-3 right-3 bg-green-500 text-white rounded-full p-1.5 shadow-md">
             <Check className="h-5 w-5" />
           </div>
-          <div className="absolute bottom-3 left-3 right-3 flex justify-center gap-2">
+          <div className="absolute bottom-3 left-3 right-3 flex justify-center">
             <button
               onClick={() => {
                 onImageSelected("");
@@ -194,17 +194,6 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
             >
               <RefreshCw className="h-3 w-3" />
               Retake Photo
-            </button>
-            <button
-              onClick={() => {
-                onImageSelected("");
-                triggerFileInput();
-              }}
-              type="button"
-              className="bg-gray-900/85 hover:bg-gray-900 text-white text-xs font-semibold px-3 py-1.5 rounded-full transition shadow-sm flex items-center gap-1 backdrop-blur-sm"
-            >
-              <Upload className="h-3 w-3" />
-              Upload New
             </button>
           </div>
         </div>
