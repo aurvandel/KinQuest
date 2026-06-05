@@ -773,6 +773,29 @@ export async function deleteHunterSubmission(subId: string): Promise<boolean> {
 
     if (getErr || !sub) return false;
 
+    // Delete image file from disk if it exists and is not a base64 string
+    if (sub.image_url && !sub.image_url.startsWith("data:")) {
+      try {
+        // Extract filename from URL (format: /api/uploads/{filename})
+        const urlParts = sub.image_url.split("/");
+        const filename = urlParts[urlParts.length - 1];
+        
+        if (filename) {
+          const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+          const filePath = path.join(uploadsDir, filename);
+          
+          // Delete file if it exists
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`Deleted image file: ${filePath}`);
+          }
+        }
+      } catch (fileErr) {
+        console.warn(`Failed to delete image file for submission ${subId}:`, fileErr);
+        // Continue with database deletion even if file deletion fails
+      }
+    }
+
     // Deduct
     if (sub.status === "approved") {
       const { data: item } = await supabase!.from("items").select("points").eq("id", sub.item_id).single();

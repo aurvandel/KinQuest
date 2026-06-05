@@ -5,6 +5,9 @@
 
 set -e
 
+# Change to parent directory (where k6-tests folder is located)
+cd "$(dirname "$0")/.."
+
 BASE_URL="${BASE_URL:-https://kinquest.narcolepsy.ninja}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-password}"
 
@@ -165,11 +168,11 @@ case "$COMMAND" in
     shift
     for arg in "$@"; do export "$arg"; done
     run_admin_ops
+    ;;
   images)
     shift
     for arg in "$@"; do export "$arg"; done
     run_image_upload
-    ;;
     ;;
   smoke)
     shift
