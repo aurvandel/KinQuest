@@ -38,23 +38,32 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
     ).values()
   ).sort((a, b) => a.title.localeCompare(b.title));
 
-  // Apply filters
-  const filteredSubmissions = approvedSubmissions.filter((sub) => {
-    if (selectedUser && sub.userId !== selectedUser) return false;
-    if (selectedMission && sub.itemId !== selectedMission) return false;
-    return true;
+  // Apply sorting based on filters - reorder but show all approved submissions
+  const sortedSubmissions = [...approvedSubmissions].sort((a, b) => {
+    // Sort by selected user (if any) - user's submissions come first
+    if (selectedUser) {
+      if (a.userId === selectedUser && b.userId !== selectedUser) return -1;
+      if (a.userId !== selectedUser && b.userId === selectedUser) return 1;
+    }
+    // Sort by selected mission (if any) - mission's submissions come first
+    if (selectedMission) {
+      if (a.itemId === selectedMission && b.itemId !== selectedMission) return -1;
+      if (a.itemId !== selectedMission && b.itemId === selectedMission) return 1;
+    }
+    // Default: maintain original order
+    return 0;
   });
 
   // Auto-advance slideshow
   useEffect(() => {
-    if (!isAutoPlay || filteredSubmissions.length === 0) return;
+    if (!isAutoPlay || sortedSubmissions.length === 0) return;
 
     const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % filteredSubmissions.length);
+      setCurrentIndex((prev) => (prev + 1) % sortedSubmissions.length);
     }, SLIDESHOW_INTERVAL);
 
     return () => clearInterval(timer);
-  }, [isAutoPlay, filteredSubmissions.length]);
+  }, [isAutoPlay, sortedSubmissions.length]);
 
   // Reset index when filters change
   useEffect(() => {
@@ -62,12 +71,12 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
   }, [selectedUser, selectedMission]);
 
   const goToPrevious = () => {
-    setCurrentIndex((prev) => (prev - 1 + filteredSubmissions.length) % filteredSubmissions.length);
+    setCurrentIndex((prev) => (prev - 1 + sortedSubmissions.length) % sortedSubmissions.length);
     setIsAutoPlay(false);
   };
 
   const goToNext = () => {
-    setCurrentIndex((prev) => (prev + 1) % filteredSubmissions.length);
+    setCurrentIndex((prev) => (prev + 1) % sortedSubmissions.length);
     setIsAutoPlay(false);
   };
 
@@ -81,13 +90,13 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
 
   const handleDeleteCurrentImage = () => {
     if (!onDeleteSubmission) return;
-    const currentSubmission = filteredSubmissions[currentIndex];
+    const currentSubmission = sortedSubmissions[currentIndex];
     onDeleteSubmission(currentSubmission.id);
   };
 
   const canDeleteCurrentImage = (): boolean => {
     if (!currentUserId || !onDeleteSubmission) return false;
-    const currentSubmission = filteredSubmissions[currentIndex];
+    const currentSubmission = sortedSubmissions[currentIndex];
     return userRole === "admin" || currentSubmission.userId === currentUserId;
   };
 
@@ -115,80 +124,7 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
     );
   }
 
-  if (filteredSubmissions.length === 0) {
-    return (
-      <div className="space-y-6 max-w-4xl mx-auto">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-gray-800">Photo Gallery</h2>
-            <p className="text-xs text-gray-400">View all approved scavenger hunt submissions</p>
-          </div>
-          <span className="text-xs bg-blue-100 text-blue-600 font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
-            <ImageIcon className="h-3 w-3" />0 Photos
-          </span>
-        </div>
-
-        {/* Filter Controls */}
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-2">Filter by User</label>
-              <select
-                value={selectedUser || ""}
-                onChange={(e) => setSelectedUser(e.target.value || null)}
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">All Users ({uniqueUsers.length})</option>
-                {uniqueUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.username}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-2">Filter by Mission</label>
-              <select
-                value={selectedMission || ""}
-                onChange={(e) => setSelectedMission(e.target.value || null)}
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">All Missions ({uniqueMissions.length})</option>
-                {uniqueMissions.map((mission) => (
-                  <option key={mission.id} value={mission.id}>
-                    {mission.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {(selectedUser || selectedMission) && (
-            <button
-              onClick={() => {
-                setSelectedUser(null);
-                setSelectedMission(null);
-              }}
-              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
-
-        <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center text-gray-400 shadow-sm">
-          <Sparkles className="h-8 w-8 mx-auto text-blue-300 opacity-70 mb-3 animate-bounce" />
-          <p className="text-sm font-medium text-gray-700">No photos match your filters</p>
-          <p className="text-xs text-gray-400 mt-1">
-            Try adjusting your selection
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const currentSubmission = filteredSubmissions[currentIndex];
+  const currentSubmission = sortedSubmissions[currentIndex];
   const associatedItem = items.find((it) => it.id === currentSubmission.itemId);
 
   return (
@@ -200,9 +136,9 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
             <h2 className="text-lg font-bold text-gray-800">Photo Gallery</h2>
             <p className="text-xs text-gray-400">View all approved scavenger hunt submissions</p>
           </div>
-          <span className="text-xs bg-blue-100 text-blue-600 font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
+          <span className="text-xs bg-blue-100 text-blue-600 font-medium px-2.5 py-1 rounded-full flex items-center gap-1 hidden sm:flex">
             <ImageIcon className="h-3 w-3" />
-            {currentIndex + 1} of {filteredSubmissions.length}
+            <span className="hidden sm:inline">{currentIndex + 1} of {sortedSubmissions.length}</span>
           </span>
         </div>
       )}
@@ -334,51 +270,54 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
 
       {/* Controls Bar */}
       {!isFullscreen && (
-        <div className="flex items-center justify-between bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2 sm:gap-4 bg-white rounded-xl border border-gray-100 p-2 sm:p-4 shadow-sm">
           <button
             onClick={goToPrevious}
-            className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition font-medium text-sm"
+            className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition font-medium text-xs sm:text-sm"
+            title="Previous"
           >
-            <ChevronLeft className="h-4 w-4" />
-            Previous
+            <ChevronLeft className="h-4 w-4 flex-shrink-0" />
+            <span className="hidden sm:inline">Previous</span>
           </button>
 
           {/* Progress Bar */}
-          <div className="flex-1 mx-4">
+          <div className="flex-1">
             <div className="bg-gray-200 rounded-full h-1">
               <div
                 className="bg-blue-500 h-1 rounded-full transition-all"
-                style={{ width: `${((currentIndex + 1) / filteredSubmissions.length) * 100}%` }}
+                style={{ width: `${((currentIndex + 1) / sortedSubmissions.length) * 100}%` }}
               />
             </div>
-            <p className="text-xs text-gray-500 text-center mt-2">
-              {currentIndex + 1} of {filteredSubmissions.length} photos
+            <p className="text-xs text-gray-500 text-center mt-1">
+              {currentIndex + 1} / {sortedSubmissions.length}
             </p>
           </div>
 
           <button
             onClick={toggleAutoPlay}
-            className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition font-medium text-sm"
+            className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition font-medium text-xs sm:text-sm"
+            title={isAutoPlay ? "Pause" : "Play"}
           >
             {isAutoPlay ? (
               <>
-                <Pause className="h-4 w-4" />
-                Playing
+                <Pause className="h-4 w-4 flex-shrink-0" />
+                <span className="hidden sm:inline">Playing</span>
               </>
             ) : (
               <>
-                <Play className="h-4 w-4" />
-                Paused
+                <Play className="h-4 w-4 flex-shrink-0" />
+                <span className="hidden sm:inline">Paused</span>
               </>
             )}
           </button>
 
           <button
             onClick={goToNext}
-            className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition font-medium text-sm"
+            className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition font-medium text-xs sm:text-sm"
+            title="Next"
           >
-            Next
-            <ChevronRight className="h-4 w-4" />
+            <span className="hidden sm:inline">Next</span>
+            <ChevronRight className="h-4 w-4 flex-shrink-0" />
           </button>
         </div>
       )}
@@ -387,7 +326,7 @@ export function Gallery({ submissions, items, currentUserId, userRole, onDeleteS
       {!isFullscreen && (
         <div className="overflow-x-auto pb-2">
           <div className="flex gap-2">
-            {filteredSubmissions.map((sub, idx) => (
+            {sortedSubmissions.map((sub, idx) => (
               <button
                 key={sub.id}
                 onClick={() => {
