@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   is_deleted BOOLEAN DEFAULT FALSE,
   deleted_at TIMESTAMPTZ,
-  deleted_by TEXT REFERENCES profiles(id) ON DELETE SET NULL
+  deleted_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+  is_read BOOLEAN DEFAULT FALSE
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON messages TO anon;

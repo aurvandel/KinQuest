@@ -60,6 +60,7 @@ export interface ChatMessage {
   isDeleted?: boolean; // Marked for deletion by moderator
   deletedAt?: string; // When message was deleted
   deletedBy?: string; // Admin user ID who deleted it
+  isRead?: boolean; // Whether the recipient has read this DM
 }
 
 export interface Slideshow {

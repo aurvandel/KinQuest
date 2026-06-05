@@ -60,6 +60,7 @@ export interface ChatMessage {
   isDeleted?: boolean; // Marked for deletion by moderator
   deletedAt?: string; // When message was deleted
   deletedBy?: string; // Admin user ID who deleted it
+  isRead?: boolean; // Whether the recipient has read this DM
 }
 
 export interface Slideshow {
@@ -895,7 +896,8 @@ export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
       created_at: msg.createdAt,
       is_deleted: msg.isDeleted || false,
       deleted_at: msg.deletedAt || null,
-      deleted_by: msg.deletedBy || null
+      deleted_by: msg.deletedBy || null,
+      is_read: msg.isRead || false
     };
     const { error } = await supabase!.from("messages").insert(row);
     if (error) {
@@ -926,7 +928,8 @@ export async function getChatMessages(): Promise<ChatMessage[]> {
       createdAt: m.created_at,
       isDeleted: m.is_deleted || false,
       deletedAt: m.deleted_at,
-      deletedBy: m.deleted_by
+      deletedBy: m.deleted_by,
+      isRead: m.is_read || false
     }));
   } catch (err) {
     console.warn("Supabase message retrieve error:", err);
@@ -935,14 +938,14 @@ export async function getChatMessages(): Promise<ChatMessage[]> {
 }
 
 // Delete a message (admin only)
-export async function deleteMessage(messageId: string, adminId: string): Promise<boolean> {
+export async function deleteMessage(messageId: string, deleterId: string): Promise<boolean> {
   try {
     const { error } = await supabase!
       .from("messages")
       .update({
         is_deleted: true,
         deleted_at: new Date().toISOString(),
-        deleted_by: adminId
+        deleted_by: deleterId
       })
       .eq("id", messageId);
     
@@ -950,6 +953,24 @@ export async function deleteMessage(messageId: string, adminId: string): Promise
     return true;
   } catch (err) {
     console.warn("Failed to delete message:", err);
+    throw err;
+  }
+}
+
+// Mark messages as read
+export async function markMessagesAsRead(messageIds: string[], userId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("messages")
+      .update({
+        is_read: true
+      })
+      .in("id", messageIds);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn("Failed to mark messages as read:", err);
     throw err;
   }
 }

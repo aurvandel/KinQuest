@@ -49,7 +49,8 @@ import {
   ShieldCheck,
   Satellite,
   X,
-  PlusCircle
+  PlusCircle,
+  ChevronDown
 } from "lucide-react";
 
 export default function App() {
@@ -87,6 +88,7 @@ export default function App() {
 
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [showCreateMissionModal, setShowCreateMissionModal] = useState(false);
   const [creatingFromMap, setCreatingFromMap] = useState(false);
   const [profileDisplayNameInput, setProfileDisplayNameInput] = useState("");
@@ -105,6 +107,10 @@ export default function App() {
   const [onlinePlayers, setOnlinePlayers] = useState<{ id: string; username: string }[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Mission notification states
+  const [seenMissionIds, setSeenMissionIds] = useState<Set<string>>(new Set());
+  const [newMissionsCount, setNewMissionsCount] = useState(0);
+
   // Slideshow Generator States
   const [slideshowGeneratorOpen, setSlideshowGeneratorOpen] = useState(false);
   const [slideshowGenerating, setSlideshowGenerating] = useState(false);
@@ -113,6 +119,9 @@ export default function App() {
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
   const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
+  
+  // Ref for user menu dropdown
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Geolocation states
   const [userLat, setUserLat] = useState<number | null>(null);
@@ -237,6 +246,20 @@ CREATE TABLE IF NOT EXISTS submissions (
     setAppReady(true);
   }, []);
 
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+
+    if (userMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [userMenuOpen]);
+
   // Central Game State Synchronizer (Polling loop every 2.5 seconds for real-time dynamic feel!)
   useEffect(() => {
     let intervalId: any;
@@ -287,6 +310,36 @@ CREATE TABLE IF NOT EXISTS submissions (
       .then(data => setChatMessages(data || []))
       .catch(err => console.error("Failed to load chat history:", err));
   }, [profile]);
+
+  // Track new missions and update badge
+  useEffect(() => {
+    const newMissions = items.filter(item => !seenMissionIds.has(item.id));
+    const newCount = newMissions.length;
+    setNewMissionsCount(newCount);
+
+    // Update PWA badge if app is installed
+    if ('setAppBadge' in navigator) {
+      if (newCount > 0) {
+        (navigator as any).setAppBadge(newCount);
+      } else {
+        (navigator as any).clearAppBadge?.();
+      }
+    }
+  }, [items, seenMissionIds]);
+
+  // Mark missions as seen when clicking the missions tab
+  useEffect(() => {
+    if (activeTab === "missions") {
+      const currentIds = new Set(items.map(item => item.id));
+      setSeenMissionIds(currentIds);
+      setNewMissionsCount(0);
+
+      // Clear PWA badge
+      if ('clearAppBadge' in navigator) {
+        (navigator as any).clearAppBadge?.();
+      }
+    }
+  }, [activeTab, items]);
 
   // Ref to track if profile ID actually changed (to avoid reconnection on object refresh)
   const profileIdRef = useRef<string | null>(null);
@@ -429,12 +482,11 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   // Admin action handlers for chat moderation
   const handleDeleteMessage = async (messageId: string) => {
-    if (profile?.role !== "admin") return;
     try {
       const response = await fetch(`/api/messages/${messageId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: profile.id })
+        body: JSON.stringify({ userId: profile?.id })
       });
       if (!response.ok) throw new Error("Failed to delete message");
     } catch (err) {
@@ -1277,6 +1329,16 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <span className="text-xs sm:hidden font-black font-mono">{profile.score}</span>
               </div>
 
+              {/* Active Hunters Count Badge */}
+              <div className="bg-[#8c8c5a] text-[#f5f5f0] px-2 sm:px-3 py-1.5 rounded-xl flex items-center gap-1 sm:gap-1.5 shadow-sm shadow-[#8c8c5a]/10 whitespace-nowrap">
+                <Users className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
+                <div className="text-left leading-none hidden sm:block">
+                  <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest block opacity-75">Active</span>
+                  <span className="text-xs font-black font-mono">{onlinePlayers.length}</span>
+                </div>
+                <span className="text-xs sm:hidden font-black font-mono">{onlinePlayers.length}</span>
+              </div>
+
               {/* Database Status Indicator Icon - visible to all */}
               <button
                 type="button"
@@ -1309,27 +1371,51 @@ CREATE TABLE IF NOT EXISTS submissions (
                 </div>
               </button>
 
-              {/* User Preferences Dashboard Button */}
-              <button
-                onClick={() => {
-                  setUserDashboardOpen(!userDashboardOpen);
-                  setProfileSaveSuccess(false);
-                  setProfileSaveError(null);
-                  if (profile) {
-                    setProfileDisplayNameInput(profile.displayName || profile.username || "");
-                    setProfileRoleInput(profile.role || "user");
-                  }
-                }}
-                type="button"
-                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                  userDashboardOpen
-                    ? "bg-[#5a5a40]/20 text-[#5a5a40] border-[#5a5a40]/30 font-bold"
-                    : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
-                }`}
-                title="User Settings & Persona Dashboard"
-              >
-                <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-              </button>
+              {/* User Menu Dropdown */}
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                  type="button"
+                  className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 flex items-center gap-1 ${
+                    userMenuOpen
+                      ? "bg-[#5a5a40]/20 text-[#5a5a40] border-[#5a5a40]/30 font-bold"
+                      : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
+                  }`}
+                  title="User menu"
+                >
+                  <User className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+                  <ChevronDown className="h-3 sm:h-3.5 w-3 sm:w-3.5" />
+                </button>
+                
+                {/* Dropdown Menu */}
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-[#e5e5dd] rounded-xl shadow-lg z-[1100]">
+                    <button
+                      onClick={() => {
+                        setUserDashboardOpen(true);
+                        setProfileSaveSuccess(false);
+                        setProfileSaveError(null);
+                        if (profile) {
+                          setProfileDisplayNameInput(profile.displayName || profile.username || "");
+                          setProfileRoleInput(profile.role || "user");
+                        }
+                        setUserMenuOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-3 text-xs font-semibold text-[#2d2d2d] hover:bg-[#f5f5f0] border-b border-[#e5e5dd] transition flex items-center gap-2"
+                    >
+                      <User className="h-4 w-4" />
+                      User Settings
+                    </button>
+                    <button
+                      onClick={handleSignOut}
+                      className="w-full text-left px-4 py-3 text-xs font-semibold text-red-600 hover:bg-red-50 transition flex items-center gap-2"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Log Out
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {/* Admin Branding Settings Cog */}
               {profile?.role === "admin" && (
@@ -1357,24 +1443,15 @@ CREATE TABLE IF NOT EXISTS submissions (
                   <Settings className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
                 </button>
               )}
-
-              <button
-                onClick={handleSignOut}
-                type="button"
-                className="text-[#8c8c82] hover:text-red-600 transition p-1.5 sm:p-2 hover:bg-white rounded-xl border border-transparent hover:border-brand-border/40 shrink-0"
-                title="Leave adventure lobby"
-              >
-                <LogOut className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-              </button>
             </div>
           </div>
         </div>
 
         {/* Navigation tabs - now below the header icons */}
-        <div className="px-3 sm:px-8 pb-2 sm:pb-3 flex justify-center gap-0.5 sm:gap-1 overflow-x-auto">
+        <div className="px-3 sm:px-8 pt-2 pb-5 sm:pb-6 flex justify-center gap-0.5 sm:gap-1 overflow-x-auto">
           <button
             onClick={() => setActiveTab("missions")}
-            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+            className={`flex-shrink-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
               activeTab === "missions"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
@@ -1383,6 +1460,11 @@ CREATE TABLE IF NOT EXISTS submissions (
           >
             <ListFilter className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
             <span className="hidden sm:inline">Missions</span>
+            {newMissionsCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] font-bold rounded-full h-5 w-5 flex items-center justify-center z-[1100]">
+                {newMissionsCount > 9 ? "9+" : newMissionsCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab("map")}
@@ -1458,7 +1540,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
                 <span className="hidden sm:inline">Approve</span>
                 {submissions.filter(s => s.status === "pending").length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1100]">
                     {submissions.filter(s => s.status === "pending").length}
                   </span>
                 )}
@@ -1491,7 +1573,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             <MessageSquare className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
             <span className="hidden sm:inline">Chat</span>
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none">
+              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1100]">
                 {unreadCount}
               </span>
             )}

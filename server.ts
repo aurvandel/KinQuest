@@ -25,6 +25,7 @@ import {
   saveChatMessage,
   getChatMessages,
   deleteMessage,
+  markMessagesAsRead,
   muteUser,
   unmuteUser,
   bootUser,
@@ -1230,7 +1231,27 @@ app.delete("/api/messages/:messageId", async (req, res) => {
   }
 });
 
-// 8.2 Admin mute user
+// 8.2 Mark messages as read
+app.post("/api/messages/mark-read", async (req, res) => {
+  const { userId, messageIds } = req.body;
+
+  if (!userId || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.status(400).json({ error: "Missing userId or messageIds" });
+  }
+
+  try {
+    const success = await markMessagesAsRead(messageIds, userId);
+    if (success) {
+      res.json({ success: true, message: "Messages marked as read" });
+    } else {
+      res.status(500).json({ error: "Failed to mark messages as read" });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to mark messages as read", details: err.message });
+  }
+});
+
+// 8.3 Admin mute user
 app.post("/api/users/:userId/mute", async (req, res) => {
   const { userId } = req.params;
   const { adminId, mutedUntil } = req.body;

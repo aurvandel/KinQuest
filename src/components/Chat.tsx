@@ -32,6 +32,7 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [isAdmin] = useState(profile?.role === "admin");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -66,7 +67,31 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
   useEffect(() => {
     shouldAutoScrollRef.current = true;
     scrollToBottom();
+    setSelectedMessageId(null); // Clear message selection when switching tabs
   }, [activeSubTab, selectedRecipient]);
+
+  // Mark messages as read when viewing PM tab
+  useEffect(() => {
+    if (activeSubTab === "pm") {
+      const unreadMessages = chatMessages.filter(msg => 
+        msg.receiverId === profile.id && // User is the recipient
+        msg.senderId !== profile.id && // Message is from someone else
+        !msg.isRead // Message hasn't been read
+      );
+
+      if (unreadMessages.length > 0) {
+        const unreadMessageIds = unreadMessages.map(msg => msg.id);
+        fetch("/api/messages/mark-read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: profile.id,
+            messageIds: unreadMessageIds
+          })
+        }).catch(err => console.error("Failed to mark messages as read:", err));
+      }
+    }
+  }, [activeSubTab, chatMessages, profile.id]);
 
   // Check if player is online
   const isOnline = (playerId: string) => {
@@ -92,6 +117,13 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
     .filter(p => p.id !== profile.id)
     .filter(p => p.username.toLowerCase().includes(searchQuery.toLowerCase()));
 
+  // Count unread DMs
+  const unreadDMCount = chatMessages.filter(msg => 
+    msg.receiverId === profile.id && // User is the recipient
+    msg.senderId !== profile.id && // Message is from someone else
+    !msg.isRead // Message hasn't been read
+  ).length;
+
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!messageText.trim()) return;
@@ -103,6 +135,7 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
       onSendMessage(messageText, selectedRecipient.id);
     }
     setMessageText("");
+    setSelectedMessageId(null); // Clear message selection after sending
   };
 
   // Auto-select a user on switching to pm tab if none selected
@@ -113,52 +146,57 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
   }, [activeSubTab]);
 
   return (
-    <div id="chat-section" className="bg-white border border-[#d2d2c8] rounded-3xl overflow-hidden shadow-sm flex flex-col md:flex-row h-[550px]">
+    <div id="chat-section" className="bg-white border border-[#d2d2c8] rounded-3xl shadow-sm flex flex-col md:flex-row h-[550px] md:h-[550px]" style={{ overflow: "visible" }}>
       {/* Side bar: Tab switching and user search list */}
-      <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-[#e5e5dd] bg-[#fafaf7] flex flex-col shrink-0">
+      <div className="w-full md:w-64 flex flex-col shrink-0 border-b md:border-b-0 md:border-r border-[#e5e5dd] bg-[#fafaf7]">
         {/* Navigation Selector */}
-        <div className="p-3 border-b border-[#e5e5dd] flex gap-2">
+        <div className="px-2 md:px-3 pb-2 md:pb-3 border-b border-[#e5e5dd] flex gap-2 shrink-0" style={{ paddingTop: "1.25rem" }}>
           <button
             onClick={() => setActiveSubTab("shout")}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold tracking-tight transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`flex-1 py-1.5 md:py-2 px-2 md:px-3 rounded-lg md:rounded-xl text-[11px] md:text-xs font-bold tracking-tight transition flex items-center justify-center gap-0.5 md:gap-1.5 cursor-pointer relative ${
               activeSubTab === "shout"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-[#8c8c82] hover:bg-white border border-transparent hover:border-[#e5e5dd] hover:text-[#5a5a40]"
             }`}
           >
-            <Globe className="h-3.5 w-3.5" />
-            Shout Box
+            <Globe className="h-3 w-3 md:h-3.5 md:w-3.5" />
+            <span className="hidden sm:inline">Shout Box</span>
           </button>
           <button
             onClick={() => setActiveSubTab("pm")}
-            className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold tracking-tight transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`flex-1 py-1.5 md:py-2 px-2 md:px-3 rounded-lg md:rounded-xl text-[11px] md:text-xs font-bold tracking-tight transition flex items-center justify-center gap-0.5 md:gap-1.5 cursor-pointer relative ${
               activeSubTab === "pm"
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-[#8c8c82] hover:bg-white border border-transparent hover:border-[#e5e5dd] hover:text-[#5a5a40]"
             }`}
           >
-            <Lock className="h-3.5 w-3.5" />
-            Direct DM
+            <Lock className="h-3 w-3 md:h-3.5 md:w-3.5" />
+            <span className="hidden sm:inline">Direct DM</span>
+            {unreadDMCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full h-5 w-5 flex items-center justify-center z-10">
+                {unreadDMCount > 9 ? "9+" : unreadDMCount}
+              </span>
+            )}
           </button>
         </div>
 
-        {/* Players List for PM Tab */}
+        {/* Players List for PM Tab - visible on all sizes when in PM tab */}
         {activeSubTab === "pm" ? (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="p-3 border-b border-[#e5e5dd] relative">
-              <Search className="absolute left-6 top-5.5 h-3.5 w-3.5 text-[#a0a095]" />
+          <div className="flex-1 flex flex-col overflow-hidden max-h-32 md:max-h-none">
+            <div className="p-2 md:p-3 border-b border-[#e5e5dd] relative shrink-0">
+              <Search className="absolute left-5 md:left-6 top-4 md:top-5.5 h-3 md:h-3.5 w-3 md:w-3.5 text-[#a0a095]" />
               <input
                 type="text"
                 placeholder="Search players..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#f0f0e8]/50 border border-[#e5e5dd] rounded-xl pl-9 pr-4 py-2 text-xs outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
+                className="w-full bg-[#f0f0e8]/50 border border-[#e5e5dd] rounded-lg md:rounded-xl pl-8 md:pl-9 pr-3 md:pr-4 py-1.5 md:py-2 text-[11px] md:text-xs outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto p-1.5 md:p-2 space-y-0.5 md:space-y-1">
               {candidateRecipients.length === 0 ? (
-                <p className="text-[10px] text-center text-[#8c8c82] italic py-6">No other players found.</p>
+                <p className="text-[9px] md:text-[10px] text-center text-[#8c8c82] italic py-3 md:py-6">No other players found.</p>
               ) : (
                 candidateRecipients.map((p) => {
                   const online = isOnline(p.id);
@@ -167,23 +205,23 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
                     <button
                       key={p.id}
                       onClick={() => setSelectedRecipient(p)}
-                      className={`w-full flex items-center justify-between p-2 rounded-xl text-left text-xs transition cursor-pointer ${
+                      className={`w-full flex items-center justify-between p-1.5 md:p-2 rounded-lg md:rounded-xl text-left text-[11px] md:text-xs transition cursor-pointer ${
                         isSelected 
                           ? "bg-[#5a5a40]/10 border-l-4 border-[#5a5a40]" 
                           : "hover:bg-[#f0f0e8]/40"
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <div className="w-6 h-6 rounded-full bg-[#e5e5dd] flex items-center justify-center shrink-0">
-                          <User className="h-3 w-3 text-[#5a5a40]" />
+                      <div className="flex items-center gap-1.5 md:gap-2 truncate min-w-0">
+                        <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-[#e5e5dd] flex items-center justify-center shrink-0">
+                          <User className="h-2.5 w-2.5 md:h-3 md:w-3 text-[#5a5a40]" />
                         </div>
-                        <div className="truncate">
-                          <p className="font-semibold text-[#2d2d2d] truncate">{p.username}</p>
-                          <p className="text-[9px] text-[#8c8c82] font-mono">{p.score} pts</p>
+                        <div className="truncate min-w-0">
+                          <p className="font-semibold text-[#2d2d2d] truncate text-[10px] md:text-xs">{p.username}</p>
+                          <p className="text-[8px] md:text-[9px] text-[#8c8c82] font-mono">{p.score} pts</p>
                         </div>
                       </div>
 
-                      <div className="flex items-center pr-1 select-none">
+                      <div className="flex items-center pr-0.5 md:pr-1 select-none shrink-0">
                         <span 
                           className={`w-2 h-2 rounded-full shrink-0 ${
                             online ? "bg-green-500 animate-pulse" : "bg-gray-300"
@@ -198,20 +236,8 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
             </div>
           </div>
         ) : (
-          // Global Shoutbox info
-          <div className="flex-1 p-4 overflow-y-auto flex flex-col">
-            <div className="bg-[#5a5a40]/5 p-4 rounded-2xl border border-[#5a5a40]/10 text-center mb-6">
-              <p className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
-                Active Hunters
-              </p>
-              <p className="text-2xl font-bold text-[#5a5a40] mt-2">
-                {onlinePlayers.length}
-              </p>
-              <p className="text-[9px] text-[#8c8c82] mt-1">
-                {onlinePlayers.length === 1 ? "person online" : "people online"}
-              </p>
-            </div>
-            
+          // Global Shoutbox info - hidden on mobile
+          <div className="flex-1 p-4 overflow-y-auto flex flex-col hidden md:flex">
             <div className="mt-auto border-t border-[#e5e5dd] pt-4 text-[10px] text-[#8c8c82] leading-relaxed">
               <p className="font-medium text-[#5a5a40] mb-1 flex items-center gap-1">
                 <ShieldCheck className="h-3.5 w-3.5 text-[#8c8c5a]" /> 
@@ -281,9 +307,14 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
               return (
                 <div 
                   key={msg.id} 
-                  className={`flex flex-col ${isMe ? "items-end" : "items-start"} group`}
+                  className={`flex flex-col ${isMe ? "items-end" : "items-start"} group cursor-pointer md:cursor-default`}
                   onMouseEnter={() => setHoveredMessageId(msg.id)}
                   onMouseLeave={() => setHoveredMessageId(null)}
+                  onClick={() => {
+                    if (isMe) {
+                      setSelectedMessageId(selectedMessageId === msg.id ? null : msg.id);
+                    }
+                  }}
                 >
                   <div className="flex items-center gap-1.5 mb-0.5 px-1 select-none">
                     <span className="text-[10px] font-bold text-[#5a5a40]">
@@ -311,13 +342,17 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
                       }`}
                     >
                       <p className="break-words">
-                        {msg.isDeleted ? "This message was removed by a moderator" : msg.text}
+                        {msg.isDeleted 
+                          ? msg.deletedBy && msg.deletedBy !== msg.senderId 
+                            ? "Deleted by moderator" 
+                            : "Deleted"
+                          : msg.text}
                       </p>
                     </div>
 
-                    {/* Admin action buttons - show on hover */}
+                    {/* Admin action buttons - show on hover on desktop, always visible for own messages on mobile */}
                     {(isAdmin || isMe) && hoveredMessageId === msg.id && !msg.isDeleted && (
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex">
                         <button
                           type="button"
                           onClick={() => onDeleteMessage?.(msg.id)}
@@ -355,6 +390,23 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
                             <LogOut className="h-3.5 w-3.5" />
                           </button>
                         )}
+                      </div>
+                    )}
+
+                    {/* Mobile action buttons - visible only when message is selected */}
+                    {isMe && !msg.isDeleted && selectedMessageId === msg.id && (
+                      <div className="flex gap-1 md:hidden">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await onDeleteMessage?.(msg.id);
+                            setSelectedMessageId(null);
+                          }}
+                          className="p-1 bg-red-100 hover:bg-red-200 text-red-600 rounded transition"
+                          title="Delete your message"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     )}
                   </div>
