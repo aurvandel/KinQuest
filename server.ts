@@ -1205,7 +1205,11 @@ app.delete("/api/messages/:messageId", async (req, res) => {
     }
 
     // Verify user is either admin or the message owner
-    const user = await ensureProfileExists(userId);
+    const db = await getAppState();
+    const user = db.users[userId];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
     const isAdmin = user.role === "admin";
     const isOwner = message.senderId === userId;
 
@@ -1235,7 +1239,11 @@ app.post("/api/users/:userId/mute", async (req, res) => {
 
   try {
     // Verify user is admin
-    const admin = await ensureProfileExists(adminId);
+    const db = await getAppState();
+    const admin = db.users[adminId];
+    if (!admin) {
+      return res.status(404).json({ error: "Admin user not found" });
+    }
     if (admin.role !== "admin") {
       return res.status(403).json({ error: "Only admins can mute users" });
     }
@@ -1258,7 +1266,11 @@ app.delete("/api/users/:userId/mute", async (req, res) => {
 
   try {
     // Verify user is admin
-    const admin = await ensureProfileExists(adminId);
+    const db = await getAppState();
+    const admin = db.users[adminId];
+    if (!admin) {
+      return res.status(404).json({ error: "Admin user not found" });
+    }
     if (admin.role !== "admin") {
       return res.status(403).json({ error: "Only admins can unmute users" });
     }
@@ -1281,7 +1293,11 @@ app.post("/api/users/:userId/boot", async (req, res) => {
 
   try {
     // Verify user is admin
-    const admin = await ensureProfileExists(adminId);
+    const db = await getAppState();
+    const admin = db.users[adminId];
+    if (!admin) {
+      return res.status(404).json({ error: "Admin user not found" });
+    }
     if (admin.role !== "admin") {
       return res.status(403).json({ error: "Only admins can boot users" });
     }
