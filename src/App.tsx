@@ -14,6 +14,16 @@ import { AdminSettingsModal } from "./components/AdminSettingsModal";
 import { CreateMissionModal } from "./components/CreateMissionModal";
 import { SlideshowGeneratorModal } from "./components/SlideshowGeneratorModal";
 import { ServerLogs } from "./components/ServerLogs";
+import {
+  getPendingSubmissions,
+  getRetryableSubmissions,
+  addToRetryQueue,
+  removeFromRetryQueue,
+  markAsRetrying,
+  clearRetryQueue,
+  getQueueStatusText,
+  PendingSubmission,
+} from "./utils/submissionRetryQueue";
 
 import {
   Flame,
@@ -135,6 +145,9 @@ export default function App() {
   const [userLng, setUserLng] = useState<number | null>(null);
   const [locationType, setLocationType] = useState<"gps" | "simulated">("gps");
 
+  // Database connection state
+  const [dbError, setDbError] = useState<boolean>(false);
+
   // Expanded card linkage
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
@@ -142,6 +155,11 @@ export default function App() {
   const [isSubmittingMap, setIsSubmittingMap] = useState<{ [itemId: string]: boolean }>({});
   const [submitErrorMap, setSubmitErrorMap] = useState<{ [itemId: string]: string | null }>({});
   const [rejectedSubmissionMap, setRejectedSubmissionMap] = useState<{ [itemId: string]: { id: string; explanation: string; base64: string } }>({});
+
+  // Submission retry queue state
+  const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatusText, setSyncStatusText] = useState("All submissions synced ✓");
 
   const [registerName, setRegisterName] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -282,6 +300,7 @@ CREATE TABLE IF NOT EXISTS submissions (
           if (data.settings) {
             setSettings(data.settings);
           }
+          setDbError(false); // Clear error on success
 
           // Sync active user profile score dynamically
           const cachedUid = localStorage.getItem("scavenger_uid");
@@ -296,9 +315,12 @@ CREATE TABLE IF NOT EXISTS submissions (
               handleSignOut();
             }
           }
+        } else {
+          setDbError(true); // Set error on failed request
         }
       } catch (err) {
         console.error("Polling game state failed:", err);
+        setDbError(true); // Set error on network failure
       }
     };
 
@@ -306,6 +328,99 @@ CREATE TABLE IF NOT EXISTS submissions (
     intervalId = setInterval(fetchGameState, 2500);
 
     return () => clearInterval(intervalId);
+  }, []);
+
+  // Load pending submissions from localStorage on mount
+  useEffect(() => {
+    const pending = getPendingSubmissions();
+    setPendingSubmissions(pending);
+    setSyncStatusText(getQueueStatusText());
+  }, []);
+
+  // Auto-sync pending submissions with exponential backoff
+  useEffect(() => {
+    let retryIntervalId: any;
+
+    const attemptRetry = async () => {
+      const retryable = getRetryableSubmissions();
+      if (retryable.length === 0) {
+        // Update UI status
+        const pending = getPendingSubmissions();
+        setPendingSubmissions(pending);
+        setSyncStatusText(getQueueStatusText());
+        return;
+      }
+
+      setIsSyncing(true);
+
+      for (const sub of retryable) {
+        try {
+          console.log(`[AutoRetry] Retrying submission ${sub.id} (attempt ${sub.retryCount + 1})`);
+          markAsRetrying(sub.id);
+
+          const response = await fetch("/api/verify-submission", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: sub.userId,
+              itemId: sub.itemId,
+              imageBase64: sub.imageBase64,
+              userLat: sub.userLat,
+              userLng: sub.userLng,
+              forceSubmit: sub.forceSubmit,
+              submissionId: sub.submissionId,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            const errorMsg = errorData.error || "Unknown error";
+
+            // Determine reason for failure
+            let reason: "rate_limit" | "timeout" | "error" = "error";
+            if (response.status === 429) {
+              reason = "rate_limit";
+            } else if (response.status === 408 || response.status === 504) {
+              reason = "timeout";
+            }
+
+            // Requeue with updated reason and error
+            const updated = getPendingSubmissions().find((s) => s.id === sub.id);
+            if (updated) {
+              updated.reason = reason;
+              updated.lastError = errorMsg;
+              const queue = getPendingSubmissions();
+              const idx = queue.findIndex((s) => s.id === sub.id);
+              if (idx !== -1) {
+                queue[idx] = updated;
+                localStorage.setItem("kinquest_submission_retry_queue", JSON.stringify(queue));
+              }
+            }
+            continue;
+          }
+
+          const payload = await response.json();
+          if (payload.submission.status !== "rejected" || sub.forceSubmit) {
+            // Success! Remove from queue
+            removeFromRetryQueue(sub.id);
+            console.log(`[AutoRetry] Submission ${sub.id} successfully synced!`);
+          }
+        } catch (err: any) {
+          console.error(`[AutoRetry] Error retrying ${sub.id}:`, err);
+          // Will be retried again next interval
+        }
+      }
+
+      setIsSyncing(false);
+      const pending = getPendingSubmissions();
+      setPendingSubmissions(pending);
+      setSyncStatusText(getQueueStatusText());
+    };
+
+    // Check every 10 seconds
+    retryIntervalId = setInterval(attemptRetry, 10000);
+
+    return () => clearInterval(retryIntervalId);
   }, []);
 
   // Download chat logs initially
@@ -964,10 +1079,44 @@ CREATE TABLE IF NOT EXISTS submissions (
 
     } catch (err: any) {
       console.error("Submission grading error:", err);
-      setSubmitErrorMap((prev) => ({
-        ...prev,
-        [itemId]: err instanceof Error ? err.message : "Proof check declined. Retry."
-      }));
+      
+      // Determine if this is a network/retry issue or validation error
+      const isNetworkError = err.message?.includes("fetch") || 
+                            err.message?.includes("Network") ||
+                            err.message?.includes("timeout") ||
+                            err.message?.includes("rate");
+      
+      if (isNetworkError || (err instanceof TypeError)) {
+        // Network error - queue for retry
+        const retryReason = err.message?.includes("rate") ? "rate_limit" : "error";
+        addToRetryQueue(
+          profile.id,
+          itemId,
+          base64Image,
+          userLat,
+          userLng,
+          retryReason as "rate_limit" | "timeout" | "error",
+          err instanceof Error ? err.message : "Network error",
+          forceSubmit,
+          submissionId
+        );
+        
+        setSubmitErrorMap((prev) => ({
+          ...prev,
+          [itemId]: "Network issue detected. Will retry in background. " + (err instanceof Error ? err.message : "Retry will occur automatically.")
+        }));
+        
+        // Update pending submissions display
+        const pending = getPendingSubmissions();
+        setPendingSubmissions(pending);
+        setSyncStatusText(getQueueStatusText());
+      } else {
+        // Validation or other error - show to user
+        setSubmitErrorMap((prev) => ({
+          ...prev,
+          [itemId]: err instanceof Error ? err.message : "Proof check declined. Retry."
+        }));
+      }
     } finally {
       setIsSubmittingMap((prev) => ({ ...prev, [itemId]: false }));
     }
@@ -1011,6 +1160,62 @@ CREATE TABLE IF NOT EXISTS submissions (
     } catch (err: any) {
       console.error("Retry error:", err);
       alert(err instanceof Error ? err.message : "Failed to retry submission");
+    }
+  };
+
+  // Manually trigger a full sync of all pending submissions
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    const retryable = getRetryableSubmissions();
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const sub of retryable) {
+      try {
+        console.log(`[ManualSync] Syncing submission ${sub.id}`);
+        markAsRetrying(sub.id);
+
+        const response = await fetch("/api/verify-submission", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: sub.userId,
+            itemId: sub.itemId,
+            imageBase64: sub.imageBase64,
+            userLat: sub.userLat,
+            userLng: sub.userLng,
+            forceSubmit: sub.forceSubmit,
+            submissionId: sub.submissionId,
+          }),
+        });
+
+        if (response.ok) {
+          const payload = await response.json();
+          if (payload.submission.status !== "rejected" || sub.forceSubmit) {
+            removeFromRetryQueue(sub.id);
+            successCount++;
+            console.log(`[ManualSync] ✓ Synced ${sub.id}`);
+          }
+        } else {
+          failCount++;
+        }
+      } catch (err: any) {
+        failCount++;
+        console.error(`[ManualSync] Failed to sync ${sub.id}:`, err);
+      }
+    }
+
+    setIsSyncing(false);
+    const pending = getPendingSubmissions();
+    setPendingSubmissions(pending);
+    setSyncStatusText(getQueueStatusText());
+
+    if (successCount > 0 || failCount > 0) {
+      alert(
+        `Manual sync complete!\n✓ ${successCount} synced\n✗ ${failCount} failed\n\nStill pending: ${pending.length}`
+      );
+    } else {
+      alert("No pending submissions to sync");
     }
   };
 
@@ -1352,7 +1557,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                     <div className="w-3 h-3 border-2 border-[#f5f5f0] rounded-sm rotate-45"></div>
                   )}
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 hidden sm:block">
                   <h1 className="text-sm sm:text-base md:text-lg font-serif text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[100px] sm:max-w-[180px] md:max-w-[240px]">
                     {settings.name}
                   </h1>
@@ -1406,14 +1611,44 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <span className="text-xs sm:hidden font-black font-mono">{onlinePlayers.length}</span>
               </div>
 
-              {/* Database Status Indicator Icon - visible to all */}
+              {/* Sync Status Badge - clickable to trigger manual sync */}
               <button
+                onClick={handleManualSync}
+                disabled={isSyncing}
                 type="button"
-                className="p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 text-green-600 hover:text-green-700 hover:bg-green-50 border-transparent hover:border-green-200"
-                title="Database: Supabase"
+                className={`px-2 sm:px-3 py-1.5 rounded-xl flex items-center gap-1 sm:gap-1.5 shadow-sm whitespace-nowrap transition cursor-pointer font-bold text-xs sm:text-xs ${
+                  pendingSubmissions.length > 0
+                    ? "bg-amber-500/20 text-amber-700 hover:bg-amber-500/30 border border-amber-200/50"
+                    : "bg-green-500/20 text-green-700 border border-green-200/50"
+                } disabled:opacity-50`}
+                title={pendingSubmissions.length > 0 ? "Click to sync pending submissions" : "All submissions synced"}
               >
-                <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+                {isSyncing ? (
+                  <Loader2 className="h-3.5 sm:h-4 w-3.5 sm:w-4 animate-spin flex-shrink-0" />
+                ) : pendingSubmissions.length > 0 ? (
+                  <>
+                    <RotateCcw className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
+                    <span className="hidden sm:inline">{pendingSubmissions.length}</span>
+                    <span className="sm:hidden font-black">{pendingSubmissions.length}</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
+                    <span className="hidden sm:inline">Synced</span>
+                  </>
+                )}
               </button>
+
+              {/* Database Status Indicator Icon - only visible if there's an error */}
+              {dbError && (
+                <button
+                  type="button"
+                  className="p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50 border-transparent hover:border-red-200 animate-pulse"
+                  title="Database connection error"
+                >
+                  <Database className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
+                </button>
+              )}
 
               {/* GPS Status Indicator Icon */}
               <button
@@ -1733,6 +1968,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           saveSuccess={profileSaveSuccess}
           saveError={profileSaveError}
           onSubmit={handleSaveProfile}
+          syncStatusText={syncStatusText}
+          isSyncing={isSyncing}
+          onManualSync={handleManualSync}
         />
 
         {/* Create Mission Modal */}

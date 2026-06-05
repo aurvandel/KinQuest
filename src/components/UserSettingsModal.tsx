@@ -1,5 +1,5 @@
 import React from "react";
-import { User, Loader2, Check, AlertCircle } from "lucide-react";
+import { User, Loader2, Check, AlertCircle, RotateCcw } from "lucide-react";
 import { PlayerProfile } from "../types";
 
 interface UserSettingsModalProps {
@@ -20,6 +20,9 @@ interface UserSettingsModalProps {
   saveSuccess: boolean;
   saveError: string | null;
   onSubmit: (e: React.FormEvent) => void;
+  syncStatusText?: string;
+  isSyncing?: boolean;
+  onManualSync?: () => void;
 }
 
 export function UserSettingsModal({
@@ -39,7 +42,10 @@ export function UserSettingsModal({
   isLoading,
   saveSuccess,
   saveError,
-  onSubmit
+  onSubmit,
+  syncStatusText = "All submissions synced ✓",
+  isSyncing = false,
+  onManualSync
 }: UserSettingsModalProps) {
   if (!isOpen) return null;
 
@@ -191,8 +197,33 @@ export function UserSettingsModal({
           )}
         </form>
 
-        {/* Footer with button */}
-        <div className="p-6 border-t border-[#e5e5dd] bg-[#fafaf7]">
+        {/* Footer with buttons */}
+        <div className="p-6 border-t border-[#e5e5dd] bg-[#fafaf7] space-y-3">
+          {/* Sync Status Display */}
+          {onManualSync && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider">
+                Submission Sync
+              </div>
+              <div className="flex items-center justify-between p-2.5 bg-blue-50 rounded-xl border border-blue-100">
+                <span className="text-[11px] font-medium text-blue-800">{syncStatusText}</span>
+              </div>
+              <button
+                type="button"
+                onClick={onManualSync}
+                disabled={isSyncing}
+                className="w-full py-2 px-4 rounded-xl text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isSyncing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                Force Sync Now
+              </button>
+            </div>
+          )}
+
           <button
             type="submit"
             onClick={handleSave}
