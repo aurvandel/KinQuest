@@ -8,11 +8,12 @@ interface FeedProps {
   currentUserId: string | null;
   onDeleteSubmission: (subId: string) => void;
   onRetryPending?: (subId: string) => Promise<void>;
+  currentUserRole?: "user" | "admin";
 }
 
 const ITEMS_PER_PAGE = 10;
 
-export function Feed({ submissions, items, currentUserId, onDeleteSubmission, onRetryPending }: FeedProps) {
+export function Feed({ submissions, items, currentUserId, onDeleteSubmission, onRetryPending, currentUserRole }: FeedProps) {
   const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [retryingMap, setRetryingMap] = useState<{ [key: string]: boolean }>({});
@@ -148,12 +149,12 @@ export function Feed({ submissions, items, currentUserId, onDeleteSubmission, on
                         </h3>
                       </div>
 
-                      {isOwner && (
+                      {(isOwner || (currentUserRole === "admin")) && (
                         <button
                           onClick={() => onDeleteSubmission(sub.id)}
                           type="button"
                           className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-full transition"
-                          title="Delete submission"
+                          title={isOwner ? "Delete submission" : "Delete submission (Admin)"}
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>

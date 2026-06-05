@@ -43,8 +43,21 @@ export function UserSettingsModal({
 }: UserSettingsModalProps) {
   if (!isOpen) return null;
 
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    // Only close if clicking on the backdrop, not the modal
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    await onSubmit(e);
+    // Close modal after save completes
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1999] p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1999] p-4" onClick={handleBackdropClick}>
       <div className="bg-white rounded-3xl max-w-md w-full shadow-lg animate-fadeIn overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#e5e5dd] p-6">
@@ -182,7 +195,7 @@ export function UserSettingsModal({
         <div className="p-6 border-t border-[#e5e5dd] bg-[#fafaf7]">
           <button
             type="submit"
-            onClick={onSubmit}
+            onClick={handleSave}
             disabled={isLoading}
             className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >

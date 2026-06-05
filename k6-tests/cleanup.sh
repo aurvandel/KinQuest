@@ -48,31 +48,93 @@ if ! docker compose ps | grep -q db; then
 fi
 
 echo -e "${YELLOW}Cleaning up Supabase database (Docker PostgreSQL)...${NC}"
-echo "✓ All Supabase tables will be cleaned automatically (no manual steps needed)"
 echo ""
 
-# SQL statements to delete test data from Supabase (self-hosted in Docker)
-# Delete in order: submissions → messages → items → users
-# The 'db' container in docker-compose is the Supabase PostgreSQL database
-echo "  • Removing test submissions..."
-docker compose exec -T db psql -U postgres -d postgres -c \
-  "DELETE FROM submissions WHERE username LIKE 'player_%' OR username LIKE 'spike_%' OR username LIKE 'chattester_%' OR username LIKE 'endurance_%' OR username LIKE 'testplayer%';" \
-  2>/dev/null || echo "  • Submissions cleanup may have skipped some entries"
+# Create a temporary SQL file with all cleanup commands
+CLEANUP_SQL=$(cat <<'EOF'
+-- Disable foreign key checks temporarily
+SET CONSTRAINTS ALL DEFERRED;
 
-echo "  • Removing test chat messages..."
-docker compose exec -T db psql -U postgres -d postgres -c \
-  "DELETE FROM messages WHERE sender_name LIKE 'player_%' OR sender_name LIKE 'spike_%' OR sender_name LIKE 'chattester_%' OR sender_name LIKE 'endurance_%' OR sender_name LIKE 'testplayer%';" \
-  2>/dev/null || echo "  • Messages cleanup may have skipped some entries"
+-- Delete test submissions (all test patterns)
+DELETE FROM submissions WHERE 
+  user_id LIKE 'player_%' OR
+  user_id LIKE 'spike_user_%' OR
+  user_id LIKE 'chattester_%' OR
+  user_id LIKE 'endurance_%' OR
+  user_id LIKE 'testplayer%' OR
+  username LIKE 'player_%' OR
+  username LIKE 'spike_%' OR
+  username LIKE 'chattester_%' OR
+  username LIKE 'endurance_%' OR
+  username LIKE 'testplayer%';
 
-echo "  • Removing test-created and test-modified challenges..."
-docker compose exec -T db psql -U postgres -d postgres -c \
-  "DELETE FROM items WHERE created_by IN (SELECT id FROM profiles WHERE username LIKE 'player_%' OR username LIKE 'spike_%' OR username LIKE 'chattester_%' OR username LIKE 'endurance_%' OR username LIKE 'testplayer%') OR title LIKE '%TEST_ADMIN%' OR description LIKE '%TEST_ADMIN%';" \
-  2>/dev/null || echo "  • Test challenge removal complete"
+-- Delete test chat messages (all test patterns)
+DELETE FROM messages WHERE
+  sender_id LIKE 'player_%' OR
+  sender_id LIKE 'spike_user_%' OR
+  sender_id LIKE 'chattester_%' OR
+  sender_id LIKE 'endurance_%' OR
+  sender_id LIKE 'testplayer%' OR
+  sender_name LIKE 'player_%' OR
+  sender_name LIKE 'spike_%' OR
+  sender_name LIKE 'chattester_%' OR
+  sender_name LIKE 'endurance_%' OR
+  sender_name LIKE 'testplayer%' OR
+  receiver_id LIKE 'player_%' OR
+  receiver_id LIKE 'spike_user_%' OR
+  receiver_id LIKE 'chattester_%' OR
+  receiver_id LIKE 'endurance_%' OR
+  receiver_id LIKE 'testplayer%';
 
-echo "  • Removing test users..."
-docker compose exec -T db psql -U postgres -d postgres -c \
-  "DELETE FROM profiles WHERE username LIKE 'player_%' OR username LIKE 'spike_%' OR username LIKE 'chattester_%' OR username LIKE 'endurance_%' OR username LIKE 'testplayer%' OR username LIKE 'admin_test%';" \
-  2>/dev/null || echo "  • Test user cleanup may have encountered an issue"
+-- Delete test items/challenges created by test users
+DELETE FROM items WHERE
+  created_by IN (
+    SELECT id FROM profiles WHERE
+      id LIKE 'player_%' OR
+      id LIKE 'spike_user_%' OR
+      id LIKE 'chattester_%' OR
+      id LIKE 'endurance_%' OR
+      id LIKE 'testplayer%' OR
+      username LIKE 'player_%' OR
+      username LIKE 'spike_%' OR
+      username LIKE 'chattester_%' OR
+      username LIKE 'endurance_%' OR
+      username LIKE 'testplayer%' OR
+      username LIKE 'admin_test%'
+  ) OR
+  title LIKE '%TEST_ADMIN%' OR
+  description LIKE '%TEST_ADMIN%';
+
+-- Delete test users (all test patterns)
+DELETE FROM profiles WHERE
+  id LIKE 'player_%' OR
+  id LIKE 'spike_user_%' OR
+  id LIKE 'chattester_%' OR
+  id LIKE 'endurance_%' OR
+  id LIKE 'testplayer%' OR
+  username LIKE 'player_%' OR
+  username LIKE 'spike_%' OR
+  username LIKE 'chattester_%' OR
+  username LIKE 'endurance_%' OR
+  username LIKE 'testplayer%' OR
+  username LIKE 'admin_test%';
+
+-- Re-enable foreign key checks
+SET CONSTRAINTS ALL IMMEDIATE;
+EOF
+)
+
+# Execute cleanup
+echo "Running comprehensive cleanup..."
+docker compose exec -T db psql -U postgres -d postgres << SQL
+$CLEANUP_SQL
+SQL
+
+if [ $? -eq 0 ]; then
+  echo -e "${GREEN}✓ Database cleanup completed successfully${NC}"
+else
+  echo -e "${RED}✗ Database cleanup encountered issues${NC}"
+fi
 
 # Reset admin settings to defaults
 echo "Resetting admin settings..."

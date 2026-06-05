@@ -48,7 +48,8 @@ import {
   Film,
   ShieldCheck,
   Satellite,
-  X
+  X,
+  PlusCircle
 } from "lucide-react";
 
 export default function App() {
@@ -60,7 +61,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
 
   // Game branding states
-  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: null, inviteRequired: true, activeInviteCode: "stewart-test" });
+  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: "/kinquest_logo.png", inviteRequired: true, activeInviteCode: "stewart-test" });
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [adminNameInput, setAdminNameInput] = useState("");
   const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
@@ -424,13 +425,88 @@ CREATE TABLE IF NOT EXISTS submissions (
     socket.send(JSON.stringify(message));
   };
 
-  // Pre-populate admin inputs when settings load or when opening the panel
+  // Admin action handlers for chat moderation
+  const handleDeleteMessage = async (messageId: string) => {
+    if (profile?.role !== "admin") return;
+    try {
+      const response = await fetch(`/api/messages/${messageId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile.id })
+      });
+      if (!response.ok) throw new Error("Failed to delete message");
+    } catch (err) {
+      console.error("Error deleting message:", err);
+    }
+  };
+
+  const handleMuteUser = async (userId: string) => {
+    if (profile?.role !== "admin") return;
+    try {
+      const response = await fetch(`/api/users/${userId}/mute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminId: profile.id })
+      });
+      if (!response.ok) throw new Error("Failed to mute user");
+    } catch (err) {
+      console.error("Error muting user:", err);
+    }
+  };
+
+  const handleUnmuteUser = async (userId: string) => {
+    if (profile?.role !== "admin") return;
+    try {
+      const response = await fetch(`/api/users/${userId}/mute`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminId: profile.id })
+      });
+      if (!response.ok) throw new Error("Failed to unmute user");
+    } catch (err) {
+      console.error("Error unmuting user:", err);
+    }
+  };
+
+  const handleBootUser = async (userId: string) => {
+    if (profile?.role !== "admin") return;
+    try {
+      const response = await fetch(`/api/users/${userId}/boot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminId: profile.id })
+      });
+      if (!response.ok) throw new Error("Failed to boot user");
+    } catch (err) {
+      console.error("Error booting user:", err);
+    }
+  };
+
+  // Ref to track if we've initialized the admin form for the current open state
+  const initializedAdminFormRef = useRef<boolean>(false);
+
+  // Pre-populate admin inputs ONLY when panel opens (not on every settings change)
   useEffect(() => {
-    if (settings) {
+    if (adminPanelOpen && !initializedAdminFormRef.current && settings) {
+      // Only initialize when opening, not on every settings change
       setAdminNameInput(settings.name);
       setAdminIconInput(settings.icon);
+      setAdminLatInput(settings.defaultLat ?? 41.9076);
+      setAdminLngInput(settings.defaultLng ?? -111.3800);
+      setAdminRadiusInput(settings.defaultRadius ?? 200);
+      setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+      setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
+      setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
+      setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
+      setAdminInviteRequiredInput(settings.inviteRequired !== false);
+      setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
+      setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
+      initializedAdminFormRef.current = true;
+    } else if (!adminPanelOpen) {
+      // Reset the flag when panel closes so it can initialize again when reopened
+      initializedAdminFormRef.current = false;
     }
-  }, [settings, adminPanelOpen]);
+  }, [adminPanelOpen, settings]);
 
   // Ref to track which profile we've populated the form for
   const populatedProfileIdRef = useRef<string | null>(null);
@@ -563,7 +639,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "KinQuest",
-          icon: null,
+          icon: "/kinquest_logo.png",
           defaultLat: 41.9076,
           defaultLng: -111.3800,
           defaultRadius: 200,
@@ -580,7 +656,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         const data = await res.json();
         setSettings(data.settings);
         setAdminNameInput("KinQuest");
-        setAdminIconInput(null);
+        setAdminIconInput("/kinquest_logo.png");
         setAdminLatInput(41.9076);
         setAdminLngInput(-111.3800);
         setAdminRadiusInput(200);
@@ -1063,7 +1139,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <Compass className="h-6 w-6 animate-spin-slow text-[#f5f5f0]" />
               )}
             </div>
-            <h2 className="mt-6 text-center text-3xl font-serif font-bold italic text-[#5a5a40] tracking-tight text-balance">
+            <h2 className="mt-6 text-center text-3xl font-serif font-bold text-[#5a5a40] tracking-tight text-balance">
               {settings.name}
             </h2>
             <p className="mt-2 text-center text-sm text-[#8c8c82] font-medium leading-relaxed max-w-sm mx-auto">
@@ -1145,10 +1221,9 @@ CREATE TABLE IF NOT EXISTS submissions (
               )}
             </div>
             <div className="min-w-0">
-              <h1 className="text-xs sm:text-sm md:text-base font-serif italic text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[80px] sm:max-w-[150px] md:max-w-[200px]">
+              <h1 className="text-xs sm:text-sm md:text-base font-serif text-[#5a5a40] font-bold tracking-tight leading-none truncate max-w-[80px] sm:max-w-[150px] md:max-w-[200px]">
                 {settings.name}
               </h1>
-              <span className="text-[8px] sm:text-[9px] font-mono uppercase tracking-widest text-brand-muted hidden sm:block">Docker Node</span>
             </div>
           </div>
 
@@ -1232,25 +1307,13 @@ CREATE TABLE IF NOT EXISTS submissions (
                     setAdminPanelOpen(!adminPanelOpen);
                     setAdminSaveSuccess(false);
                     setAdminSaveError(null);
-                    if (settings) {
-                      setAdminNameInput(settings.name);
-                      setAdminIconInput(settings.icon);
-                      setAdminLatInput(settings.defaultLat ?? 41.9076);
-                      setAdminLngInput(settings.defaultLng ?? -111.3800);
-                      setAdminRadiusInput(settings.defaultRadius ?? 200);
-                      setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
-                      setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
-                      setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
-                      setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
-                      setAdminInviteRequiredInput(settings.inviteRequired !== false);
-                      setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
-                      setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
-                    }
                     // Fetch storage info when panel opens
-                    fetch("/api/storage-info")
-                      .then(res => res.json())
-                      .then(data => setStorageInfo(data))
-                      .catch(err => console.error("Failed to fetch storage info:", err));
+                    if (!adminPanelOpen) {
+                      fetch("/api/storage-info")
+                        .then(res => res.json())
+                        .then(data => setStorageInfo(data))
+                        .catch(err => console.error("Failed to fetch storage info:", err));
+                    }
                   }}
                   type="button"
                   className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
@@ -1539,22 +1602,6 @@ CREATE TABLE IF NOT EXISTS submissions (
           </span>
         </div>
 
-        {/* Database Connectivity Status - Admin Only */}
-        {profile?.role === "admin" && (
-          <div className="bg-white/80 border border-[#d2d2c8] rounded-2xl p-4 max-w-md mx-auto shadow-sm space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 font-medium text-[#5a5a40]">
-                <Database className="h-4 w-4 text-[#8c8c5a]" />
-                <span>Storage Node:</span>
-              </div>
-              
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-150 text-emerald-800 border border-emerald-200">
-                Supabase Cloud
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Dynamic Panel Renders */}
         <div className="pt-2">
           {activeTab === "missions" && (
@@ -1601,6 +1648,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               currentUserId={profile.id}
               onDeleteSubmission={handleDeleteSubmission}
               onRetryPending={handleRetryPendingSubmission}
+              currentUserRole={profile?.role || "user"}
             />
           )}
 
@@ -1608,6 +1656,9 @@ CREATE TABLE IF NOT EXISTS submissions (
             <Gallery
               submissions={submissions}
               items={items}
+              currentUserId={profile?.id || null}
+              userRole={profile?.role || "user"}
+              onDeleteSubmission={handleDeleteSubmission}
             />
           )}
 
@@ -1628,7 +1679,21 @@ CREATE TABLE IF NOT EXISTS submissions (
           )}
 
           {activeTab === "logs" && profile?.role === "admin" && (
-            <ServerLogs />
+            <>
+              <div className="bg-white/80 border border-[#d2d2c8] rounded-2xl p-4 max-w-md mx-auto shadow-sm space-y-3 mb-6">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 font-medium text-[#5a5a40]">
+                    <Database className="h-4 w-4 text-[#8c8c5a]" />
+                    <span>Storage Node:</span>
+                  </div>
+                  
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-emerald-150 text-emerald-800 border border-emerald-200">
+                    Supabase Cloud
+                  </span>
+                </div>
+              </div>
+              <ServerLogs />
+            </>
           )}
 
           {activeTab === "chat" && (
@@ -1638,10 +1703,25 @@ CREATE TABLE IF NOT EXISTS submissions (
               onlinePlayers={onlinePlayers}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
+              onDeleteMessage={handleDeleteMessage}
+              onMuteUser={handleMuteUser}
+              onUnmuteUser={handleUnmuteUser}
+              onBootUser={handleBootUser}
             />
           )}
         </div>
       </main>
+
+      {/* Floating Plus Button - Create Mission */}
+      {activeTab === "missions" && profile && (
+        <button
+          onClick={() => setShowCreateMissionModal(true)}
+          className="fixed bottom-8 right-8 w-16 h-16 rounded-full bg-brand-moss hover:bg-brand-moss-dark text-white shadow-lg hover:shadow-xl active:scale-95 transition-all flex items-center justify-center z-50 flex-shrink-0 group"
+          title="Create a new mission"
+        >
+          <PlusCircle className="h-8 w-8 group-hover:scale-110 transition-transform" />
+        </button>
+      )}
 
       {/* Footer credits bar */}
       <footer className="h-12 bg-[#5a5a40] text-white/60 px-4 sm:px-8 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] font-bold shrink-0 mt-auto">

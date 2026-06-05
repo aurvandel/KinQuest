@@ -57,6 +57,9 @@ export interface ChatMessage {
   receiverId: string | null; // null for public shoutbox, user_id string for private message
   text: string;
   createdAt: string;
+  isDeleted?: boolean; // Marked for deletion by moderator
+  deletedAt?: string; // When message was deleted
+  deletedBy?: string; // Admin user ID who deleted it
 }
 
 export interface Slideshow {
@@ -889,7 +892,10 @@ export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
       sender_name: msg.senderName,
       receiver_id: msg.receiverId,
       text: msg.text,
-      created_at: msg.createdAt
+      created_at: msg.createdAt,
+      is_deleted: msg.isDeleted || false,
+      deleted_at: msg.deletedAt || null,
+      deleted_by: msg.deletedBy || null
     };
     const { error } = await supabase!.from("messages").insert(row);
     if (error) {
@@ -917,10 +923,90 @@ export async function getChatMessages(): Promise<ChatMessage[]> {
       senderName: m.sender_name,
       receiverId: m.receiver_id,
       text: m.text,
-      createdAt: m.created_at
+      createdAt: m.created_at,
+      isDeleted: m.is_deleted || false,
+      deletedAt: m.deleted_at,
+      deletedBy: m.deleted_by
     }));
   } catch (err) {
     console.warn("Supabase message retrieve error:", err);
+    throw err;
+  }
+}
+
+// Delete a message (admin only)
+export async function deleteMessage(messageId: string, adminId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("messages")
+      .update({
+        is_deleted: true,
+        deleted_at: new Date().toISOString(),
+        deleted_by: adminId
+      })
+      .eq("id", messageId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn("Failed to delete message:", err);
+    throw err;
+  }
+}
+
+// Mute a user
+export async function muteUser(userId: string, mutedUntil?: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("profiles")
+      .update({
+        is_muted: true,
+        muted_until: mutedUntil || null
+      })
+      .eq("id", userId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn("Failed to mute user:", err);
+    throw err;
+  }
+}
+
+// Unmute a user
+export async function unmuteUser(userId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("profiles")
+      .update({
+        is_muted: false,
+        muted_until: null
+      })
+      .eq("id", userId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn("Failed to unmute user:", err);
+    throw err;
+  }
+}
+
+// Boot (kick) a user from the game
+export async function bootUser(userId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("profiles")
+      .update({
+        is_booted: true,
+        booted_at: new Date().toISOString()
+      })
+      .eq("id", userId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn("Failed to boot user:", err);
     throw err;
   }
 }

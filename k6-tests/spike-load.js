@@ -42,13 +42,13 @@ function getTestImageBase64() {
 }
 
 export default function () {
-  const userId = `spike_user_${__VU}_${__ITER}`;
   const username = `spike_${randomString(8)}`;
+  let userId = `spike_user_${__VU}_${__ITER}`; // Local ID as fallback
+  let registeredUserId = userId; // Will be updated with server-assigned ID
 
   group('Spike Load - Register User', () => {
     const registerRes = http.post(`${BASE_URL}/api/auth/register`, 
       JSON.stringify({
-        userId,
         username,
         displayName: `SpikeUser ${__VU}`,
       }),
@@ -61,10 +61,25 @@ export default function () {
     const success = check(registerRes, {
       'registration ok': (r) => r.status === 200 || r.status === 400,
     });
-    if (!success) peakErrorRate.add(1);
+    
+    if (!success) {
+      peakErrorRate.add(1);
+      console.error(`Registration failed: ${registerRes.status} - ${registerRes.body}`);
+    } else if (registerRes.status === 200) {
+      // Extract server-assigned user ID from response
+      try {
+        const userData = JSON.parse(registerRes.body);
+        if (userData.id) {
+          registeredUserId = userData.id;
+          console.log(`User registered with server ID: ${registeredUserId}`);
+        }
+      } catch (e) {
+        console.warn('Failed to parse registration response to extract ID:', e);
+      }
+    }
   });
 
-  sleep(0.5);
+  sleep(1); // Wait longer for profile to be written to database
 
   group('Spike Load - Get Game State', () => {
     const gameRes = http.get(`${BASE_URL}/api/game-state`, {
@@ -74,7 +89,10 @@ export default function () {
     const success = check(gameRes, {
       'game state ok': (r) => r.status === 200,
     });
-    if (!success) peakErrorRate.add(1);
+    if (!success) {
+      peakErrorRate.add(1);
+      console.error(`Game state failed: ${gameRes.status} - ${gameRes.body}`);
+    }
     peakLoadDuration.add(gameRes.timings.duration);
   });
 
@@ -87,40 +105,54 @@ export default function () {
     });
 
     if (gameRes.status === 200) {
-      const gameState = JSON.parse(gameRes.body);
-      const items = gameState.items || [];
-      
-      if (items.length > 0) {
-        for (let i = 0; i < 3; i++) {
-          const itemIndex = (Math.floor(Math.random() * items.length));
-          const itemId = items[itemIndex].id;
-          
-          const submissionRes = http.post(`${BASE_URL}/api/verify-submission`,
-            JSON.stringify({
-              userId,
-              username,
-              itemId: itemId,
-              imageBase64: getTestImageBase64(),
-              mimeType: 'image/png',
-              lat: 34.0522 + Math.random() * 0.1,
-              lng: -118.2437 + Math.random() * 0.1,
-            }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-              tags: { name: 'SpikeSubmission' },
-              timeout: '30s',
+      try {
+        const gameState = JSON.parse(gameRes.body);
+        const items = gameState.items || [];
+        
+        if (items.length > 0) {
+          for (let i = 0; i < 3; i++) {
+            const itemIndex = (Math.floor(Math.random() * items.length));
+            const itemId = items[itemIndex].id;
+            
+            const submissionRes = http.post(`${BASE_URL}/api/verify-submission`,
+              JSON.stringify({
+                userId: registeredUserId,
+                username,
+                itemId: itemId,
+                imageBase64: getTestImageBase64(),
+                mimeType: 'image/png',
+                lat: 34.0522 + Math.random() * 0.1,
+                lng: -118.2437 + Math.random() * 0.1,
+              }),
+              {
+                headers: { 'Content-Type': 'application/json' },
+                tags: { name: 'SpikeSubmission' },
+                timeout: '30s',
+              }
+            );
+
+            const success = check(submissionRes, {
+              'submission ok': (r) => r.status === 200,
+            });
+            if (!success) {
+              peakErrorRate.add(1);
+              console.error(`Submission failed: ${submissionRes.status} - ${submissionRes.body}`);
             }
-          );
+            peakLoadDuration.add(submissionRes.timings.duration);
 
-          const success = check(submissionRes, {
-            'submission ok': (r) => r.status === 200,
-          });
-          if (!success) peakErrorRate.add(1);
-          peakLoadDuration.add(submissionRes.timings.duration);
-
-          sleep(0.1);
+            sleep(0.1);
+          }
+        } else {
+          console.warn('No items available for submission in spike test');
+          peakErrorRate.add(1);
         }
+      } catch (e) {
+        console.error('Failed to parse game state in spike test:', e);
+        peakErrorRate.add(1);
       }
+    } else {
+      console.error(`Failed to fetch game state for spike submissions: ${gameRes.status}`);
+      peakErrorRate.add(1);
     }
   });
 

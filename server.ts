@@ -24,6 +24,10 @@ import {
   ScavengerItem,
   saveChatMessage,
   getChatMessages,
+  deleteMessage,
+  muteUser,
+  unmuteUser,
+  bootUser,
   ChatMessage,
   saveSlideshow,
   getSlideshow,
@@ -1179,6 +1183,113 @@ app.get("/api/chat-history", async (req, res) => {
     res.json(logs);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch chat logs", details: err.message });
+  }
+});
+
+// 8.1 Admin or message owner delete message
+app.delete("/api/messages/:messageId", async (req, res) => {
+  const { messageId } = req.params;
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "Missing userId" });
+  }
+
+  try {
+    // Get the message
+    const messages = await getChatMessages();
+    const message = messages.find(m => m.id === messageId);
+    
+    if (!message) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    // Verify user is either admin or the message owner
+    const user = await ensureProfileExists(userId);
+    const isAdmin = user.role === "admin";
+    const isOwner = message.senderId === userId;
+
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: "You can only delete your own messages" });
+    }
+
+    const success = await deleteMessage(messageId, userId);
+    if (success) {
+      res.json({ success: true, message: "Message deleted" });
+    } else {
+      res.status(404).json({ error: "Message not found" });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to delete message", details: err.message });
+  }
+});
+
+// 8.2 Admin mute user
+app.post("/api/users/:userId/mute", async (req, res) => {
+  const { userId } = req.params;
+  const { adminId, mutedUntil } = req.body;
+
+  if (!adminId) {
+    return res.status(400).json({ error: "Missing adminId" });
+  }
+
+  try {
+    // Verify user is admin
+    const admin = await ensureProfileExists(adminId);
+    if (admin.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can mute users" });
+    }
+
+    const success = await muteUser(userId, mutedUntil || null);
+    res.json({ success, message: `User muted${mutedUntil ? " until " + mutedUntil : ""}` });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to mute user", details: err.message });
+  }
+});
+
+// 8.3 Admin unmute user
+app.delete("/api/users/:userId/mute", async (req, res) => {
+  const { userId } = req.params;
+  const { adminId } = req.body;
+
+  if (!adminId) {
+    return res.status(400).json({ error: "Missing adminId" });
+  }
+
+  try {
+    // Verify user is admin
+    const admin = await ensureProfileExists(adminId);
+    if (admin.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can unmute users" });
+    }
+
+    const success = await unmuteUser(userId);
+    res.json({ success, message: "User unmuted" });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to unmute user", details: err.message });
+  }
+});
+
+// 8.4 Admin boot (kick) user from game
+app.post("/api/users/:userId/boot", async (req, res) => {
+  const { userId } = req.params;
+  const { adminId } = req.body;
+
+  if (!adminId) {
+    return res.status(400).json({ error: "Missing adminId" });
+  }
+
+  try {
+    // Verify user is admin
+    const admin = await ensureProfileExists(adminId);
+    if (admin.role !== "admin") {
+      return res.status(403).json({ error: "Only admins can boot users" });
+    }
+
+    const success = await bootUser(userId);
+    res.json({ success, message: "User booted from game" });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to boot user", details: err.message });
   }
 });
 

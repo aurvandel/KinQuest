@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from "react";
 import { Submission, ScavengerItem } from "../types";
-import { ChevronLeft, ChevronRight, Pause, Play, Sparkles, Image as ImageIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, Sparkles, Image as ImageIcon, Trash2 } from "lucide-react";
 
 interface GalleryProps {
   submissions: Submission[];
   items: ScavengerItem[];
+  currentUserId?: string | null;
+  userRole?: "user" | "admin";
+  onDeleteSubmission?: (subId: string) => void;
 }
 
 const SLIDESHOW_INTERVAL = 3000; // 3 seconds per slide
 
-export function Gallery({ submissions, items }: GalleryProps) {
+export function Gallery({ submissions, items, currentUserId, userRole, onDeleteSubmission }: GalleryProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isAutoPlay, setIsAutoPlay] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -44,6 +47,18 @@ export function Gallery({ submissions, items }: GalleryProps) {
 
   const toggleAutoPlay = () => {
     setIsAutoPlay(!isAutoPlay);
+  };
+
+  const handleDeleteCurrentImage = () => {
+    if (!onDeleteSubmission) return;
+    const currentSubmission = approvedSubmissions[currentIndex];
+    onDeleteSubmission(currentSubmission.id);
+  };
+
+  const canDeleteCurrentImage = (): boolean => {
+    if (!currentUserId || !onDeleteSubmission) return false;
+    const currentSubmission = approvedSubmissions[currentIndex];
+    return userRole === "admin" || currentSubmission.userId === currentUserId;
   };
 
   if (approvedSubmissions.length === 0) {
@@ -107,6 +122,17 @@ export function Gallery({ submissions, items }: GalleryProps) {
             📸 Captured by <span className="font-semibold">{currentSubmission.username}</span>
           </p>
         </div>
+
+        {/* Delete Button (top-right) */}
+        {canDeleteCurrentImage() && !isFullscreen && (
+          <button
+            onClick={handleDeleteCurrentImage}
+            className="absolute top-4 right-16 bg-red-500/80 hover:bg-red-600 text-white p-2 rounded-lg transition z-10"
+            title="Delete this image"
+          >
+            <Trash2 className="h-5 w-5" />
+          </button>
+        )}
 
         {/* Fullscreen Toggle (top-right) */}
         <button

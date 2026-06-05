@@ -19,6 +19,10 @@ export interface PlayerProfile {
   completedCount: number;
   createdAt: string;
   role?: "user" | "admin";
+  isMuted?: boolean; // Prevent user from sending messages
+  mutedUntil?: string | null; // ISO timestamp for when mute expires (null = permanent)
+  isBooted?: boolean; // User has been kicked from game
+  bootedAt?: string; // When user was booted
   permissions?: {
     shareLocation?: boolean;
     allowNotifications?: boolean;
@@ -53,6 +57,9 @@ export interface ChatMessage {
   receiverId: string | null; // null for public shoutbox, otherwise target player id
   text: string;
   createdAt: string;
+  isDeleted?: boolean; // Marked for deletion by moderator
+  deletedAt?: string; // When message was deleted
+  deletedBy?: string; // Admin user ID who deleted it
 }
 
 export interface Slideshow {

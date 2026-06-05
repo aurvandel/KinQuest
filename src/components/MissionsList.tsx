@@ -11,9 +11,7 @@ import {
   ChevronUp,
   Loader2,
   Sparkles,
-  ArrowRight,
   MapPin,
-  PlusCircle,
   Send,
   HelpCircle,
   Compass,
@@ -22,7 +20,8 @@ import {
   Trash2,
   AlertCircle,
   Edit2,
-  UserCheck
+  UserCheck,
+  ArrowRight
 } from "lucide-react";
 
 interface MissionsListProps {
@@ -218,23 +217,6 @@ export function MissionsList({
 
   return (
     <div className="space-y-6">
-      {/* Create Mission Button */}
-      {onAddChallenge && onShowCreateModal && (
-        <button
-          onClick={onShowCreateModal}
-          className="w-full bg-white border border-brand-border rounded-[28px] px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-brand-beige-light/30 transition select-none group"
-        >
-          <div className="flex items-center gap-2">
-            <PlusCircle className="h-5 w-5 text-brand-moss group-hover:text-brand-moss-dark transition" />
-            <div className="text-left">
-              <h3 className="text-sm font-serif font-bold italic text-brand-moss group-hover:text-brand-moss-dark transition">Create a Custom Hunt Mission</h3>
-              <p className="text-[10px] text-brand-muted">Publish a new photo or GPS geotagged challenge</p>
-            </div>
-          </div>
-          <ArrowRight className="h-4 w-4 text-brand-moss group-hover:translate-x-1 transition" />
-        </button>
-      )}
-
       {/* Category Slider */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none">
         {categories.map((cat) => (

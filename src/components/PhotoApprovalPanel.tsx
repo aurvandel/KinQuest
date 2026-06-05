@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Submission, ScavengerItem, PlayerProfile } from "../types";
-import { CheckCircle, XCircle, AlertCircle, MapPin, User, Zap, Filter } from "lucide-react";
+import { CheckCircle, XCircle, AlertCircle, MapPin, User, Zap, Filter, Loader2 } from "lucide-react";
 
 interface PhotoApprovalPanelProps {
   submissions: Submission[];
@@ -9,6 +9,8 @@ interface PhotoApprovalPanelProps {
   onApprove: (subId: string, points?: number) => Promise<void>;
   onReject: (subId: string) => Promise<void>;
 }
+
+const ITEMS_PER_PAGE = 5;
 
 export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
   submissions,
@@ -21,6 +23,9 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
   const [approving, setApproving] = useState<{ [key: string]: boolean }>({});
   const [rejecting, setRejecting] = useState<{ [key: string]: boolean }>({});
   const [pointsModal, setPointsModal] = useState<{ visible: boolean; subId: string; points: number } | null>(null);
+  const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
 
   // Filter submissions - exclude approved ones from the panel
   const filteredSubmissions = submissions.filter((sub) => {
@@ -29,6 +34,36 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
     if (filter === "forced") return sub.forcedApproval === true;
     return true;
   });
+
+  // Infinite scroll detection using Intersection Observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && displayLimit < filteredSubmissions.length) {
+          setIsLoadingMore(true);
+          // Simulate a small delay for better UX
+          setTimeout(() => {
+            setDisplayLimit((prev) => Math.min(prev + ITEMS_PER_PAGE, filteredSubmissions.length));
+            setIsLoadingMore(false);
+          }, 300);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (endRef.current) {
+      observer.observe(endRef.current);
+    }
+
+    return () => {
+      if (endRef.current) {
+        observer.unobserve(endRef.current);
+      }
+    };
+  }, [displayLimit, filteredSubmissions.length]);
+
+  // Get only the submissions to display
+  const displayedSubmissions = filteredSubmissions.slice(0, displayLimit);
 
   const getItemTitle = (itemId: string) => {
     return items.find((item) => item.id === itemId)?.title || "Unknown Mission";
@@ -95,7 +130,10 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
       {/* Filter Controls */}
       <div className="flex gap-2 mb-6">
         <button
-          onClick={() => setFilter("all")}
+          onClick={() => {
+            setFilter("all");
+            setDisplayLimit(ITEMS_PER_PAGE);
+          }}
           className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
             filter === "all"
               ? "bg-[#5a5a40] text-white"
@@ -105,7 +143,10 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
           All ({submissions.length})
         </button>
         <button
-          onClick={() => setFilter("pending")}
+          onClick={() => {
+            setFilter("pending");
+            setDisplayLimit(ITEMS_PER_PAGE);
+          }}
           className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
             filter === "pending"
               ? "bg-[#5a5a40] text-white"
@@ -116,7 +157,10 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
           Pending ({submissions.filter((s) => s.status === "pending").length})
         </button>
         <button
-          onClick={() => setFilter("forced")}
+          onClick={() => {
+            setFilter("forced");
+            setDisplayLimit(ITEMS_PER_PAGE);
+          }}
           className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
             filter === "forced"
               ? "bg-[#5a5a40] text-white"
@@ -130,7 +174,7 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
 
       {/* Submission Cards */}
       <div className="grid gap-4">
-        {filteredSubmissions.map((submission) => (
+        {displayedSubmissions.map((submission) => (
           <div
             key={submission.id}
             className="bg-white border border-brand-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition"
@@ -253,19 +297,42 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
             </div>
           </div>
         ))}
+
+        {/* Loading more indicator */}
+        {isLoadingMore && (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-[#5a5a40]" />
+          </div>
+        )}
+
+        {/* Infinite scroll sentinel */}
+        {displayLimit < filteredSubmissions.length && (
+          <div ref={endRef} className="h-4" />
+        )}
+
+        {/* End of submissions indicator */}
+        {displayLimit >= filteredSubmissions.length && filteredSubmissions.length > 0 && (
+          <div className="text-center py-8 text-[#8c8c82]">
+            <p className="text-xs">You've reviewed all {filteredSubmissions.length} submissions!</p>
+          </div>
+        )}
       </div>
 
-      {/* Points Adjustment Modal */}
+      {/* Points Adjustment Tooltip */}
       {pointsModal?.visible && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-8 max-w-sm w-full shadow-xl">
-            <h2 className="text-xl font-bold text-[#5a5a40] mb-2">Adjust Points</h2>
-            <p className="text-sm text-[#8c8c82] mb-6">
-              Set the points to award for this submission. This will be recorded as a manual admin approval.
-            </p>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-[#5a5a40] mb-2">Points to Award</label>
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4">
+          <div className="bg-white rounded-xl p-4 shadow-lg border border-brand-border pointer-events-auto max-w-xs">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-sm font-bold text-[#5a5a40]">Points to Award</label>
+              <button
+                onClick={() => setPointsModal(null)}
+                className="text-brand-muted hover:text-[#5a5a40] text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="flex gap-2 items-end">
               <input
                 type="number"
                 min="0"
@@ -273,23 +340,15 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
                 onChange={(e) =>
                   setPointsModal({ ...pointsModal, points: Math.max(0, Number(e.target.value)) })
                 }
-                className="w-full px-4 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#5a5a40]"
+                className="flex-1 px-3 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#5a5a40] text-sm font-semibold"
+                autoFocus
               />
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setPointsModal(null)}
-                className="flex-1 px-4 py-2 border border-brand-border rounded-lg text-[#5a5a40] font-bold hover:bg-[#f5f5f0] transition"
-              >
-                Cancel
-              </button>
               <button
                 onClick={handleConfirmApprove}
                 disabled={approving[pointsModal.subId]}
-                className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition disabled:opacity-50"
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50 whitespace-nowrap"
               >
-                {approving[pointsModal.subId] ? "Approving..." : "Confirm"}
+                {approving[pointsModal.subId] ? "..." : "✓"}
               </button>
             </div>
           </div>

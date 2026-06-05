@@ -28,8 +28,14 @@ export function AdminAuthModal({
     }
   };
 
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[2000]">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[2000]" onClick={handleBackdropClick}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-lg animate-fadeIn">
         <div className="flex items-center justify-center w-10 h-10 rounded-full bg-[#5a5a40]/15 mx-auto mb-4">
           <Lock className="h-5 w-5 text-[#5a5a40]" />

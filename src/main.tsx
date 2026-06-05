@@ -2,6 +2,10 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { initializeUmami } from './utils/umami-init';
+
+// Initialize Umami tracking and replay
+initializeUmami();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

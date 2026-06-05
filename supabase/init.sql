@@ -36,7 +36,11 @@ CREATE TABLE IF NOT EXISTS profiles (
   score INTEGER DEFAULT 0,
   completed_count INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  is_muted BOOLEAN DEFAULT FALSE,
+  muted_until TIMESTAMPTZ,
+  is_booted BOOLEAN DEFAULT FALSE,
+  booted_at TIMESTAMPTZ
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON profiles TO anon;
@@ -93,7 +97,10 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_name TEXT NOT NULL,
   receiver_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  is_deleted BOOLEAN DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  deleted_by TEXT REFERENCES profiles(id) ON DELETE SET NULL
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON messages TO anon;

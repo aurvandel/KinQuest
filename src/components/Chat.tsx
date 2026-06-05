@@ -7,7 +7,11 @@ import {
   User, 
   MessageSquare, 
   Search, 
-  ShieldCheck
+  ShieldCheck,
+  Trash2,
+  Volume2,
+  VolumeX,
+  LogOut
 } from "lucide-react";
 
 interface ChatProps {
@@ -16,13 +20,19 @@ interface ChatProps {
   onlinePlayers: { id: string; username: string }[];
   chatMessages: ChatMessage[];
   onSendMessage: (text: string, receiverId: string | null) => void;
+  onDeleteMessage?: (messageId: string) => Promise<void>;
+  onMuteUser?: (userId: string) => Promise<void>;
+  onUnmuteUser?: (userId: string) => Promise<void>;
+  onBootUser?: (userId: string) => Promise<void>;
 }
 
-export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMessage }: ChatProps) {
+export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMessage, onDeleteMessage, onMuteUser, onUnmuteUser, onBootUser }: ChatProps) {
   const [activeSubTab, setActiveSubTab] = useState<"shout" | "pm">("shout");
   const [selectedRecipient, setSelectedRecipient] = useState<PlayerProfile | null>(null);
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const [isAdmin] = useState(profile?.role === "admin");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -260,6 +270,9 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
           ) : (
             filteredMessages.map((msg) => {
               const isMe = msg.senderId === profile.id;
+              const sender = players.find(p => p.id === msg.senderId);
+              const isSenderMuted = sender?.isMuted || false;
+              const isSenderBooted = sender?.isBooted || false;
               const formattedTime = new Date(msg.createdAt).toLocaleTimeString([], {
                 hour: "2-digit",
                 minute: "2-digit"
@@ -268,7 +281,9 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
               return (
                 <div 
                   key={msg.id} 
-                  className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
+                  className={`flex flex-col ${isMe ? "items-end" : "items-start"} group`}
+                  onMouseEnter={() => setHoveredMessageId(msg.id)}
+                  onMouseLeave={() => setHoveredMessageId(null)}
                 >
                   <div className="flex items-center gap-1.5 mb-0.5 px-1 select-none">
                     <span className="text-[10px] font-bold text-[#5a5a40]">
@@ -277,16 +292,71 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
                     <span className="text-[8px] text-[#a0a095] font-mono">
                       {formattedTime}
                     </span>
+                    {isSenderMuted && (
+                      <span className="text-[8px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-bold">🔇 MUTED</span>
+                    )}
+                    {isSenderBooted && (
+                      <span className="text-[8px] bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded font-bold">🚫 BOOTED</span>
+                    )}
                   </div>
 
-                  <div 
-                    className={`max-w-xs md:max-w-md p-3 rounded-2xl text-xs font-medium leading-relaxed ${
-                      isMe 
-                        ? "bg-[#5a5a40] text-white rounded-br-none" 
-                        : "bg-[#eaeaee] text-[#2d2d2c] rounded-bl-none border border-[#e5e5dd]"
-                    }`}
-                  >
-                    <p className="break-words">{msg.text}</p>
+                  <div className="flex items-start gap-2">
+                    <div 
+                      className={`max-w-xs md:max-w-md p-3 rounded-2xl text-xs font-medium leading-relaxed ${
+                        msg.isDeleted
+                          ? "bg-gray-200 text-gray-500 italic rounded-lg"
+                          : isMe 
+                          ? "bg-[#5a5a40] text-white rounded-br-none" 
+                          : "bg-[#eaeaee] text-[#2d2d2c] rounded-bl-none border border-[#e5e5dd]"
+                      }`}
+                    >
+                      <p className="break-words">
+                        {msg.isDeleted ? "This message was removed by a moderator" : msg.text}
+                      </p>
+                    </div>
+
+                    {/* Admin action buttons - show on hover */}
+                    {(isAdmin || isMe) && hoveredMessageId === msg.id && !msg.isDeleted && (
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={() => onDeleteMessage?.(msg.id)}
+                          className="p-1 bg-red-100 hover:bg-red-200 text-red-600 rounded transition"
+                          title={isMe ? "Delete your message" : "Delete message (Admin)"}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                        {isAdmin && !isSenderMuted ? (
+                          <button
+                            type="button"
+                            onClick={() => onMuteUser?.(msg.senderId)}
+                            className="p-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-600 rounded transition"
+                            title="Mute user"
+                          >
+                            <Volume2 className="h-3.5 w-3.5" />
+                          </button>
+                        ) : isAdmin && isSenderMuted ? (
+                          <button
+                            type="button"
+                            onClick={() => onUnmuteUser?.(msg.senderId)}
+                            className="p-1 bg-green-100 hover:bg-green-200 text-green-600 rounded transition"
+                            title="Unmute user"
+                          >
+                            <VolumeX className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => onBootUser?.(msg.senderId)}
+                            className="p-1 bg-purple-100 hover:bg-purple-200 text-purple-600 rounded transition"
+                            title="Boot user"
+                          >
+                            <LogOut className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -297,23 +367,33 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
 
         {/* Message sender console */}
         <form onSubmit={handleSend} className="p-3 border-t border-[#e5e5dd] flex gap-2 bg-[#fafaf7] shrink-0">
-          <input
-            type="text"
-            required
-            maxLength={300}
-            disabled={activeSubTab === "pm" && !selectedRecipient}
-            placeholder={
-              activeSubTab === "pm" && !selectedRecipient
-                ? "Select a player to begin typing..."
-                : `Say something to ${activeSubTab === "shout" ? "the lobby..." : selectedRecipient?.username + "..."}`
-            }
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
-            className="flex-1 bg-white border border-[#e5e5dd] rounded-xl px-4 py-2 text-xs outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium disabled:opacity-50"
-          />
+          <div className="flex-1 flex flex-col gap-1">
+            <input
+              type="text"
+              required
+              maxLength={300}
+              disabled={activeSubTab === "pm" && !selectedRecipient || profile?.isMuted}
+              placeholder={
+                profile?.isMuted
+                  ? "You have been muted by a moderator"
+                  : activeSubTab === "pm" && !selectedRecipient
+                  ? "Select a player to begin typing..."
+                  : `Say something to ${activeSubTab === "shout" ? "the lobby..." : selectedRecipient?.username + "..."}`
+              }
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              className="flex-1 bg-white border border-[#e5e5dd] rounded-xl px-4 py-2 text-xs outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium disabled:opacity-50"
+            />
+            {profile?.isMuted && (
+              <p className="text-[10px] text-red-600 font-semibold">🔇 You are muted and cannot send messages</p>
+            )}
+            {profile?.isBooted && (
+              <p className="text-[10px] text-gray-600 font-semibold">🚫 You have been removed from this game</p>
+            )}
+          </div>
           <button
             type="submit"
-            disabled={!messageText.trim() || (activeSubTab === "pm" && !selectedRecipient)}
+            disabled={!messageText.trim() || (activeSubTab === "pm" && !selectedRecipient) || profile?.isMuted || profile?.isBooted}
             className="bg-[#5a5a40] text-white p-2.5 rounded-xl hover:bg-[#464632] transition active:scale-95 cursor-pointer disabled:opacity-40 shrink-0 flex items-center justify-center"
           >
             <Send className="h-3.5 w-3.5" />
