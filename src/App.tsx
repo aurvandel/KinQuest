@@ -1389,7 +1389,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 
                 {/* Dropdown Menu */}
                 {userMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white border border-[#e5e5dd] rounded-xl shadow-lg z-[1100]">
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-[#e5e5dd] rounded-xl shadow-lg z-[1200]">
                     <button
                       onClick={() => {
                         setUserDashboardOpen(true);
@@ -1461,7 +1461,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             <ListFilter className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
             <span className="hidden sm:inline">Missions</span>
             {newMissionsCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] font-bold rounded-full h-5 w-5 flex items-center justify-center z-[1100]">
+              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] font-bold rounded-full h-5 w-5 flex items-center justify-center z-[1050]">
                 {newMissionsCount > 9 ? "9+" : newMissionsCount}
               </span>
             )}
@@ -1540,7 +1540,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <ShieldCheck className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
                 <span className="hidden sm:inline">Approve</span>
                 {submissions.filter(s => s.status === "pending").length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1100]">
+                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1050]">
                     {submissions.filter(s => s.status === "pending").length}
                   </span>
                 )}
@@ -1573,7 +1573,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             <MessageSquare className="h-3 sm:h-3.5 w-3 sm:w-3.5 flex-shrink-0" />
             <span className="hidden sm:inline">Chat</span>
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1100]">
+              <span className="absolute -top-1 -right-1 bg-[#c27d56] text-white rounded-full text-[8px] w-4 h-4 flex items-center justify-center font-bold animate-pulse select-none z-[1050]">
                 {unreadCount}
               </span>
             )}
