@@ -145,7 +145,8 @@ export function useMeshNetwork(options: UseMeshNetworkOptions) {
       itemId: string,
       imageBase64: string,
       userLat?: number,
-      userLng?: number
+      userLng?: number,
+      reunionId?: string
     ) => {
       if (!submissionQueueRef.current) {
         throw new Error("Submission queue not initialized");
@@ -156,7 +157,8 @@ export function useMeshNetwork(options: UseMeshNetworkOptions) {
         itemId,
         imageBase64,
         userLat,
-        userLng
+        userLng,
+        reunionId
       );
     },
     []

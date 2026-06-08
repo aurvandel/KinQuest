@@ -2,9 +2,34 @@ import fs from "fs";
 import path from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
+// ============================================
+// Reunion and Configuration Types
+// ============================================
+export interface Reunion {
+  id: string;
+  name: string;
+  adminId: string;
+  inviteCode: string;
+  inviteRequired: boolean;
+  icon?: string;
+  defaultLat?: number | null;
+  defaultLng?: number | null;
+  defaultRadius?: number | null;
+  aiPromptCriteria?: string;
+  aiVerificationEnabled: boolean;
+  allowForceSubmit: boolean;
+  imageCompressionMaxDim: number;
+  imageCompressionQuality: number;
+  showTitle: boolean;
+  showLogo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ScavengerItem {
   createdBy: null;
   id: string;
+  reunionId: string;
   title: string;
   description: string;
   points: number;
@@ -19,6 +44,7 @@ export interface PlayerProfile {
   id: string;
   username: string;
   displayName?: string;
+  reunionId: string;
   score: number;
   completedCount: number;
   createdAt: string;
@@ -34,6 +60,7 @@ export interface PlayerProfile {
 export interface Submission {
   pointsAwarded: number;
   id: string;
+  reunionId: string;
   userId: string;
   username: string;
   itemId: string;
@@ -52,6 +79,7 @@ export interface Submission {
 
 export interface ChatMessage {
   id: string;
+  reunionId: string;
   senderId: string;
   senderName: string;
   receiverId: string | null; // null for public shoutbox, user_id string for private message
@@ -65,6 +93,7 @@ export interface ChatMessage {
 
 export interface Slideshow {
   id: string;
+  reunionId: string;
   title: string;
   description?: string;
   script: string;
@@ -75,6 +104,7 @@ export interface Slideshow {
 }
 
 export interface DbStore {
+  reunions: { [id: string]: Reunion };
   users: { [id: string]: PlayerProfile };
   items: { [id: string]: ScavengerItem };
   submissions: { [id: string]: Submission };
@@ -82,10 +112,11 @@ export interface DbStore {
   slideshows: { [id: string]: Slideshow };
 }
 
-// Default initial items
+// Default initial items (with placeholder reunionId - will be populated per reunion)
 const DEFAULT_ITEMS: ScavengerItem[] = [
   {
       id: "item_gen_gap",
+      reunionId: "",
       title: "Generation Gap Smiles",
       description: "Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!",
       points: 100,
@@ -98,6 +129,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_family_heirloom",
+      reunionId: "",
       title: "Relic of the Elders",
       description: "Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.",
       points: 80,
@@ -110,6 +142,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_cousins_selfie",
+      reunionId: "",
       title: "The Multi-Clan Cousin Shot",
       description: "Take a group selfie with at least three cousins representing at least two different family branches or lineages!",
       points: 75,
@@ -122,6 +155,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_bbq_boss",
+      reunionId: "",
       title: "The Grill Master / Feast Chief",
       description: "Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!",
       points: 50,
@@ -134,6 +168,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_ uncanny_lookalikes",
+      reunionId: "",
       title: "Uncanny Family Lookalikes",
       description: "Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.",
       points: 60,
@@ -146,6 +181,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_retro_moves",
+      reunionId: "",
       title: "Old School Cool",
       description: "Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!",
       points: 70,
@@ -158,6 +194,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_group_hug",
+      reunionId: "",
       title: "Group Hug Extravaganza",
       description: "A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!",
       points: 90,
@@ -170,6 +207,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_reunion_recreation",
+      reunionId: "",
       title: "Nature Walk Keepsake",
       description: "Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.",
       points: 40,
@@ -182,6 +220,7 @@ const DEFAULT_ITEMS: ScavengerItem[] = [
   },
   {
       id: "item_family_mascot",
+      reunionId: "",
       title: "Reunion Mascot/Pet",
       description: "Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.",
       points: 45,
@@ -217,7 +256,243 @@ export function getDbMode(): "supabase" {
   return "supabase";
 }
 
-// ----------------------------------------------------
+// ============================================
+// Reunion Management Functions
+// ============================================
+
+export async function createReunion(data: Omit<Reunion, "id" | "createdAt" | "updatedAt">): Promise<Reunion> {
+  const now = new Date().toISOString();
+  const id = `reunion_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const reunion: Reunion = {
+    ...data,
+    id,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  try {
+    const { error } = await supabase!.from("reunions").insert({
+      id: reunion.id,
+      name: reunion.name,
+      admin_id: reunion.adminId,
+      invite_code: reunion.inviteCode,
+      invite_required: reunion.inviteRequired,
+      icon: reunion.icon || null,
+      default_lat: reunion.defaultLat || null,
+      default_lng: reunion.defaultLng || null,
+      default_radius: reunion.defaultRadius || null,
+      ai_prompt_criteria: reunion.aiPromptCriteria,
+      ai_verification_enabled: reunion.aiVerificationEnabled,
+      allow_force_submit: reunion.allowForceSubmit,
+      image_compression_max_dim: reunion.imageCompressionMaxDim,
+      image_compression_quality: reunion.imageCompressionQuality,
+      show_title: reunion.showTitle,
+      show_logo: reunion.showLogo,
+      created_at: reunion.createdAt,
+      updated_at: reunion.updatedAt
+    });
+    if (error) throw error;
+    return reunion;
+  } catch (err: any) {
+    console.error("Failed to create reunion:", err);
+    throw err;
+  }
+}
+
+export async function getReunion(reunionId: string): Promise<Reunion | null> {
+  try {
+    const { data, error } = await supabase!
+      .from("reunions")
+      .select("*")
+      .eq("id", reunionId)
+      .single();
+    
+    if (error && error.code !== "PGRST116") throw error; // PGRST116 = no rows
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      name: data.name,
+      adminId: data.admin_id,
+      inviteCode: data.invite_code,
+      inviteRequired: data.invite_required,
+      icon: data.icon,
+      defaultLat: data.default_lat,
+      defaultLng: data.default_lng,
+      defaultRadius: data.default_radius,
+      aiPromptCriteria: data.ai_prompt_criteria,
+      aiVerificationEnabled: data.ai_verification_enabled,
+      allowForceSubmit: data.allow_force_submit,
+      imageCompressionMaxDim: data.image_compression_max_dim,
+      imageCompressionQuality: data.image_compression_quality,
+      showTitle: data.show_title,
+      showLogo: data.show_logo,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at
+    };
+  } catch (err: any) {
+    console.error("Failed to get reunion:", err);
+    throw err;
+  }
+}
+
+export async function getReunionByInviteCode(inviteCode: string): Promise<Reunion | null> {
+  try {
+    const { data, error } = await supabase!
+      .from("reunions")
+      .select("*")
+      .eq("invite_code", inviteCode.toLowerCase())
+      .single();
+    
+    if (error && error.code !== "PGRST116") throw error; // PGRST116 = no rows
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      name: data.name,
+      adminId: data.admin_id,
+      inviteCode: data.invite_code,
+      inviteRequired: data.invite_required,
+      icon: data.icon,
+      defaultLat: data.default_lat,
+      defaultLng: data.default_lng,
+      defaultRadius: data.default_radius,
+      aiPromptCriteria: data.ai_prompt_criteria,
+      aiVerificationEnabled: data.ai_verification_enabled,
+      allowForceSubmit: data.allow_force_submit,
+      imageCompressionMaxDim: data.image_compression_max_dim,
+      imageCompressionQuality: data.image_compression_quality,
+      showTitle: data.show_title,
+      showLogo: data.show_logo,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at
+    };
+  } catch (err: any) {
+    console.error("Failed to get reunion by invite code:", err);
+    throw err;
+  }
+}
+
+export async function getAllReunionsForAdmin(adminId: string): Promise<Reunion[]> {
+  try {
+    const { data, error } = await supabase!
+      .from("reunions")
+      .select("*")
+      .eq("admin_id", adminId);
+    
+    if (error) throw error;
+    if (!data) return [];
+
+    return data.map(d => ({
+      id: d.id,
+      name: d.name,
+      adminId: d.admin_id,
+      inviteCode: d.invite_code,
+      inviteRequired: d.invite_required,
+      icon: d.icon,
+      defaultLat: d.default_lat,
+      defaultLng: d.default_lng,
+      defaultRadius: d.default_radius,
+      aiPromptCriteria: d.ai_prompt_criteria,
+      aiVerificationEnabled: d.ai_verification_enabled,
+      allowForceSubmit: d.allow_force_submit,
+      imageCompressionMaxDim: d.image_compression_max_dim,
+      imageCompressionQuality: d.image_compression_quality,
+      showTitle: d.show_title,
+      showLogo: d.show_logo,
+      createdAt: d.created_at,
+      updatedAt: d.updated_at
+    }));
+  } catch (err: any) {
+    console.error("Failed to get reunions for admin:", err);
+    throw err;
+  }
+}
+
+export async function updateReunion(reunionId: string, updates: Partial<Reunion>): Promise<Reunion | null> {
+  try {
+    const current = await getReunion(reunionId);
+    if (!current) return null;
+
+    const updated: Reunion = {
+      ...current,
+      ...updates,
+      id: current.id, // Never allow ID change
+      createdAt: current.createdAt, // Never allow createdAt change
+      updatedAt: new Date().toISOString()
+    };
+
+    const { error } = await supabase!
+      .from("reunions")
+      .update({
+        name: updated.name,
+        invite_code: updated.inviteCode,
+        invite_required: updated.inviteRequired,
+        icon: updated.icon,
+        default_lat: updated.defaultLat,
+        default_lng: updated.defaultLng,
+        default_radius: updated.defaultRadius,
+        ai_prompt_criteria: updated.aiPromptCriteria,
+        ai_verification_enabled: updated.aiVerificationEnabled,
+        allow_force_submit: updated.allowForceSubmit,
+        image_compression_max_dim: updated.imageCompressionMaxDim,
+        image_compression_quality: updated.imageCompressionQuality,
+        show_title: updated.showTitle,
+        show_logo: updated.showLogo,
+        updated_at: updated.updatedAt
+      })
+      .eq("id", reunionId);
+    
+    if (error) throw error;
+    return updated;
+  } catch (err: any) {
+    console.error("Failed to update reunion:", err);
+    throw err;
+  }
+}
+
+export async function seedDefaultChallengesForReunion(reunionId: string): Promise<void> {
+  try {
+    const seedItems = DEFAULT_ITEMS.map((item) => ({
+      id: `${item.id}_${reunionId}`,
+      reunion_id: reunionId,
+      title: item.title,
+      description: item.description,
+      points: item.points,
+      category: item.category,
+      icon: item.icon,
+      lat: item.lat,
+      lng: item.lng,
+      radius: item.radius,
+      created_by: null
+    }));
+
+    const { error } = await supabase!.from("items").insert(seedItems);
+    if (error) throw error;
+    console.log(`✅ Seeded ${seedItems.length} default challenges for reunion ${reunionId}`);
+  } catch (err: any) {
+    console.error("Failed to seed default challenges:", err);
+    throw err;
+  }
+}
+
+export async function deleteReunion(reunionId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("reunions")
+      .delete()
+      .eq("id", reunionId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err: any) {
+    console.error("Failed to delete reunion:", err);
+    throw err;
+  }
+}
+
+// ============================================
 // Database initialization
 // All data is persisted to Supabase only
 export async function initializeDatabase() {
@@ -242,8 +517,10 @@ export async function initializeDatabase() {
     const { count, error: countErr } = await supabase!.from("items").select("id", { count: "exact", head: true });
     if (!countErr && count === 0) {
       console.log("Supabase challenge index is currently empty. Seeding defaults...");
+      const defaultReunionId = "reunion_default";
       const mappedItems = DEFAULT_ITEMS.map(it => ({
         id: it.id,
+        reunion_id: defaultReunionId,
         title: it.title,
         description: it.description,
         points: it.points,
@@ -255,6 +532,8 @@ export async function initializeDatabase() {
       }));
       await supabase!.from("items").insert(mappedItems);
     }
+
+    // Default reunion has been removed - admins must create all reunions explicitly
 
     // Pre-seed default admin profiles if missing
     try {
@@ -277,6 +556,7 @@ export async function initializeDatabase() {
             id: "user_admin",
             username: "admin",
             display_name: "Grand Host Admin",
+            reunion_id: "reunion_default",
             role: "admin",
             score: 0,
             completed_count: 0,
@@ -320,6 +600,10 @@ export async function getAppState(): Promise<DbStore> {
     const { data: slides, error: slErr } = await supabase!.from("slideshows").select("*");
     if (slErr) throw slErr;
 
+    // 5. Fetch reunions
+    const { data: reunions, error: rErr } = await supabase!.from("reunions").select("*");
+    if (rErr) throw rErr;
+
     // Map into DbStore JSON layout
     const usersMap: { [id: string]: PlayerProfile } = {};
     profiles?.forEach(u => {
@@ -339,6 +623,7 @@ export async function getAppState(): Promise<DbStore> {
         id: u.id,
         username: u.username,
         displayName: u.display_name || u.displayName || undefined,
+        reunionId: u.reunion_id || "",
         score: u.score ?? 0,
         completedCount: u.completed_count ?? 0,
         createdAt: u.created_at,
@@ -351,6 +636,7 @@ export async function getAppState(): Promise<DbStore> {
     items?.forEach(it => {
       itemsMap[it.id] = {
         id: it.id,
+        reunionId: it.reunion_id,
         title: it.title,
         description: it.description,
         points: it.points ?? 10,
@@ -366,14 +652,17 @@ export async function getAppState(): Promise<DbStore> {
     // Seed default items in itemsMap if they weren't in supabase table
     if (Object.keys(itemsMap).length === 0) {
       DEFAULT_ITEMS.forEach(it => {
-        itemsMap[it.id] = it;
+        // Add reunionId from first reunion if available
+        const itemWithReunion = { ...it, reunionId: reunions?.[0]?.id || "" };
+        itemsMap[it.id] = itemWithReunion;
       });
     }
 
     const subsMap: { [id: string]: Submission } = {};
-    subs?.forEach(sb => {
+    subs?.forEach((sb: any) => {
       subsMap[sb.id] = {
         id: sb.id,
+        reunionId: sb.reunion_id,
         userId: sb.user_id,
         username: sb.username,
         itemId: sb.item_id,
@@ -394,6 +683,7 @@ export async function getAppState(): Promise<DbStore> {
     slides?.forEach(slide => {
       slideshowsMap[slide.id] = {
         id: slide.id,
+        reunionId: slide.reunion_id || "",
         title: slide.title,
         description: slide.description,
         script: slide.script,
@@ -404,12 +694,37 @@ export async function getAppState(): Promise<DbStore> {
       };
     });
 
+    const reunionsMap: { [id: string]: Reunion } = {};
+    reunions?.forEach(r => {
+      reunionsMap[r.id] = {
+        id: r.id,
+        name: r.name,
+        adminId: r.admin_id,
+        inviteCode: r.invite_code,
+        inviteRequired: r.invite_required ?? true,
+        icon: r.icon,
+        defaultLat: r.default_lat,
+        defaultLng: r.default_lng,
+        defaultRadius: r.default_radius,
+        aiPromptCriteria: r.ai_prompt_criteria,
+        aiVerificationEnabled: r.ai_verification_enabled ?? true,
+        allowForceSubmit: r.allow_force_submit ?? false,
+        imageCompressionMaxDim: r.image_compression_max_dim ?? 800,
+        imageCompressionQuality: r.image_compression_quality ?? 0.7,
+        showTitle: r.show_title ?? true,
+        showLogo: r.show_logo ?? true,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at
+      };
+    });
+
     return {
       users: usersMap,
       items: itemsMap,
       submissions: subsMap,
       messages: msgsList,
-      slideshows: slideshowsMap
+      slideshows: slideshowsMap,
+      reunions: reunionsMap
     };
   } catch (err) {
     console.error("Supabase fetch failure:", err);
@@ -417,7 +732,11 @@ export async function getAppState(): Promise<DbStore> {
   }
 }
 
-export async function authRegisterPlayer(username: string, registerRole?: "user" | "admin"): Promise<PlayerProfile> {
+export async function authRegisterPlayer(
+  username: string,
+  registerRole?: "user" | "admin",
+  reunionId?: string
+): Promise<PlayerProfile> {
   const cleanName = username.trim();
   const isTargetAdmin = cleanName.toLowerCase() === "admin";
   // Use registerRole parameter if provided, otherwise default based on username
@@ -452,14 +771,22 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         finalRole = "admin";
       }
 
+      const profileUpdates: { role?: "user" | "admin"; reunion_id?: string | null } = {};
       if (finalRole !== u.role) {
-        await supabase!.from("profiles").update({ role: finalRole }).eq("id", u.id);
+        profileUpdates.role = finalRole;
+      }
+      if (reunionId && reunionId !== u.reunion_id) {
+        profileUpdates.reunion_id = reunionId;
+      }
+      if (Object.keys(profileUpdates).length > 0) {
+        await supabase!.from("profiles").update(profileUpdates).eq("id", u.id);
       }
 
       return {
         id: u.id,
         username: u.username,
         displayName: u.display_name || u.displayName || undefined,
+        reunionId: reunionId || u.reunion_id || "",
         score: u.score ?? 0,
         completedCount: u.completed_count ?? 0,
         createdAt: u.created_at,
@@ -475,6 +802,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       id: uid,
       username: isTargetAdmin ? "admin" : cleanName,
       display_name: isTargetAdmin ? "Grand Host Admin" : cleanName,
+      reunion_id: reunionId || null,
       score: 0,
       completed_count: 0,
       created_at: new Date().toISOString(),
@@ -504,6 +832,7 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       id: uid,
       username: isTargetAdmin ? "admin" : cleanName,
       displayName: isTargetAdmin ? "Grand Host Admin" : undefined,
+      reunionId: reunionId || "",
       score: 0,
       completedCount: 0,
       createdAt: newUserRow.created_at,
@@ -547,6 +876,7 @@ export async function ensureProfileExists(userId: string, username: string): Pro
         id: u.id,
         username: u.username,
         displayName: u.display_name || undefined,
+        reunionId: u.reunion_id || "",
         score: u.score ?? 0,
         completedCount: u.completed_count ?? 0,
         createdAt: u.created_at,
@@ -589,6 +919,7 @@ export async function ensureProfileExists(userId: string, username: string): Pro
       id: userId,
       username: username.trim(),
       displayName: username.trim(),
+      reunionId: "",
       score: 0,
       completedCount: 0,
       createdAt: newUserRow.created_at,
@@ -610,6 +941,7 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
   const itemId = `challenge_${Date.now()}`;
   const newItem: ScavengerItem = {
     id: itemId,
+    reunionId: item.reunionId,
     title: item.title,
     description: item.description,
     points: item.points,
@@ -624,6 +956,7 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
   try {
     const row = {
       id: itemId,
+      reunion_id: newItem.reunionId,
       title: newItem.title,
       description: newItem.description,
       points: newItem.points,
@@ -695,6 +1028,7 @@ export async function updateScavengerChallenge(
 
     return {
       id: data.id,
+      reunionId: data.reunion_id,
       title: data.title,
       description: data.description,
       points: data.points ?? 10,
@@ -719,6 +1053,7 @@ export async function submitHunterProof(
     // 1. Save Submissions row
     const row = {
       id: sub.id,
+      reunion_id: sub.reunionId,
       user_id: sub.userId,
       username: sub.username,
       item_id: sub.itemId,
@@ -889,6 +1224,7 @@ export async function manuallyApproveSubmission(
     // Return updated submission
     return {
       id: sub.id,
+      reunionId: sub.reunion_id || "",
       userId: sub.user_id,
       username: sub.username,
       itemId: sub.item_id,
@@ -912,6 +1248,7 @@ export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
   try {
     const row = {
       id: msg.id,
+      reunion_id: msg.reunionId || null,
       sender_id: msg.senderId,
       sender_name: msg.senderName,
       receiver_id: msg.receiverId,
@@ -933,17 +1270,24 @@ export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
   }
 }
 
-export async function getChatMessages(): Promise<ChatMessage[]> {
+export async function getChatMessages(reunionId?: string): Promise<ChatMessage[]> {
   try {
-    const { data, error } = await supabase!
+    let query = supabase!
       .from("messages")
       .select("*")
       .order("created_at", { ascending: true })
       .limit(400);
+
+    if (reunionId) {
+      query = query.eq("reunion_id", reunionId);
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
     
     return (data || []).map(m => ({
       id: m.id,
+      reunionId: m.reunion_id,
       senderId: m.sender_id,
       senderName: m.sender_name,
       receiverId: m.receiver_id,
@@ -981,15 +1325,18 @@ export async function deleteMessage(messageId: string, deleterId: string): Promi
 }
 
 // Mark messages as read
-export async function markMessagesAsRead(messageIds: string[], userId: string): Promise<boolean> {
+export async function markMessagesAsRead(messageIds: string[], userId: string, reunionId?: string): Promise<boolean> {
   try {
-    const { error } = await supabase!
+    let query: any = supabase!
       .from("messages")
-      .update({
-        is_read: true
-      })
+      .update({ is_read: true })
       .in("id", messageIds);
-    
+
+    if (reunionId) {
+      query = query.eq("reunion_id", reunionId);
+    }
+
+    const { error } = await query;
     if (error) throw error;
     return true;
   } catch (err) {
@@ -1062,6 +1409,7 @@ export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
       .from("slideshows")
       .upsert([{
         id: slideshow.id,
+        reunion_id: slideshow.reunionId,
         title: slideshow.title,
         description: slideshow.description,
         script: slideshow.script,
@@ -1093,6 +1441,7 @@ export async function getSlideshow(id: string): Promise<Slideshow | null> {
     
     return {
       id: data.id,
+      reunionId: data.reunion_id,
       title: data.title,
       description: data.description,
       script: data.script,
@@ -1107,18 +1456,24 @@ export async function getSlideshow(id: string): Promise<Slideshow | null> {
   }
 }
 
-export async function getAllSlideshows(): Promise<Slideshow[]> {
+export async function getAllSlideshows(reunionId?: string): Promise<Slideshow[]> {
   try {
-    const { data, error } = await supabase!
+    let query = supabase!
       .from("slideshows")
       .select("*")
       .eq("is_published", true)
       .order("created_at", { ascending: false });
-    
+
+    if (reunionId) {
+      query = query.eq("reunion_id", reunionId);
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
     
     return (data || []).map(s => ({
       id: s.id,
+      reunionId: s.reunion_id,
       title: s.title,
       description: s.description,
       script: s.script,
@@ -1247,6 +1602,7 @@ export async function updatePlayerProfile(
           id: u.id,
           username: u.username,
           displayName: u.display_name || u.displayName || undefined,
+          reunionId: u.reunion_id || "",
           score: u.score ?? 0,
           completedCount: u.completed_count ?? 0,
           createdAt: u.created_at,

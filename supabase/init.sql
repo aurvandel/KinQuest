@@ -25,12 +25,39 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE O
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO anon;
 
 -- ============================================
+-- Reunions Table (Family Reunion Configurations)
+-- ============================================
+CREATE TABLE IF NOT EXISTS reunions (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  admin_id TEXT NOT NULL,
+  invite_code TEXT NOT NULL UNIQUE,
+  invite_required BOOLEAN DEFAULT TRUE,
+  icon TEXT,
+  default_lat DOUBLE PRECISION,
+  default_lng DOUBLE PRECISION,
+  default_radius DOUBLE PRECISION,
+  ai_prompt_criteria TEXT,
+  ai_verification_enabled BOOLEAN DEFAULT TRUE,
+  allow_force_submit BOOLEAN DEFAULT FALSE,
+  image_compression_max_dim INTEGER DEFAULT 800,
+  image_compression_quality DOUBLE PRECISION DEFAULT 0.7,
+  show_title BOOLEAN DEFAULT TRUE,
+  show_logo BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON reunions TO anon;
+
+-- ============================================
 -- Profiles Table (User Management)
 -- ============================================
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   display_name TEXT,
+  reunion_id TEXT REFERENCES reunions(id) ON DELETE SET NULL,
   role TEXT DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   permissions JSONB DEFAULT '{}'::jsonb,
   score INTEGER DEFAULT 0,
@@ -50,6 +77,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON profiles TO anon;
 -- ============================================
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
+  reunion_id TEXT NOT NULL REFERENCES reunions(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   points INTEGER DEFAULT 10,
@@ -69,6 +97,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON items TO anon;
 -- ============================================
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
+  reunion_id TEXT NOT NULL REFERENCES reunions(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   username TEXT NOT NULL,
   item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -93,6 +122,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON submissions TO anon;
 -- ============================================
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
+  reunion_id TEXT NOT NULL REFERENCES reunions(id) ON DELETE CASCADE,
   sender_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   sender_name TEXT NOT NULL,
   receiver_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
@@ -111,6 +141,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON messages TO anon;
 -- ============================================
 CREATE TABLE IF NOT EXISTS slideshows (
   id TEXT PRIMARY KEY,
+  reunion_id TEXT NOT NULL REFERENCES reunions(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT,
   script TEXT NOT NULL,
@@ -125,16 +156,23 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON slideshows TO anon;
 -- ============================================
 -- Indexes for Performance
 -- ============================================
+CREATE INDEX IF NOT EXISTS idx_reunions_admin_id ON reunions(admin_id);
+CREATE INDEX IF NOT EXISTS idx_reunions_invite_code ON reunions(invite_code);
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
+CREATE INDEX IF NOT EXISTS idx_profiles_reunion_id ON profiles(reunion_id);
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_items_reunion_id ON items(reunion_id);
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
 CREATE INDEX IF NOT EXISTS idx_items_created_by ON items(created_by);
+CREATE INDEX IF NOT EXISTS idx_submissions_reunion_id ON submissions(reunion_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_item_id ON submissions(item_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
+CREATE INDEX IF NOT EXISTS idx_messages_reunion_id ON messages(reunion_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_slideshows_reunion_id ON slideshows(reunion_id);
 CREATE INDEX IF NOT EXISTS idx_slideshows_created_by ON slideshows(created_by);
 CREATE INDEX IF NOT EXISTS idx_slideshows_is_published ON slideshows(is_published);
 CREATE INDEX IF NOT EXISTS idx_slideshows_created_at ON slideshows(created_at DESC);

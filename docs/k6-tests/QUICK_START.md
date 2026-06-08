@@ -1,5 +1,27 @@
 # K6 Test Suite - Quick Reference
 
+## Required Setup
+
+Before running any tests, you must create a test reunion:
+
+1. **Create Test Reunion**:
+   - Start the application with `npm run dev`
+   - Log in as admin
+   - Go to the reunion selector and create a new reunion
+   - Set name: "K6 Test Reunion"
+   - Set invite code: "k6-test" or use default
+   - Note the reunion ID (format: `reunion_...`)
+
+2. **Populate Test Data** (optional):
+   - Use the Postman collection to bulk-load 28 test items, OR
+   - Manually create a few test challenges/missions
+
+3. **Pass Reunion ID to Tests**:
+   ```bash
+   # All test commands should include the reunion ID
+   k6 run k6-tests/player-behavior.js -e REUNION_ID=reunion_k6_test
+   ```
+
 ## Available Test Scripts
 
 ### 📝 Test Files Created
@@ -7,9 +29,9 @@
 | Test | File | Purpose | Duration | VUs |
 |------|------|---------|----------|-----|
 | **Player Behavior** | `player-behavior.js` | Typical player activities + slideshows | 30s-5m | 10-50 |
+| **Admin Operations** | `admin-operations.js` | Admin features (create challenges, edit reunions, slideshow generation) | 6m | 5 |
 | **Spike Load** | `spike-load.js` | Sudden traffic spikes | 4m | 10→100→10 |
 | **Endurance** | `endurance.js` | Long-term stability | 10m-1h | 20+ |
-| **Admin Operations** | `admin-operations.js` | Admin features + slideshow generation | 6m | 5 |
 | **Chat Load** | `chat-load.js` | Chat stress testing | 3.5m | 0→20 |
 | **Image Serving** | `image-upload-serve.js` | Photo persistence & file serving | 2.5m | 1→10 |
 

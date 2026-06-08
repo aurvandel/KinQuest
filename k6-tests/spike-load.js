@@ -6,6 +6,7 @@ const peakLoadDuration = new Trend('peak_load_duration');
 const peakErrorRate = new Counter('peak_errors');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const REUNION_ID = __ENV.REUNION_ID || 'reunion_k6_test'; // Test reunion ID
 
 // Spike test: Start low, spike high, return low
 export const options = {

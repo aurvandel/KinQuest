@@ -15,8 +15,14 @@ const ADMIN_SESSIONS_FILE = path.join(process.cwd(), ".admin-sessions.json");
 const SALT_ROUNDS = 12;
 const HASH_ITERATIONS = 100000;
 const HASH_ALGORITHM = "sha256";
-const MAX_CONCURRENT_SESSIONS = 2;
-const SESSION_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_CONCURRENT_SESSIONS = process.env.ADMIN_MAX_CONCURRENT_SESSIONS
+  ? Number(process.env.ADMIN_MAX_CONCURRENT_SESSIONS)
+  : 2;
+
+// Session TTL (ms). Default: 1 hour. Can be tuned via ENV `ADMIN_SESSION_TTL_MS`.
+const SESSION_TIMEOUT_MS = process.env.ADMIN_SESSION_TTL_MS
+  ? Number(process.env.ADMIN_SESSION_TTL_MS)
+  : 60 * 60 * 1000; // 1 hour
 
 export interface AdminPassword {
   id: string;
@@ -400,6 +406,29 @@ export function getActiveSessionsCount(): number {
   return store.sessions.filter(session => 
     new Date(session.expiresAt).getTime() > now.getTime()
   ).length;
+}
+
+/**
+ * Revoke expired admin sessions from storage.
+ * Returns the number of sessions removed.
+ */
+export function revokeExpiredSessions(): number {
+  const store = loadSessionStore();
+  const now = new Date();
+  const before = store.sessions.length;
+
+  store.sessions = store.sessions.filter(session =>
+    new Date(session.expiresAt).getTime() > now.getTime()
+  );
+
+  const removed = before - store.sessions.length;
+  if (removed > 0) {
+    store.lastModified = new Date().toISOString();
+    saveSessionStore(store);
+    console.log(`[ADMIN] Revoked ${removed} expired admin session(s).`);
+  }
+
+  return removed;
 }
 
 /**

@@ -9,6 +9,7 @@ export interface PendingSubmission {
   id: string;
   userId: string;
   itemId: string;
+  reunionId?: string;
   imageBase64: string;
   userLat: number | null;
   userLng: number | null;
@@ -68,13 +69,15 @@ export function addToRetryQueue(
   reason: "rate_limit" | "timeout" | "error",
   lastError: string,
   forceSubmit?: boolean,
-  submissionId?: string
+  submissionId?: string,
+  reunionId?: string
 ): PendingSubmission {
   const now = new Date();
   const submission: PendingSubmission = {
     id: `pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     userId,
     itemId,
+    reunionId,
     imageBase64,
     userLat,
     userLng,

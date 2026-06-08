@@ -36,14 +36,22 @@ import {
   Slideshow,
   getAppSettings,
   saveAppSettings,
-  AppSettings
+  AppSettings,
+  Reunion,
+  createReunion,
+  getReunion,
+  getReunionByInviteCode,
+  getAllReunionsForAdmin,
+  updateReunion,
+  deleteReunion,
+  seedDefaultChallengesForReunion
 } from "./db-manager";
-import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getActiveSessionsCount, changeAdminPassword } from "./password-manager";
+import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getActiveSessionsCount, changeAdminPassword, revokeExpiredSessions } from "./password-manager";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT ?? process.env.DEV_PORT) || 3000;
 
 // Increase body size limit to support base64 snapshots of photographs
 app.use(express.json({ limit: "15mb" }));
@@ -63,6 +71,31 @@ const ai = new GoogleGenAI({
 initializeDatabase().catch((err) => {
   console.error("Database boot warning:", err);
 });
+
+// Run an initial cleanup of expired admin sessions and schedule periodic cleanup
+const ADMIN_SESSION_CLEANUP_INTERVAL_MS = process.env.ADMIN_SESSION_CLEANUP_MS
+  ? Number(process.env.ADMIN_SESSION_CLEANUP_MS)
+  : 5 * 60 * 1000; // Default: every 5 minutes
+
+try {
+  const removedOnStart = revokeExpiredSessions();
+  if (removedOnStart > 0) {
+    console.log(`[ADMIN] Cleaned up ${removedOnStart} expired admin session(s) on startup.`);
+  }
+} catch (err) {
+  console.warn("Failed to run initial admin session cleanup:", err);
+}
+
+setInterval(() => {
+  try {
+    const removed = revokeExpiredSessions();
+    if (removed > 0) {
+      console.log(`[ADMIN] Periodic cleanup removed ${removed} expired admin session(s).`);
+    }
+  } catch (err) {
+    console.warn("Admin session cleanup error:", err);
+  }
+}, ADMIN_SESSION_CLEANUP_INTERVAL_MS);
 
 // Extracted Haversine Distance helper
 function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -273,16 +306,206 @@ app.get("/api/storage-info", async (req, res) => {
   }
 });
 
+// ============================================
+// Reunion Management Endpoints
+// ============================================
+
+// Get a specific reunion by ID
+app.get("/api/reunions/:reunionId", async (req, res) => {
+  const { reunionId } = req.params;
+  try {
+    const reunion = await getReunion(reunionId);
+    if (!reunion) {
+      return res.status(404).json({ error: "Reunion not found" });
+    }
+    res.json(reunion);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to get reunion", details: err.message });
+  }
+});
+
+// Get reunion by invite code (public endpoint)
+app.get("/api/reunions/code/:inviteCode", async (req, res) => {
+  const { inviteCode } = req.params;
+  try {
+    const reunion = await getReunionByInviteCode(inviteCode);
+    if (!reunion) {
+      return res.status(404).json({ error: "Reunion not found" });
+    }
+    res.json(reunion);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to get reunion", details: err.message });
+  }
+});
+
+// Get all reunions for admin user
+app.get("/api/admin/reunions/:adminId", async (req, res) => {
+  const { adminId } = req.params;
+  try {
+    const reunions = await getAllReunionsForAdmin(adminId);
+    res.json(reunions);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to get reunions", details: err.message });
+  }
+});
+
+// Check if any reunions exist in the system
+app.get("/api/admin/reunions/any", async (req, res) => {
+  try {
+    const allReunions = await getAllReunionsForAdmin("");
+    res.json({ count: allReunions.length, exists: allReunions.length > 0 });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to check reunions", details: err.message });
+  }
+});
+
+// Create a new reunion (admin only)
+app.post("/api/reunions", async (req, res) => {
+  const { name, adminId, inviteCode, inviteRequired, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo } = req.body;
+  
+  if (!name || typeof name !== "string" || name.trim().length === 0) {
+    return res.status(400).json({ error: "Reunion name is required" });
+  }
+  if (!adminId || typeof adminId !== "string") {
+    return res.status(400).json({ error: "Admin ID is required" });
+  }
+  if (!inviteCode || typeof inviteCode !== "string") {
+    return res.status(400).json({ error: "Invite code is required" });
+  }
+
+  try {
+    // If client uploaded a base64 image for the icon, save it to disk and replace with a URL
+    let iconValue = icon || "Users";
+    try {
+      if (typeof iconValue === "string" && iconValue.startsWith("data:")) {
+        const mimeMatch = iconValue.match(/^data:([^;]+);/);
+        const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+        const saved = saveImageToDisk(iconValue, mimeType);
+        if (saved && saved.url) {
+          iconValue = saved.url;
+        }
+      }
+    } catch (imgErr) {
+      console.warn("Failed to save uploaded reunion icon:", imgErr);
+    }
+
+    const reunion = await createReunion({
+      name: name.trim(),
+      adminId,
+      inviteCode: inviteCode.toLowerCase(),
+      inviteRequired: inviteRequired !== undefined ? !!inviteRequired : false,
+      icon: iconValue,
+      defaultLat: defaultLat !== undefined ? Number(defaultLat) : null,
+      defaultLng: defaultLng !== undefined ? Number(defaultLng) : null,
+      defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : null,
+      aiPromptCriteria: aiPromptCriteria || "Verify that the photo matches the challenge description.",
+      aiVerificationEnabled: aiVerificationEnabled !== undefined ? !!aiVerificationEnabled : true,
+      allowForceSubmit: allowForceSubmit !== undefined ? !!allowForceSubmit : false,
+      imageCompressionMaxDim: imageCompressionMaxDim || 800,
+      imageCompressionQuality: imageCompressionQuality || 0.7,
+      showTitle: showTitle !== undefined ? !!showTitle : true,
+      showLogo: showLogo !== undefined ? !!showLogo : true
+    });
+
+    // Seed default challenges for this reunion
+    try {
+      await seedDefaultChallengesForReunion(reunion.id);
+    } catch (seedErr: any) {
+      console.warn("Warning: Failed to seed default challenges:", seedErr.message);
+      // Don't fail the whole request, reunion was created successfully
+    }
+
+    res.json(reunion);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to create reunion", details: err.message });
+  }
+});
+
+// Update reunion settings
+app.put("/api/reunions/:reunionId", async (req, res) => {
+  const { reunionId } = req.params;
+  const { name, inviteCode, inviteRequired, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo } = req.body;
+
+  try {
+    const updates: Partial<Reunion> = {};
+    if (name !== undefined) updates.name = String(name);
+    if (inviteCode !== undefined) updates.inviteCode = String(inviteCode).toLowerCase();
+    if (inviteRequired !== undefined) updates.inviteRequired = !!inviteRequired;
+    if (icon !== undefined) {
+      // If a base64 icon was provided, save it and store the URL instead
+      try {
+        if (typeof icon === "string" && icon.startsWith("data:")) {
+          const mimeMatch = icon.match(/^data:([^;]+);/);
+          const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+          const saved = saveImageToDisk(icon, mimeType);
+          if (saved && saved.url) updates.icon = saved.url;
+          else updates.icon = icon; // fallback to original
+        } else {
+          updates.icon = icon;
+        }
+      } catch (imgErr) {
+        console.warn("Failed to save uploaded reunion icon on update:", imgErr);
+        updates.icon = icon;
+      }
+    }
+    if (defaultLat !== undefined) updates.defaultLat = defaultLat ? Number(defaultLat) : null;
+    if (defaultLng !== undefined) updates.defaultLng = defaultLng ? Number(defaultLng) : null;
+    if (defaultRadius !== undefined) updates.defaultRadius = defaultRadius ? Number(defaultRadius) : null;
+    if (aiPromptCriteria !== undefined) updates.aiPromptCriteria = String(aiPromptCriteria);
+    if (aiVerificationEnabled !== undefined) updates.aiVerificationEnabled = !!aiVerificationEnabled;
+    if (allowForceSubmit !== undefined) updates.allowForceSubmit = !!allowForceSubmit;
+    if (imageCompressionMaxDim !== undefined) updates.imageCompressionMaxDim = Number(imageCompressionMaxDim);
+    if (imageCompressionQuality !== undefined) updates.imageCompressionQuality = Number(imageCompressionQuality);
+    if (showTitle !== undefined) updates.showTitle = !!showTitle;
+    if (showLogo !== undefined) updates.showLogo = !!showLogo;
+
+    const updated = await updateReunion(reunionId, updates);
+    if (!updated) {
+      return res.status(404).json({ error: "Reunion not found" });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update reunion", details: err.message });
+  }
+});
+
+// Delete reunion (admin only)
+app.delete("/api/reunions/:reunionId", async (req, res) => {
+  const { reunionId } = req.params;
+  try {
+    if (reunionId === "reunion_default") {
+      return res.status(403).json({ error: "Cannot delete the default reunion" });
+    }
+    const success = await deleteReunion(reunionId);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to delete reunion", details: err.message });
+  }
+});
+
 // 2. Fetch live integrated state of play
 app.get("/api/game-state", async (req, res) => {
   try {
+    const reunionId = req.query.reunionId as string | undefined;
     const db = await getAppState();
-    res.json({
-      users: Object.values(db.users),
-      items: Object.values(db.items),
-      submissions: Object.values(db.submissions),
-      settings: getAppSettings()
-    });
+
+    const allUsers = Object.values(db.users);
+    const allItems = Object.values(db.items);
+    const allSubmissions = Object.values(db.submissions);
+
+    // Filter server-side by reunionId when provided
+    // NOTE: Admin users (role==="admin") are global and NOT filtered by reunionId
+    const users = reunionId
+      ? allUsers.filter(u => u.role === "admin" || u.reunionId === reunionId)
+      : allUsers;
+    const items = reunionId
+      ? allItems.filter(i => i.reunionId === reunionId)
+      : allItems;
+    const submissions = reunionId
+      ? allSubmissions.filter(s => s.reunionId === reunionId)
+      : allSubmissions;
+
+    res.json({ users, items, submissions, settings: getAppSettings() });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to gather app state", details: err.message });
   }
@@ -360,13 +583,24 @@ app.post("/api/admin/change-password", (req, res) => {
 });
 
 app.post("/api/auth/register", async (req, res) => {
-  const { username, role } = req.body;
+  const { username, role, inviteCode } = req.body;
   if (!username || typeof username !== "string" || username.trim().length === 0) {
     return res.status(400).json({ error: "Username string is required" });
   }
 
   try {
-    const user = await authRegisterPlayer(username.trim(), role);
+    let reunionId: string | undefined;
+
+    // Normal users should be linked to the reunion tied to their invite code.
+    if (role !== "admin" && typeof inviteCode === "string" && inviteCode.trim().length > 0) {
+      const reunion = await getReunionByInviteCode(inviteCode.trim().toLowerCase());
+      if (!reunion) {
+        return res.status(400).json({ error: "Invalid invite code" });
+      }
+      reunionId = reunion.id;
+    }
+
+    const user = await authRegisterPlayer(username.trim(), role, reunionId);
     res.json(user);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to authenticate player profile", details: err.message });
@@ -403,10 +637,15 @@ app.post("/api/profile/update", async (req, res) => {
 
 // 4. Create custom scavenge check items
 app.post("/api/challenges", async (req, res) => {
-  const { title, description, points, category, icon, lat, lng, radius, createdBy } = req.body;
+  const { title, description, points, category, icon, lat, lng, radius, createdBy, reunionId } = req.body;
 
   if (!title || !description || !points) {
-    return res.status(400).json({ error: "Missing required challenge title, criteria or points." });
+    return res.status(400).json({ error: "Missing required challenge title, criteria, or points." });
+  }
+
+  if (!reunionId) {
+    console.error("Challenge creation missing reunionId. Request body:", { title, reunionId, createdBy });
+    return res.status(400).json({ error: "Missing reunion ID. Please ensure you have selected a reunion before creating a mission." });
   }
 
   try {
@@ -419,11 +658,13 @@ app.post("/api/challenges", async (req, res) => {
       lat: lat ? Number(lat) : null,
       lng: lng ? Number(lng) : null,
       radius: radius ? Number(radius) : null,
+      reunionId,
       createdBy: createdBy || undefined
     });
     res.json(newItem);
   } catch (err: any) {
-    res.status(500).json({ error: "Failed to save challenge description", details: err.message });
+    console.error("Challenge creation error:", err);
+    res.status(500).json({ error: "Failed to save challenge", details: err.message });
   }
 });
 
@@ -455,6 +696,11 @@ app.delete("/api/challenges/:id", async (req, res) => {
 
     if (!isAdmin && !isCreator) {
       return res.status(403).json({ error: "You don't have permission to delete this mission" });
+    }
+
+    // Ensure user is operating within same reunion unless admin
+    if (!isAdmin && user.reunionId !== item.reunionId) {
+      return res.status(403).json({ error: "You don't have permission to delete missions from another reunion" });
     }
 
     // Delete from database
@@ -498,6 +744,11 @@ app.put("/api/challenges/:id", async (req, res) => {
 
     if (!isAdmin && !isCreator) {
       return res.status(403).json({ error: "You don't have permission to edit this mission" });
+    }
+
+    // Ensure user is operating within same reunion unless admin
+    if (!isAdmin && user.reunionId !== item.reunionId) {
+      return res.status(403).json({ error: "You don't have permission to edit missions from another reunion" });
     }
 
     // Prepare updates
@@ -610,6 +861,7 @@ app.post("/api/verify-submission", async (req, res) => {
     if (locationFailed) {
       const failedSubmission: Submission = {
         id: subId,
+        reunionId: item.reunionId,
         userId: user.id,
         username: user.username,
         itemId: itemId,
@@ -647,6 +899,7 @@ app.post("/api/verify-submission", async (req, res) => {
       const subId2 = `sub_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const autoApprovedSubmission: Submission = {
         id: subId2,
+        reunionId: item.reunionId,
         userId: user.id,
         username: user.username,
         itemId: itemId,
@@ -781,6 +1034,7 @@ You MUST respond strictly in valid JSON matching this schema:
       const retryReason = rateLimited ? "rate_limit" : "timeout";
       const pendingSubmission: Submission = {
         id: subId,
+        reunionId: item.reunionId,
         userId: user.id,
         username: user.username,
         itemId: itemId,
@@ -830,6 +1084,7 @@ You MUST respond strictly in valid JSON matching this schema:
     
     const finalSubmission: Submission = {
       id: subId,
+      reunionId: item.reunionId,
       userId: user.id,
       username: user.username,
       itemId: itemId,
@@ -871,7 +1126,29 @@ You MUST respond strictly in valid JSON matching this schema:
 // 6. Delete submission
 app.delete("/api/submissions/:subId", async (req, res) => {
   const { subId } = req.params;
+  const { userId, adminId } = req.body;
+
+  if (!userId && !adminId) {
+    return res.status(400).json({ error: "Missing userId or adminId" });
+  }
+
   try {
+    const db = await getAppState();
+    const submission = db.submissions[subId];
+    if (!submission) return res.status(404).json({ error: "Submission not found" });
+
+    if (userId) {
+      const user = db.users[userId];
+      if (!user) return res.status(404).json({ error: "User not found" });
+      // Owner can delete their own submission and must be in same reunion
+      if (submission.userId !== userId || user.reunionId !== submission.reunionId) {
+        return res.status(403).json({ error: "Not authorized to delete this submission" });
+      }
+    } else if (adminId) {
+      const admin = db.users[adminId];
+      if (!admin || admin.role !== "admin") return res.status(403).json({ error: "Admin privileges required" });
+    }
+
     const deleted = await deleteHunterSubmission(subId);
     if (!deleted) {
       return res.status(404).json({ error: "Candidate proof not found" });
@@ -885,13 +1162,18 @@ app.delete("/api/submissions/:subId", async (req, res) => {
 // 6.1 Manual Admin Approval of submissions
 app.post("/api/submissions/:subId/manual-approve", async (req, res) => {
   const { subId } = req.params;
-  const { status, points } = req.body;
+  const { status, points, adminId } = req.body;
 
+  if (!adminId) return res.status(400).json({ error: "Missing adminId" });
   if (!status || !["approved", "rejected"].includes(status)) {
     return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
   }
 
   try {
+    const db = await getAppState();
+    const admin = db.users[adminId];
+    if (!admin || admin.role !== "admin") return res.status(403).json({ error: "Admin privileges required" });
+
     const updated = await manuallyApproveSubmission(subId, status as "approved" | "rejected", points);
     if (!updated) {
       return res.status(404).json({ error: "Submission not found" });
@@ -1097,7 +1379,7 @@ You MUST respond strictly in valid JSON matching this schema:
 // 6.5 Generate AI slideshow script with animations and music
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
-    const { submissions, createdBy, title } = req.body;
+    const { submissions, createdBy, title, reunionId, slideshowPrompt } = req.body;
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for slideshow generation" });
@@ -1105,6 +1387,10 @@ app.post("/api/slideshow/generate", async (req, res) => {
 
     if (!createdBy) {
       return res.status(400).json({ error: "Admin user ID is required" });
+    }
+
+    if (!reunionId) {
+      return res.status(400).json({ error: "Reunion ID is required" });
     }
 
     // Prepare image data for AI processing
@@ -1119,7 +1405,7 @@ app.post("/api/slideshow/generate", async (req, res) => {
     const submissionsList = imageDescriptions.join("\n");
 
     // Create prompt for Gemini to generate slideshow script
-    const slideshowPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
+    const defaultPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
 
 I have a collection of photos from a family scavenger hunt. Here are the photos:
 ${submissionsList}
@@ -1138,6 +1424,10 @@ Format your response as a professional production guide that a video editor or s
 
 Make it uplifting and celebratory, suitable for a family reunion event!`;
 
+    const customizedPrompt = slideshowPrompt 
+      ? `${slideshowPrompt}\n\nHere are the photos to feature:\n${submissionsList}`
+      : defaultPrompt;
+
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash",
       contents: [
@@ -1145,7 +1435,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
           role: "user",
           parts: [
             {
-              text: slideshowPrompt,
+              text: customizedPrompt,
             },
           ],
         },
@@ -1156,11 +1446,13 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
 
     // Save slideshow to database
     const slideshowId = `slideshow_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    
     const slideshow: Slideshow = {
       id: slideshowId,
+      reunionId: reunionId,
       title: title || `Family Slideshow - ${new Date().toLocaleDateString()}`,
       script: script,
-      submissionIds: submissions.map((s: any) => s.id),
+      submissionIds: submissions,
       createdBy: createdBy,
       createdAt: new Date().toISOString(),
       isPublished: true,
@@ -1186,7 +1478,8 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
 // 7. Get all published slideshows
 app.get("/api/slideshows", async (req, res) => {
   try {
-    const slideshows = await getAllSlideshows();
+    const reunionId = req.query.reunionId as string | undefined;
+    const slideshows = await getAllSlideshows(reunionId);
     res.json(slideshows);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch slideshows", details: err.message });
@@ -1210,7 +1503,8 @@ app.get("/api/slideshows/:id", async (req, res) => {
 // 8. Get chat messages logs
 app.get("/api/chat-history", async (req, res) => {
   try {
-    const logs = await getChatMessages();
+    const reunionId = req.query.reunionId as string | undefined;
+    const logs = await getChatMessages(reunionId);
     res.json(logs);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch chat logs", details: err.message });
@@ -1220,15 +1514,15 @@ app.get("/api/chat-history", async (req, res) => {
 // 8.1 Admin or message owner delete message
 app.delete("/api/messages/:messageId", async (req, res) => {
   const { messageId } = req.params;
-  const { userId } = req.body;
+  const { userId, reunionId, adminId } = req.body;
 
-  if (!userId) {
-    return res.status(400).json({ error: "Missing userId" });
+  if (!userId && !adminId) {
+    return res.status(400).json({ error: "Missing userId or adminId" });
   }
 
   try {
-    // Get the message
-    const messages = await getChatMessages();
+    // Limit search to reunion if provided
+    const messages = await getChatMessages(reunionId);
     const message = messages.find(m => m.id === messageId);
     
     if (!message) {
@@ -1237,18 +1531,23 @@ app.delete("/api/messages/:messageId", async (req, res) => {
 
     // Verify user is either admin or the message owner
     const db = await getAppState();
-    const user = db.users[userId];
+    const user = userId ? db.users[userId] : db.users[adminId];
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    const isAdmin = user.role === "admin";
+    const isAdmin = user.role === "admin" && !!adminId;
     const isOwner = message.senderId === userId;
 
     if (!isAdmin && !isOwner) {
       return res.status(403).json({ error: "You can only delete your own messages" });
     }
 
-    const success = await deleteMessage(messageId, userId);
+    // Ensure owner/admin is operating within the same reunion unless admin override
+    if (!isAdmin && user.reunionId !== message.reunionId) {
+      return res.status(403).json({ error: "Message does not belong to your reunion" });
+    }
+
+    const success = await deleteMessage(messageId, userId || adminId);
     if (success) {
       res.json({ success: true, message: "Message deleted" });
     } else {
@@ -1261,14 +1560,14 @@ app.delete("/api/messages/:messageId", async (req, res) => {
 
 // 8.2 Mark messages as read
 app.post("/api/messages/mark-read", async (req, res) => {
-  const { userId, messageIds } = req.body;
+  const { userId, messageIds, reunionId } = req.body;
 
   if (!userId || !Array.isArray(messageIds) || messageIds.length === 0) {
     return res.status(400).json({ error: "Missing userId or messageIds" });
   }
 
   try {
-    const success = await markMessagesAsRead(messageIds, userId);
+    const success = await markMessagesAsRead(messageIds, userId, reunionId);
     if (success) {
       res.json({ success: true, message: "Messages marked as read" });
     } else {
@@ -1442,7 +1741,7 @@ async function startServer() {
   const httpServer = http.createServer(app);
   const wss = new WebSocketServer({ server: httpServer });
 
-  const activeSockets = new Map<any, { userId: string; username: string }>();
+  const activeSockets = new Map<any, { userId: string; username: string; reunionId?: string }>();
 
   wss.on("connection", (ws) => {
     console.log("WebSocket client connected.");
@@ -1457,8 +1756,8 @@ async function startServer() {
         }
 
         if (payload.type === "join") {
-          const { userId, username } = payload;
-          console.log("Client joining:", { userId, username });
+          const { userId, username, reunionId } = payload;
+          console.log("Client joining:", { userId, username, reunionId });
           if (userId && username) {
             // Ensure profile exists for this user before allowing them to send messages
             try {
@@ -1468,15 +1767,15 @@ async function startServer() {
               console.error("Failed to ensure profile exists:", err);
               // Don't prevent join if profile creation fails - we'll let the message send attempt fail
             }
-            activeSockets.set(ws, { userId, username });
+            activeSockets.set(ws, { userId, username, reunionId: reunionId || undefined });
             console.log("Added socket to activeSockets, total active:", activeSockets.size);
-            // Broadcast active user list
+            // Broadcast active user list (per-reunion)
             broadcastOnlineUsers(wss, activeSockets);
           }
         } else if (payload.type === "send_message") {
-          const { userId, username, receiverId, text } = payload;
-          console.log("Received send_message event:", { userId, username, receiverId, textLength: text?.length });
-          
+          const { userId, username, receiverId, text, reunionId } = payload;
+          console.log("Received send_message event:", { userId, username, receiverId, textLength: text?.length, reunionId });
+
           if (!userId || !text || text.trim() === "") {
             console.log("Rejecting message: missing userId, text, or text is empty");
             return;
@@ -1484,6 +1783,7 @@ async function startServer() {
 
           const chatMsg = {
             id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            reunionId: reunionId || null,
             senderId: userId,
             senderName: username || "Explorer",
             receiverId: receiverId || null,
@@ -1496,32 +1796,26 @@ async function startServer() {
           await saveChatMessage(chatMsg);
           console.log("Message saved successfully");
 
-          // Broadcast appropriately
-          const rawBroadcast = JSON.stringify({
-            type: "message",
-            message: chatMsg
-          });
+          // Broadcast appropriately, scoping by reunion
+          const rawBroadcast = JSON.stringify({ type: "message", message: chatMsg });
 
-          if (!receiverId) {
-            // Shout box - broadcast to ALL
-            console.log("Broadcasting to all clients (shout box), total clients:", wss.clients.size);
-            wss.clients.forEach((client) => {
-              if (client.readyState === 1) {
-                client.send(rawBroadcast);
+          activeSockets.forEach((info, clientSocket) => {
+            // Only send if client's reunion matches message reunion
+            const clientReunion = info.reunionId || null;
+            const messageReunion = chatMsg.reunionId || null;
+
+            // Private DM: deliver to both parties if they match the reunion
+            if (receiverId) {
+              if ((info.userId === receiverId || info.userId === userId) && clientReunion === messageReunion) {
+                if (clientSocket.readyState === 1) clientSocket.send(rawBroadcast);
               }
-            });
-          } else {
-            // Private message - send only to sender and receiver
-            console.log("Broadcasting to specific recipients (DM), searching in", activeSockets.size, "active sockets");
-            activeSockets.forEach((info, clientSocket) => {
-              if (info.userId === receiverId || info.userId === userId) {
-                if (clientSocket.readyState === 1) {
-                  console.log("Sending DM to:", info.userId);
-                  clientSocket.send(rawBroadcast);
-                }
+            } else {
+              // Shoutbox: send to all clients in same reunion
+              if (clientReunion === messageReunion) {
+                if (clientSocket.readyState === 1) clientSocket.send(rawBroadcast);
               }
-            });
-          }
+            }
+          });
         }
       } catch (err) {
         console.error("WebSocket message handling error:", err);
@@ -1545,19 +1839,27 @@ async function startServer() {
   });
 }
 
-function broadcastOnlineUsers(wss: WebSocketServer, activeSockets: Map<any, { userId: string; username: string }>) {
-  const usersMap = new Map<string, { id: string; username: string }>();
-  activeSockets.forEach((info) => {
-    usersMap.set(info.userId, { id: info.userId, username: info.username });
-  });
-  const onlineList = Array.from(usersMap.values());
-  const payload = JSON.stringify({
-    type: "online_users",
-    users: onlineList
-  });
-  wss.clients.forEach((client) => {
-    if (client.readyState === 1) {
-      client.send(payload);
+function broadcastOnlineUsers(wss: WebSocketServer, activeSockets: Map<any, { userId: string; username: string; reunionId?: string }>) {
+  // For each connected socket, compute the list of online users that share its reunion
+  activeSockets.forEach((info, clientSocket) => {
+    try {
+      const clientReunion = info.reunionId || null;
+      const usersMap = new Map<string, { id: string; username: string }>();
+      activeSockets.forEach((other) => {
+        const otherReunion = other.reunionId || null;
+        if (otherReunion === clientReunion) {
+          usersMap.set(other.userId, { id: other.userId, username: other.username });
+        }
+      });
+
+      const onlineList = Array.from(usersMap.values());
+      const payload = JSON.stringify({ type: "online_users", users: onlineList });
+
+      if (clientSocket.readyState === 1) {
+        clientSocket.send(payload);
+      }
+    } catch (err) {
+      console.warn("Failed to send online users to a client:", err);
     }
   });
 }

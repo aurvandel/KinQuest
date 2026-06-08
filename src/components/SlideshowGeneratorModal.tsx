@@ -10,6 +10,9 @@ interface SlideshowGeneratorModalProps {
   isLoading: boolean;
   error: string | null;
   generatedScript: string | null;
+  reunionId: string;
+  slideshowPrompt?: string;
+  onSlideshowPromptChange?: (prompt: string) => void;
   onScriptGenerated?: (script: string) => void;
 }
 
@@ -21,6 +24,9 @@ export function SlideshowGeneratorModal({
   isLoading,
   error,
   generatedScript,
+  reunionId,
+  slideshowPrompt = "Create a professional and entertaining slideshow narration for a family reunion event. Provide a dynamic, engaging script that celebrates family moments, includes humor where appropriate, and creates a memorable viewing experience. Make it personal and warm while maintaining professional production quality.",
+  onSlideshowPromptChange,
   onScriptGenerated
 }: SlideshowGeneratorModalProps) {
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set());
@@ -28,6 +34,7 @@ export function SlideshowGeneratorModal({
   const [copiedScript, setCopiedScript] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localScript, setLocalScript] = useState<string | null>(generatedScript);
+  const [localPrompt, setLocalPrompt] = useState(slideshowPrompt);
 
   const approvedSubmissions = submissions.filter((sub) => sub.status === "approved");
 
@@ -66,8 +73,10 @@ export function SlideshowGeneratorModal({
             title: items.find((it) => it.id === sub.itemId)?.title || "Unknown",
             username: sub.username,
           })),
-          createdBy: "admin", // Will be set by parent component if available
+          createdBy: "admin",
           title: `Family Slideshow - ${new Date().toLocaleDateString()}`,
+          reunionId: reunionId,
+          slideshowPrompt: localPrompt,
         }),
       });
 
@@ -140,6 +149,24 @@ export function SlideshowGeneratorModal({
 
         {/* Content */}
         <div className="overflow-y-auto flex-1 p-6 space-y-6">
+          {/* AI Prompt Configuration */}
+          <div className="space-y-2 p-4 bg-purple-50 rounded-xl border border-purple-100">
+            <h3 className="text-xs font-bold text-purple-900 uppercase tracking-wider">🎬 Narration Guide</h3>
+            <p className="text-[10px] text-purple-700 mb-2">Customize how the AI generates your slideshow narration:</p>
+            <textarea
+              value={localPrompt}
+              onChange={(e) => {
+                setLocalPrompt(e.target.value);
+                if (onSlideshowPromptChange) {
+                  onSlideshowPromptChange(e.target.value);
+                }
+              }}
+              placeholder="Enter prompt for AI slideshow generation..."
+              rows={3}
+              className="w-full text-xs bg-white border border-purple-200 rounded-lg pl-3 pr-3 py-2 outline-none focus:ring-1 focus:ring-purple-500 font-mono"
+            />
+          </div>
+          
           {/* Step 1: Select Images */}
           {!currentScript && (
             <div className="space-y-4">

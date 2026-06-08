@@ -10,6 +10,7 @@ cd "$(dirname "$0")/.."
 
 BASE_URL="${BASE_URL:-https://kinquest.narcolepsy.ninja}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-password}"
+REUNION_ID="${REUNION_ID:-reunion_k6_test}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -26,7 +27,8 @@ run_player_behavior() {
     -e BASE_URL="$BASE_URL" \
     -e VU_COUNT="${VU_COUNT:-10}" \
     -e TEST_DURATION="${TEST_DURATION:-30s}" \
-    -e RAMP_UP="${RAMP_UP:-5s}"
+    -e RAMP_UP="${RAMP_UP:-5s}" \
+    -e REUNION_ID="$REUNION_ID"
 }
 
 run_spike_test() {
@@ -34,7 +36,8 @@ run_spike_test() {
   echo "Pattern: Ramp 2m → Spike to 100 VUs for 1m → Cool down 1m"
   
   k6 run k6-tests/spike-load.js \
-    -e BASE_URL="$BASE_URL"
+    -e BASE_URL="$BASE_URL" \
+    -e REUNION_ID="$REUNION_ID"
 }
 
 run_endurance() {
@@ -44,7 +47,8 @@ run_endurance() {
   k6 run k6-tests/endurance.js \
     -e BASE_URL="$BASE_URL" \
     -e VU_COUNT="${VU_COUNT:-20}" \
-    -e TEST_DURATION="${TEST_DURATION:-10m}"
+    -e TEST_DURATION="${TEST_DURATION:-10m}" \
+    -e REUNION_ID="$REUNION_ID"
 }
 
 run_admin_ops() {
@@ -52,14 +56,16 @@ run_admin_ops() {
   
   k6 run k6-tests/admin-operations.js \
     -e BASE_URL="$BASE_URL" \
-    -e ADMIN_PASSWORD="$ADMIN_PASSWORD"
+    -e ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    -e REUNION_ID="$REUNION_ID"
 }
 
 run_image_upload() {
   echo -e "${GREEN}📸 Running Image Upload & Serving Test${NC}"
   
   k6 run k6-tests/image-upload-serve.js \
-    -e BASE_URL="$BASE_URL"
+    -e BASE_URL="$BASE_URL" \
+    -e REUNION_ID="$REUNION_ID"
 }
 
 run_all_tests() {
@@ -91,8 +97,9 @@ run_quick_smoke() {
   k6 run k6-tests/player-behavior.js \
     -e BASE_URL="$BASE_URL" \
     -e VU_COUNT="5" \
-    -e TEST_DURATION="1m"
-}
+    -e TEST_DURATION="1m" \
+    -e REUNION_ID="$REUNION_ID"
+}}
 
 show_help() {
   cat <<EOF

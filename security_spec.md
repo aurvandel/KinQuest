@@ -176,41 +176,6 @@ The following payloads represent real-world malicious attempts to bypass identit
 
 ---
 
-## 3. Test Cases Implementation Plan (`firestore.rules.test.ts`)
+## 3. Implementation Notes
 
-```typescript
-import { assertFails, assertSucceeds, initializeTestEnvironment } from "@firebase/rules-unit-testing";
-
-// The full test suite checking all "Dirty Dozen" payloads against firestore.rules
-describe("Scavenger Hunt Security Tests", () => {
-  let testEnv;
-
-  before(async () => {
-    testEnv = await initializeTestEnvironment({
-      projectId: "scavenger-hunt-test",
-      firestore: {
-        rules: require("fs").readFileSync("firestore.rules", "utf8")
-      }
-    });
-  });
-
-  after(async () => {
-    await testEnv.cleanup();
-  });
-
-  it("should block non-authenticated submission saves (PAA-004 style)", async () => {
-    const unauthedDb = testEnv.unauthenticatedContext().firestore();
-    await assertFails(unauthedDb.collection("submissions").add({
-      itemId: "item_duck",
-      imageUrl: "data:..."
-    }));
-  });
-
-  it("should stop players directly modifying points profiles (PAA-003)", async () => {
-    const playerDb = testEnv.authenticatedContext("playerBob").firestore();
-    await assertFails(playerDb.collection("users").doc("playerBob").update({
-      score: 99999
-    }));
-  });
-});
-```
+This specification was originally written for Firebase/Firestore. **KinQuest now uses Supabase with PostgreSQL Row-Level Security (RLS)** for database access control. The security principles documented above remain valid and should be enforced through Supabase RLS policies in `supabase/init.sql`.

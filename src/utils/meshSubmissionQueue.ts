@@ -8,6 +8,7 @@ export interface QueuedSubmission {
   userId: string;
   username: string;
   itemId: string;
+  reunionId?: string;
   imageBase64: string; // Full base64 data
   userLat?: number;
   userLng?: number;
@@ -95,13 +96,15 @@ export class MeshSubmissionQueue {
     itemId: string,
     imageBase64: string,
     userLat?: number,
-    userLng?: number
+    userLng?: number,
+    reunionId?: string
   ): Promise<QueuedSubmission> {
     const submission: QueuedSubmission = {
       id: `sub_queue_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       userId,
       username,
       itemId,
+      reunionId,
       imageBase64,
       userLat,
       userLng,

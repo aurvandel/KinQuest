@@ -177,7 +177,8 @@ export class MeshSyncManager {
           itemId: submission.itemId,
           imageBase64: submission.imageBase64,
           userLat: submission.userLat,
-          userLng: submission.userLng
+          userLng: submission.userLng,
+          reunionId: submission.reunionId
         })
       });
 

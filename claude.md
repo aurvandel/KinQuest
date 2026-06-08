@@ -44,10 +44,9 @@ When implementing a new feature that touches data:
 
 KinQuest intelligently handles two storage systems:
 
-- **Supabase (Primary)**: PostgreSQL database for production
-- **Local Fallback**: `db.json` when Supabase is unavailable
+- **Supabase**: PostgreSQL database for all data persistence
 
-The database layer in `db-manager.ts` implements this pattern:
+All operations require Supabase connectivity. The database layer in `db-manager.ts` handles Supabase operations:
 - Try Supabase first
 - On error, fall back to local storage
 - Return the same object shape regardless of storage path
@@ -153,12 +152,9 @@ app.post("/api/endpoint", async (req, res) => {
 Before committing schema changes:
 - [ ] Field added to `supabase/init.sql`
 - [ ] Field added to TypeScript interface in `src/types.ts`
-- [ ] Field handled in `db-manager.ts` (local path)
-- [ ] Field handled in `db-manager.ts` (Supabase path)
+- [ ] Field handled in `db-manager.ts` Supabase operations
 - [ ] Migration run: `docker compose exec -T db psql -U postgres -d postgres -c "..."`
 - [ ] Tested creation with Supabase running
-- [ ] Tested creation with Supabase stopped
-- [ ] Data verified in both `db.json` and Supabase
 
 ## References
 

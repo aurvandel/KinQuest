@@ -14,7 +14,7 @@ const AVAILABLE_ICONS = [
 interface CreateMissionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (challenge: Omit<ScavengerItem, "id">) => Promise<void>;
+  onSubmit: (challenge: Omit<ScavengerItem, "id" | "reunionId" | "createdBy">) => Promise<void>;
   userLat: number | null;
   userLng: number | null;
   preFilledFromMap?: boolean;
@@ -99,7 +99,8 @@ export function CreateMissionModal({
         onClose();
       }, 1500);
     } catch (err) {
-      setError("Could not create mission. Server unresponsive.");
+      const errorMsg = err instanceof Error ? err.message : "Could not create mission. Please try again.";
+      setError(errorMsg);
     } finally {
       setIsLoading(false);
     }

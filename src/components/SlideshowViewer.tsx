@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { Slideshow } from "../types";
-import { Download, Copy, Check, Loader2, Sparkles, AlertCircle } from "lucide-react";
+import { Download, Copy, Check, Loader2, Sparkles, AlertCircle, Zap } from "lucide-react";
 
 interface SlideshowViewerProps {
   userId: string | null;
+  reunionId?: string;
+  isAdmin?: boolean;
+  onOpenGenerator?: () => void;
 }
 
-export function SlideshowViewer({ userId }: SlideshowViewerProps) {
+export function SlideshowViewer({ userId, reunionId, isAdmin = false, onOpenGenerator }: SlideshowViewerProps) {
   const [slideshows, setSlideshows] = useState<Slideshow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +21,8 @@ export function SlideshowViewer({ userId }: SlideshowViewerProps) {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch("/api/slideshows");
+        const reunionParam = reunionId ? `?reunionId=${reunionId}` : "";
+        const response = await fetch(`/api/slideshows${reunionParam}`);
         if (!response.ok) {
           throw new Error("Failed to fetch slideshows");
         }
@@ -33,7 +37,7 @@ export function SlideshowViewer({ userId }: SlideshowViewerProps) {
     };
 
     fetchSlideshows();
-  }, []);
+  }, [reunionId]);
 
   const handleDownload = (slideshow: Slideshow) => {
     const element = document.createElement("a");
@@ -65,6 +69,15 @@ export function SlideshowViewer({ userId }: SlideshowViewerProps) {
             <h2 className="text-lg font-bold text-gray-800">AI Slideshow Scripts</h2>
             <p className="text-xs text-gray-400">Download professional slideshow production guides</p>
           </div>
+          {isAdmin && (
+            <button
+              onClick={onOpenGenerator}
+              className="px-3 py-2 bg-[#5a5a40] text-white rounded-lg text-xs font-bold hover:bg-[#464632] transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Generate
+            </button>
+          )}
         </div>
 
         <div className="flex items-center justify-center py-12">
@@ -83,6 +96,15 @@ export function SlideshowViewer({ userId }: SlideshowViewerProps) {
             <h2 className="text-lg font-bold text-gray-800">AI Slideshow Scripts</h2>
             <p className="text-xs text-gray-400">Download professional slideshow production guides</p>
           </div>
+          {isAdmin && (
+            <button
+              onClick={onOpenGenerator}
+              className="px-3 py-2 bg-[#5a5a40] text-white rounded-lg text-xs font-bold hover:bg-[#464632] transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Generate
+            </button>
+          )}
         </div>
 
         <div className="bg-red-50 border border-red-200 rounded-2xl p-6 flex items-center gap-3">
@@ -104,6 +126,15 @@ export function SlideshowViewer({ userId }: SlideshowViewerProps) {
             <h2 className="text-lg font-bold text-gray-800">AI Slideshow Scripts</h2>
             <p className="text-xs text-gray-400">Download professional slideshow production guides</p>
           </div>
+          {isAdmin && (
+            <button
+              onClick={onOpenGenerator}
+              className="px-3 py-2 bg-[#5a5a40] text-white rounded-lg text-xs font-bold hover:bg-[#464632] transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Generate
+            </button>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center text-gray-400 shadow-sm">
@@ -124,10 +155,21 @@ export function SlideshowViewer({ userId }: SlideshowViewerProps) {
           <h2 className="text-lg font-bold text-gray-800">AI Slideshow Scripts</h2>
           <p className="text-xs text-gray-400">Download professional slideshow production guides</p>
         </div>
-        <span className="text-xs bg-blue-100 text-blue-600 font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
-          <Sparkles className="h-3 w-3" />
-          {slideshows.length} Available
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs bg-blue-100 text-blue-600 font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
+            <Sparkles className="h-3 w-3" />
+            {slideshows.length} Available
+          </span>
+          {isAdmin && (
+            <button
+              onClick={onOpenGenerator}
+              className="px-3 py-2 bg-[#5a5a40] text-white rounded-lg text-xs font-bold hover:bg-[#464632] transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              Generate
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-3">

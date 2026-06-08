@@ -7,6 +7,7 @@ const enduranceErrors = new Counter('endurance_errors');
 const requestsPerSecond = new Gauge('rps');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const REUNION_ID = __ENV.REUNION_ID || 'reunion_k6_test'; // Test reunion ID
 
 // Endurance test: sustained load over long period
 export const options = {

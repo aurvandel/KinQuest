@@ -7,6 +7,7 @@ const uploadDuration = new Trend('upload_duration');
 const serveDuration = new Trend('serve_duration');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const REUNION_ID = __ENV.REUNION_ID || 'reunion_k6_test'; // Test reunion ID
 
 // Test image serving and persistence
 // Tests:
@@ -60,6 +61,7 @@ export default function () {
         userId: registeredUserId,
         username,
         displayName: `Player ${__VU}`,
+        reunionId: REUNION_ID,
       }),
       {
         headers: { 'Content-Type': 'application/json' },
@@ -83,7 +85,7 @@ export default function () {
 
   // Get game state to find a challenge
   group('Get Game State for Challenge', () => {
-    const gameStateRes = http.get(`${BASE_URL}/api/game-state`, {
+    const gameStateRes = http.get(`${BASE_URL}/api/game-state?reunionId=${REUNION_ID}`, {
       tags: { name: 'GameState' },
     });
 
@@ -105,6 +107,7 @@ export default function () {
               mimeType: 'image/png',
               lat: 34.0522 + Math.random() * 0.1,
               lng: -118.2437 + Math.random() * 0.1,
+              reunionId: REUNION_ID,
             };
 
             const submissionRes = http.post(`${BASE_URL}/api/verify-submission`,

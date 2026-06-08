@@ -18,6 +18,32 @@ choco install k6
 # Or download from: https://k6.io/docs/getting-started/installation/
 ```
 
+## Setup Required
+
+All tests use a specific test reunion. Before running tests, create a test reunion:
+
+1. Start the application
+2. Log in as admin
+3. Create a new reunion with the following details:
+   - **Name**: K6 Test Reunion
+   - **Invite Code**: `k6-test` (or use the default: `reunion_k6_test`)
+   - Accept defaults for other settings
+4. Create a few test missions/items in this reunion
+
+Alternatively, use the Postman collection to bulk-load test items after creating the reunion.
+
+## Environment Variables
+
+All tests support these environment variables:
+
+```bash
+BASE_URL=http://localhost:3000      # Server URL (default: http://localhost:3000)
+REUNION_ID=reunion_k6_test          # Test reunion ID (default: reunion_k6_test)
+ADMIN_PASSWORD=admin1234            # Admin password (default: password)
+TEST_DURATION=5m                    # Test duration (varies by scenario)
+VU_COUNT=50                         # Virtual users count (varies by scenario)
+```
+
 ## Test Scenarios
 
 ### 1. Player Behavior Test (`player-behavior.js`)
@@ -44,7 +70,8 @@ k6 run k6-tests/player-behavior.js \
   --duration 2m \
   -e BASE_URL=https://kinquest.narcolepsy.ninja \
   -e TEST_DURATION=2m \
-  -e VU_COUNT=50
+  -e VU_COUNT=50 \
+  -e REUNION_ID=reunion_k6_test
 ```
 
 ### 2. Spike Load Test (`spike-load.js`)

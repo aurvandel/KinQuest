@@ -1,5 +1,27 @@
+export interface Reunion {
+  id: string;
+  name: string;
+  adminId: string; // Admin user who owns/created this reunion
+  inviteCode: string;
+  inviteRequired: boolean;
+  icon: string | null;
+  defaultLat?: number;
+  defaultLng?: number;
+  defaultRadius?: number;
+  aiPromptCriteria?: string;
+  aiVerificationEnabled?: boolean;
+  allowForceSubmit?: boolean;
+  imageCompressionMaxDim?: number;
+  imageCompressionQuality?: number;
+  showTitle?: boolean;
+  showLogo?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ScavengerItem {
   id: string;
+  reunionId: string; // Which reunion this mission belongs to
   title: string;
   description: string;
   points: number;
@@ -9,12 +31,14 @@ export interface ScavengerItem {
   lng?: number | null;
   radius?: number | null; // in meters
   createdBy?: string; // User ID of who created this mission
+  createdAt?: string;
 }
 
 export interface PlayerProfile {
   id: string;
   username: string;
   displayName?: string;
+  reunionId?: string; // Which reunion(s) the player is in - now can be null for user creation screen
   score: number;
   completedCount: number;
   createdAt: string;
@@ -33,6 +57,7 @@ export interface PlayerProfile {
 
 export interface Submission {
   id: string;
+  reunionId: string; // Which reunion this submission is for
   userId: string;
   username: string;
   itemId: string;
@@ -52,6 +77,7 @@ export interface Submission {
 
 export interface ChatMessage {
   id: string;
+  reunionId: string; // Which reunion this message is for
   senderId: string;
   senderName: string;
   receiverId: string | null; // null for public shoutbox, otherwise target player id
@@ -65,6 +91,7 @@ export interface ChatMessage {
 
 export interface Slideshow {
   id: string;
+  reunionId: string; // Which reunion this slideshow is for
   title: string;
   description?: string;
   script: string;
@@ -81,6 +108,7 @@ export interface AppSettings {
   defaultLng?: number;
   defaultRadius?: number;
   aiPromptCriteria?: string;
+  slideshowPrompt?: string;
   activeInviteCode?: string;
   inviteRequired?: boolean;
   aiVerificationEnabled?: boolean;
@@ -95,6 +123,7 @@ export interface AppSettings {
 export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   {
     id: "item_retro_key",
+    reunionId: "",
     title: "A key with history",
     description: "Locate a physical key. It can be an old door key, house key, padlock key, or retro key. Showcase its details up close.",
     points: 50,
@@ -106,6 +135,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_qr_code",
+    reunionId: "",
     title: "A QR or Barcode",
     description: "Find any QR code or barcode—on a product container, a book cover, a ticket stub, or product label.",
     points: 30,
@@ -117,6 +147,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_green_leaf",
+    reunionId: "",
     title: "Five-pointed leaf",
     description: "Find a fresh green leaf in nature that has multiple lobes/shapes (like maple, ivy, or similar flora).",
     points: 40,
@@ -128,6 +159,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_yellow_book",
+    reunionId: "",
     title: "Yellow cover page book",
     description: "Search your shelves or desks for a book with a primary solid yellow or mostly yellow color schema on the front sleeve.",
     points: 60,
@@ -139,6 +171,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_cozy_mug",
+    reunionId: "",
     title: "Cozy mug or glass of liquid",
     description: "Photograph your current beverage container: a coffee mug, warm tea cup, drinking glass, or insulated bottle.",
     points: 25,
@@ -150,6 +183,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_red_object",
+    reunionId: "",
     title: "Something vividly Red",
     description: "Locate any item around you whose prominent dye color is cherry, crimson, or warning red.",
     points: 20,
@@ -161,6 +195,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_desktop_gadget",
+    reunionId: "",
     title: "A modern desk widget",
     description: "Find an action-ready piece of hardware like premium computer mouse, noise-canceling headphones, a controller, or USB accessories.",
     points: 35,
@@ -172,6 +207,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_clock_digit",
+    reunionId: "",
     title: "A timepiece showing numbers",
     description: "Capture a wristwatch, smartphone screen clock, desk digital clock, or wall clock to demonstrate the currency of tracking time.",
     points: 45,
@@ -183,6 +219,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_houseplant",
+    reunionId: "",
     title: "Succulent or houseplant",
     description: "Photograph an active domestic plant, potted greenery, succulent, or flower arrangement inside or on your window sill.",
     points: 35,
@@ -194,6 +231,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_metallic",
+    reunionId: "",
     title: "Something metallic",
     description: "Locate a shiny metallic item: cutlery, aluminum wrap, metal gears, or a watch dial gleaming under direct light.",
     points: 30,
@@ -205,6 +243,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_coin_metal",
+    reunionId: "",
     title: "A circular coin",
     description: "A physical coin of any currency denomination, resting flat. It could be cents, pence, euros, or vintage tokens.",
     points: 40,
@@ -216,6 +255,7 @@ export const INITIAL_HUNT_ITEMS: ScavengerItem[] = [
   },
   {
     id: "item_furry_pet",
+    reunionId: "",
     title: "A furry friend (or portrait)",
     description: "Photograph a real pet (dog, cat, rabbit) or get creative with a stuffed animal, a toy dinosaur, or pet portrait illustration.",
     points: 65,

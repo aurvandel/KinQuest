@@ -28,6 +28,7 @@ export interface MeshSubmission {
   userId: string;
   username: string;
   itemId: string;
+  reunionId?: string;
   imageUrl: string; // base64 or local blob URL
   imageData?: string; // Large base64 string, chunked for transfer
   status: "pending" | "approved" | "rejected";

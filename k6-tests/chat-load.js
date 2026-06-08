@@ -8,6 +8,7 @@ const chatDuration = new Trend('chat_message_duration');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
 const WS_URL = __ENV.WS_URL || 'ws://localhost:3000';
+const REUNION_ID = __ENV.REUNION_ID || 'reunion_k6_test'; // Test reunion ID
 
 // WebSocket Shoutbox and Chat stress test
 // Tests:
@@ -153,7 +154,7 @@ export default function () {
 
   // Also test chat history endpoint
   group('Chat History Retrieval', () => {
-    const historyRes = http.get(`${BASE_URL}/api/chat-history`, {
+    const historyRes = http.get(`${BASE_URL}/api/chat-history?reunionId=${REUNION_ID}`, {
       tags: { name: 'ChatHistory' },
     });
 

@@ -23,54 +23,49 @@ This document outlines important patterns, conventions, and critical constraints
 
 ### Why This Matters
 
-KinQuest uses a **dual-database system**:
-- **Primary**: Supabase (PostgreSQL) in production
-- **Fallback**: Local JSON file (`db.json`) when Supabase is unavailable
+KinQuest uses **Supabase (PostgreSQL)** as the exclusive database backend. All data operations require Supabase connectivity.
 
-The application gracefully falls back from Supabase to local storage, but **if schemas diverge, data corruption and sync issues will occur**.
+Schema consistency is critical because all data structures must match the PostgreSQL schema defined in `supabase/init.sql`.
 
 ### Example: The createdBy Incident
 
-When we added mission creator tracking:
+When a field was added to TypeScript but not to Supabase:
 
-1. ✅ **Added to local schema** (`db.json`): `createdBy` field
-2. ✅ **Added to TypeScript types** (`types.ts`): `createdBy?: string`
-3. ❌ **FORGOT to add to Supabase schema**: No migration was run
+1. ✅ **Added to TypeScript types** (`types.ts`): `createdBy?: string`
+2. ❌ **FORGOT to add to Supabase schema**: No migration was run
 
 **Result**: 
 ```
-Supabase challenge write issue, saving locally: {
+Supabase error: {
   code: 'PGRST204',
   message: "Column 'createdBy' of relation 'items' does not exist"
 }
 ```
 
-The app fell back to local storage but created an invisible sync gap.
+Without a fallback, the application would fail immediately, making the error obvious during development.
 
 ### How to Prevent This
 
 **When adding a new field or table:**
 
-1. **Update the local schema first** (`db.json` structure)
+1. **Update the SQL schema** (`supabase/init.sql`)
 2. **Update TypeScript types** (`src/types.ts`)
-3. **Update the SQL schema** (`supabase/init.sql`)
+3. **Update db-manager.ts** to handle the new field
 4. **Run the migration immediately** on the running database:
    ```bash
    docker compose exec -T db psql -U postgres -d postgres -c "ALTER TABLE table_name ADD COLUMN column_name TYPE;"
    ```
-5. **Test both paths**: Ensure creation works with and without Supabase running
+5. **Test**: Ensure creation works with Supabase running
 
 ### Schema Verification Checklist
 
 Before committing changes that touch data:
 
 - [ ] New fields exist in `supabase/init.sql`
-- [ ] New fields exist in `db-manager.ts` (local fallback)
 - [ ] New fields exist in `src/types.ts` (TypeScript)
-- [ ] Both local and Supabase code paths handle the field
+- [ ] New fields handled in `db-manager.ts` (Supabase insert/select)
 - [ ] Migration has been applied to the running database
-- [ ] Tested mission creation with Supabase running
-- [ ] Tested mission creation with Supabase down (local fallback)
+- [ ] Tested with Supabase running
 
 ### Key Tables & Migration Points
 
@@ -97,7 +92,7 @@ Before committing changes that touch data:
 
 ## Database Layer Pattern
 
-The `db-manager.ts` file implements a robust pattern:
+The `db-manager.ts` file implements a straightforward pattern:
 
 ```typescript
 export async function createScavengerChallenge(
@@ -109,40 +104,25 @@ export async function createScavengerChallenge(
     ...item
   };
 
-  // 2. Detect database mode
-  const mode = getDbMode();
-
-  // 3. Save to local as backup
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    db.items[itemId] = newItem;
-    saveLocalDb(db);
-    return newItem;
-  }
-
-  // 4. Try Supabase (include ONLY schema-matching fields)
+  // 2. Insert to Supabase (include ONLY schema-matching fields)
   try {
     const row = {
       id: newItem.id,
       title: newItem.title,
       // ⚠️ IMPORTANT: Only include fields that exist in Supabase schema
-      // Do NOT include fields like 'createdBy' if they're not in the table
+      // Field names use snake_case in database, camelCase in objects
     };
-    const { error } = await supabase.from("items").insert(row);
+    const { error } = await supabase!.from("items").insert(row);
     if (error) throw error;
-    return newItem; // Return full object with all fields
-  } catch (err) {
-    // 5. Fall back gracefully
-    console.error("Supabase write issue, saving locally:", err);
-    const db = loadLocalDb();
-    db.items[itemId] = newItem;
-    saveLocalDb(db);
-    return newItem; // Return full object even though only local saved
+    return newItem;
+  } catch (err: any) {
+    console.error("Failed to create item:", err);
+    throw err; // Errors propagate - no fallback
   }
 }
 ```
 
-**Key principle**: The returned object can have more fields than what Supabase knows about (because local has them), but the Supabase insert must only include fields that exist in the schema.
+**Key principle**: Only include fields in the Supabase insert that exist in the schema. Field names must use snake_case for database columns and convert to camelCase in returned objects.
 
 ## API Layer Pattern
 
@@ -177,40 +157,36 @@ app.post("/api/challenges", async (req, res) => {
 
 ## Testing Database Changes
 
-Always test both code paths:
+Always test with Supabase running:
 
 ```bash
-# Test with Supabase running
-npm run dev
-# Create a mission - should save to both Supabase and local
+# Start the full stack
+docker compose up -d
 
-# Test with Supabase down
-docker compose stop supabase-local-kong
+# Run development server
 npm run dev
-# Create a mission - should save to local fallback only
-docker compose start supabase-local-kong
-# Verify mission appears after Supabase comes back up
+
+# Create a mission - should save to Supabase
+# Verify in Supabase Dashboard or check server logs for success
 ```
 
 ## Common Pitfalls
 
 ❌ **Adding field to TypeScript but not to Supabase schema**
-- Will work locally, break in production
-
-❌ **Adding field to Supabase but not to local fallback**
-- Will work with Supabase up, lose data when it's down
+- Application will crash with schema mismatch error
 
 ❌ **Inserting unsupported fields into Supabase**
-- Causes silent failures that fall back to local (data inconsistency)
+- Causes immediate write failures that developers see during testing
 
 ❌ **Not running migrations on the running database**
 - Schema in `init.sql` updates on fresh containers, but existing ones are out of sync
 
 ✅ **The Safe Approach**:
-1. Update all three: `init.sql`, `types.ts`, `db-manager.ts`
-2. Run migration command
-3. Test both with and without Supabase
-4. Verify data in both storage systems
+1. Update `init.sql` with the new column/table
+2. Update TypeScript types in `types.ts`
+3. Update `db-manager.ts` to include the field in Supabase operations
+4. Run migration command on running database
+5. Test creation with Supabase running
 
 ## Schema Change Process (Step-by-Step)
 
@@ -263,9 +239,8 @@ docker compose start supabase-local-kong
 |------|---------|--------------|
 | `supabase/init.sql` | SQL schema definition | New tables/columns, indexes |
 | `src/types.ts` | TypeScript interfaces | Type safety, all fields |
-| `db-manager.ts` | Database layer | Both Supabase and local paths |
+| `db-manager.ts` | Database layer | Supabase operations, schema alignment |
 | `server.ts` | API endpoints | Request handling, validation |
-| `db.json` | Local fallback database | Manual testing without Supabase |
 
 ## When to Add to Agents.md
 

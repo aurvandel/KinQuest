@@ -16,6 +16,7 @@ const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
 const TEST_DURATION = __ENV.TEST_DURATION || '30s';
 const VU_COUNT = __ENV.VU_COUNT || 10;
 const RAMP_UP = __ENV.RAMP_UP || '5s';
+const REUNION_ID = __ENV.REUNION_ID || 'reunion_k6_test'; // Test reunion ID
 
 export const options = {
   scenarios: {
@@ -72,6 +73,7 @@ export default function () {
       userId: localUserId,
       username,
       displayName: `Player ${__VU}`,
+      reunionId: REUNION_ID,
     };
 
     const registerRes = http.post(`${BASE_URL}/api/auth/register`, JSON.stringify(registerPayload), {
@@ -103,7 +105,7 @@ export default function () {
   sleep(1);
 
   group('Get Game State', () => {
-    const gameStateRes = http.get(`${BASE_URL}/api/game-state`, {
+    const gameStateRes = http.get(`${BASE_URL}/api/game-state?reunionId=${REUNION_ID}`, {
       tags: { name: 'GameState' },
     });
 
@@ -137,6 +139,7 @@ export default function () {
             mimeType: 'image/png',
             lat: coords.lat,
             lng: coords.lng,
+            reunionId: REUNION_ID,
           };
 
           const submissionRes = http.post(`${BASE_URL}/api/verify-submission`, JSON.stringify(submissionPayload), {
@@ -165,6 +168,7 @@ export default function () {
       senderName: username,
       text: `Hello from ${username} at ${new Date().toISOString()}!`,
       receiverId: null, // Public chat
+      reunionId: REUNION_ID,
     };
 
     const chatRes = http.post(`${BASE_URL}/api/chat`, JSON.stringify(chatPayload), {
@@ -183,7 +187,7 @@ export default function () {
   sleep(1);
 
   group('Get Chat History', () => {
-    const chatHistoryRes = http.get(`${BASE_URL}/api/chat-history`, {
+    const chatHistoryRes = http.get(`${BASE_URL}/api/chat-history?reunionId=${REUNION_ID}`, {
       tags: { name: 'ChatHistory' },
     });
 
@@ -197,7 +201,7 @@ export default function () {
   sleep(1);
 
   group('Get Leaderboard', () => {
-    const leaderboardRes = http.get(`${BASE_URL}/api/game-state`, {
+    const leaderboardRes = http.get(`${BASE_URL}/api/game-state?reunionId=${REUNION_ID}`, {
       tags: { name: 'Leaderboard' },
     });
 
@@ -214,7 +218,7 @@ export default function () {
 
   // Retrieve available slideshows (simulating Scripts tab viewing)
   group('Get Available Slideshows', () => {
-    const slideshowsRes = http.get(`${BASE_URL}/api/slideshows`, {
+    const slideshowsRes = http.get(`${BASE_URL}/api/slideshows?reunionId=${REUNION_ID}`, {
       tags: { name: 'ViewSlideshows' },
     });
 

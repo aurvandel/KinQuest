@@ -24,9 +24,10 @@ interface ChatProps {
   onMuteUser?: (userId: string) => Promise<void>;
   onUnmuteUser?: (userId: string) => Promise<void>;
   onBootUser?: (userId: string) => Promise<void>;
+  reunionId?: string;
 }
 
-export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMessage, onDeleteMessage, onMuteUser, onUnmuteUser, onBootUser }: ChatProps) {
+export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMessage, onDeleteMessage, onMuteUser, onUnmuteUser, onBootUser, reunionId }: ChatProps) {
   const [activeSubTab, setActiveSubTab] = useState<"shout" | "pm">("shout");
   const [selectedRecipient, setSelectedRecipient] = useState<PlayerProfile | null>(null);
   const [messageText, setMessageText] = useState("");
@@ -86,7 +87,8 @@ export function Chat({ profile, players, onlinePlayers, chatMessages, onSendMess
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             userId: profile.id,
-            messageIds: unreadMessageIds
+            messageIds: unreadMessageIds,
+            reunionId: reunionId || null
           })
         }).catch(err => console.error("Failed to mark messages as read:", err));
       }

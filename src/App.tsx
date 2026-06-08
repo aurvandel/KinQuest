@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { ScavengerItem, PlayerProfile, Submission, ChatMessage, AppSettings } from "./types";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { ScavengerItem, PlayerProfile, Submission, ChatMessage, AppSettings, Reunion } from "./types";
 import { MissionsList } from "./components/MissionsList";
 import { Leaderboard } from "./components/Leaderboard";
 import { Feed } from "./components/Feed";
@@ -10,9 +10,10 @@ import { SlideshowViewer } from "./components/SlideshowViewer";
 import { PhotoApprovalPanel } from "./components/PhotoApprovalPanel";
 import { AdminAuthModal } from "./components/AdminAuthModal";
 import { UserSettingsModal } from "./components/UserSettingsModal";
-import { AdminSettingsModal } from "./components/AdminSettingsModal";
 import { CreateMissionModal } from "./components/CreateMissionModal";
 import { SlideshowGeneratorModal } from "./components/SlideshowGeneratorModal";
+import { ReunionModal } from "./components/ReunionModal";
+import { ReunionSelector } from "./components/ReunionSelector";
 import { ServerLogs } from "./components/ServerLogs";
 import {
   getPendingSubmissions,
@@ -72,37 +73,26 @@ export default function App() {
   const [appReady, setAppReady] = useState(false);
   const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
 
-  // Game branding states
+  // Game branding states - keep only slideshow prompt for SlideshowGeneratorModal
   const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: "/kinquest_logo.png", inviteRequired: true, activeInviteCode: "stewart-test" });
-  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
-  const [adminNameInput, setAdminNameInput] = useState("");
-  const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
-  const [adminLatInput, setAdminLatInput] = useState(41.9076);
-  const [adminLngInput, setAdminLngInput] = useState(-111.3800);
-  const [adminRadiusInput, setAdminRadiusInput] = useState(200);
-  const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
-  const [adminAiVerificationEnabledInput, setAdminAiVerificationEnabledInput] = useState(true);
-  const [adminAllowForceSubmitInput, setAdminAllowForceSubmitInput] = useState(false);
-  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("stewart-test");
-  const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
+  const [adminSlideshowPromptInput, setAdminSlideshowPromptInput] = useState("Create a professional and entertaining slideshow narration for a family reunion event. Provide a dynamic, engaging script that celebrates family moments, includes humor where appropriate, and creates a memorable viewing experience. Make it personal and warm while maintaining professional production quality.");
+  
+  // Invite code and manual entry states (still needed for auth flow)
   const [manualInviteCode, setManualInviteCode] = useState("");
   const [manualInviteError, setManualInviteError] = useState<string | null>(null);
-  const [isAdminSaving, setIsAdminSaving] = useState(false);
-  const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
-  const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
-  const [copiedInviteLink, setCopiedInviteLink] = useState(false);
-  const [adminImageCompressionMaxDimInput, setAdminImageCompressionMaxDimInput] = useState(800);
-  const [adminImageCompressionQualityInput, setAdminImageCompressionQualityInput] = useState(0.7);
+  const [inviteCodeFromUrl, setInviteCodeFromUrl] = useState(false);
   const [storageInfo, setStorageInfo] = useState<any>(null);
-  const [adminShowTitleInput, setAdminShowTitleInput] = useState(true);
-  const [adminShowLogoInput, setAdminShowLogoInput] = useState(true);
-
-  // Admin password change states
+  
+  // Admin password change states (still used by UserSettingsModal)
   const [adminCurrentPasswordInput, setAdminCurrentPasswordInput] = useState("");
   const [adminNewPasswordInput, setAdminNewPasswordInput] = useState("");
   const [adminConfirmPasswordInput, setAdminConfirmPasswordInput] = useState("");
   const [adminPasswordChangeSuccess, setAdminPasswordChangeSuccess] = useState(false);
   const [adminPasswordChangeError, setAdminPasswordChangeError] = useState<string | null>(null);
+  
+  // Admin icon and save error states (used by handleIconUploadChange)
+  const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
+  const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
 
   // User Settings & Permissions Dashboard states
   const [userDashboardOpen, setUserDashboardOpen] = useState(false);
@@ -148,6 +138,16 @@ export default function App() {
 
   // Database connection state
   const [dbError, setDbError] = useState<boolean>(false);
+
+  // Reunion Management states
+  const [currentReunion, setCurrentReunion] = useState<Reunion | null>(null);
+  const [availableReunions, setAvailableReunions] = useState<Reunion[]>([]);
+  const [reunionModalOpen, setReunionModalOpen] = useState(false);
+  const [editingReunion, setEditingReunion] = useState<Reunion | null>(null);
+  const [reunionLoading, setReunionLoading] = useState(false);
+  const [reunionError, setReunionError] = useState<string | null>(null);
+  const [reunionsChecked, setReunionsChecked] = useState(false);
+  const [noReunionsExist, setNoReunionsExist] = useState(false);
 
   // Mesh Network states
   const [meshNetworkEnabled, setMeshNetworkEnabled] = useState(true);
@@ -294,14 +294,40 @@ CREATE TABLE IF NOT EXISTS submissions (
     setTimeout(() => setCopiedSql(false), 2000);
   };
 
-  // On mount: Try getting current positioning plus reading cached self-hosted user
+  // ============================================
+  // Reunion Data Filtering
+  // ============================================
+  const { reunionItems, reunionSubmissions, reunionPlayers } = useMemo(() => {
+    const filteredItems = currentReunion 
+      ? items.filter(item => item.reunionId === currentReunion.id)
+      : items;
+
+    const filteredSubmissions = currentReunion
+      ? submissions.filter(sub => sub.reunionId === currentReunion.id)
+      : submissions;
+
+    const filteredPlayers = currentReunion
+      ? players.filter(player => player.reunionId === currentReunion.id)
+      : players;
+
+    return {
+      reunionItems: filteredItems,
+      reunionSubmissions: filteredSubmissions,
+      reunionPlayers: filteredPlayers
+    };
+  }, [currentReunion, items, submissions, players]);
+
+  // On mount: Parse URL for invite code, check geolocation, and load cached profile
   useEffect(() => {
     // 0. Parse invite search parameter
     try {
       const params = new URLSearchParams(window.location.search);
       const inviteUrlParam = params.get("invite");
       if (inviteUrlParam) {
-        localStorage.setItem("wilderhunt_invite_code", inviteUrlParam.trim().toLowerCase());
+        const cleanCode = inviteUrlParam.trim().toLowerCase();
+        localStorage.setItem("wilderhunt_invite_code", cleanCode);
+        setManualInviteCode(cleanCode);
+        setInviteCodeFromUrl(true);
         // Clean URL params from navigation bar
         const cleanURL = window.location.pathname + window.location.hash;
         window.history.replaceState({}, document.title, cleanURL);
@@ -360,13 +386,25 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   }, [userMenuOpen]);
 
+  // Load reunions when admin logs in, or load reunion for normal users
+  useEffect(() => {
+    if (profile?.role === "admin" && profile.id) {
+      loadReunionsForAdmin(profile.id);
+    } else if (profile?.role === "user" && !reunionsChecked) {
+      // For normal users, load the reunion they joined via invite code
+      loadReunionForNormalUser();
+      setReunionsChecked(true);
+    }
+  }, [profile?.id, profile?.role, reunionsChecked]);
+
   // Central Game State Synchronizer (Polling loop every 2.5 seconds for real-time dynamic feel!)
   useEffect(() => {
     let intervalId: any;
 
     const fetchGameState = async () => {
       try {
-        const res = await fetch("/api/game-state");
+        const reunionParam = currentReunion?.id ? `?reunionId=${currentReunion.id}` : "";
+        const res = await fetch(`/api/game-state${reunionParam}`);
         if (res.ok) {
           const data = await res.json();
           setPlayers(data.users || []);
@@ -403,7 +441,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     intervalId = setInterval(fetchGameState, 2500);
 
     return () => clearInterval(intervalId);
-  }, []);
+  }, [currentReunion?.id]);
 
   // Load pending submissions from localStorage on mount
   useEffect(() => {
@@ -444,6 +482,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               userLng: sub.userLng,
               forceSubmit: sub.forceSubmit,
               submissionId: sub.submissionId,
+              reunionId: sub.reunionId,
             }),
           });
 
@@ -502,11 +541,12 @@ CREATE TABLE IF NOT EXISTS submissions (
   useEffect(() => {
     if (!profile) return;
     
-    fetch("/api/chat-history")
+    const reunionParam = currentReunion?.id ? `?reunionId=${currentReunion.id}` : "";
+    fetch(`/api/chat-history${reunionParam}`)
       .then(res => res.json())
       .then(data => setChatMessages(data || []))
       .catch(err => console.error("Failed to load chat history:", err));
-  }, [profile]);
+  }, [profile, currentReunion?.id]);
 
   // Track new missions and update badge
   useEffect(() => {
@@ -586,7 +626,8 @@ CREATE TABLE IF NOT EXISTS submissions (
       const joinMessage = {
         type: "join",
         userId: profile.id,
-        username: profile.username
+        username: profile.username,
+        reunionId: currentReunion?.id || null
       };
       ws.send(JSON.stringify(joinMessage));
     };
@@ -660,7 +701,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         userId: profile.id,
         username: profile.username,
         receiverId,
-        text
+        text,
+        reunionId: currentReunion?.id || null
       };
       
       console.log("📤 Sending message via WebSocket:", message);
@@ -672,6 +714,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     if (!navigator.onLine && meshEnabled && connectedPeers.length > 0) {
       const messagePayload: ChatMessage = {
         id: `msg_${Date.now()}`,
+        reunionId: currentReunion?.id || "",
         senderId: profile.id,
         senderName: profile.username,
         text: text,
@@ -720,7 +763,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       const response = await fetch(`/api/messages/${messageId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: profile?.id })
+        body: JSON.stringify({ userId: profile?.id, reunionId: currentReunion?.id })
       });
       if (!response.ok) throw new Error("Failed to delete message");
     } catch (err) {
@@ -769,34 +812,6 @@ CREATE TABLE IF NOT EXISTS submissions (
       console.error("Error booting user:", err);
     }
   };
-
-  // Ref to track if we've initialized the admin form for the current open state
-  const initializedAdminFormRef = useRef<boolean>(false);
-
-  // Pre-populate admin inputs ONLY when panel opens (not on every settings change)
-  useEffect(() => {
-    if (adminPanelOpen && !initializedAdminFormRef.current && settings) {
-      // Only initialize when opening, not on every settings change
-      setAdminNameInput(settings.name);
-      setAdminIconInput(settings.icon);
-      setAdminLatInput(settings.defaultLat ?? 41.9076);
-      setAdminLngInput(settings.defaultLng ?? -111.3800);
-      setAdminRadiusInput(settings.defaultRadius ?? 200);
-      setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
-      setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
-      setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
-      setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
-      setAdminInviteRequiredInput(settings.inviteRequired !== false);
-      setAdminImageCompressionMaxDimInput(settings.imageCompressionMaxDim ?? 800);
-      setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
-      setAdminShowTitleInput(settings.showTitle !== false);
-      setAdminShowLogoInput(settings.showLogo !== false);
-      initializedAdminFormRef.current = true;
-    } else if (!adminPanelOpen) {
-      // Reset the flag when panel closes so it can initialize again when reopened
-      initializedAdminFormRef.current = false;
-    }
-  }, [adminPanelOpen, settings]);
 
   // Ref to track which profile we've populated the form for
   const populatedProfileIdRef = useRef<string | null>(null);
@@ -867,112 +882,6 @@ CREATE TABLE IF NOT EXISTS submissions (
       setProfileSaveError(err.message || "Network error saving profile");
     } finally {
       setIsProfileSaving(false);
-    }
-  };
-
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adminNameInput.trim()) {
-      setAdminSaveError("Game title cannot be empty");
-      return;
-    }
-    if (!adminActiveInviteCodeInput.trim()) {
-      setAdminSaveError("Invite code cannot be empty");
-      return;
-    }
-    setIsAdminSaving(true);
-    setAdminSaveSuccess(false);
-    setAdminSaveError(null);
-
-    try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: adminNameInput.trim(),
-          icon: adminIconInput,
-          defaultLat: Number(adminLatInput) || 41.9076,
-          defaultLng: Number(adminLngInput) || -111.3800,
-          defaultRadius: Number(adminRadiusInput) || 200,
-          aiPromptCriteria: adminAiPromptCriteriaInput.trim(),
-          aiVerificationEnabled: adminAiVerificationEnabledInput,
-          allowForceSubmit: adminAllowForceSubmitInput,
-          activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
-          inviteRequired: adminInviteRequiredInput,
-          imageCompressionMaxDim: Number(adminImageCompressionMaxDimInput) || 800,
-          imageCompressionQuality: Number(adminImageCompressionQualityInput) || 0.7,
-          showTitle: adminShowTitleInput,
-          showLogo: adminShowLogoInput
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSettings(data.settings);
-        setAdminSaveSuccess(true);
-        setTimeout(() => setAdminSaveSuccess(false), 3000);
-      } else {
-        const errData = await res.json();
-        setAdminSaveError(errData.error || "Failed to update branding settings");
-      }
-    } catch (err: any) {
-      setAdminSaveError(err.message || "Network error saving settings");
-    } finally {
-      setIsAdminSaving(false);
-    }
-  };
-
-  const handleResetSettings = async () => {
-    setIsAdminSaving(true);
-    setAdminSaveSuccess(false);
-    setAdminSaveError(null);
-    try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "KinQuest",
-          icon: "/kinquest_logo.png",
-          defaultLat: 41.9076,
-          defaultLng: -111.3800,
-          defaultRadius: 200,
-          aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-          aiVerificationEnabled: true,
-          allowForceSubmit: false,
-          activeInviteCode: "stewart-test",
-          inviteRequired: true,
-          imageCompressionMaxDim: 800,
-          imageCompressionQuality: 0.7,
-          showTitle: true,
-          showLogo: true
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setSettings(data.settings);
-        setAdminNameInput("KinQuest");
-        setAdminIconInput("/kinquest_logo.png");
-        setAdminLatInput(41.9076);
-        setAdminLngInput(-111.3800);
-        setAdminRadiusInput(200);
-        setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
-        setAdminAiVerificationEnabledInput(true);
-        setAdminAllowForceSubmitInput(false);
-        setAdminActiveInviteCodeInput("stewart-test");
-        setAdminInviteRequiredInput(true);
-        setAdminImageCompressionMaxDimInput(800);
-        setAdminImageCompressionQualityInput(0.7);
-        setAdminShowTitleInput(true);
-        setAdminShowLogoInput(true);
-        setAdminSaveSuccess(true);
-        setTimeout(() => setAdminSaveSuccess(false), 3000);
-      } else {
-        const errData = await res.json();
-        setAdminSaveError(errData.error || "Failed to reset settings");
-      }
-    } catch (err: any) {
-      setAdminSaveError(err.message || "Network error resetting settings");
-    } finally {
-      setIsAdminSaving(false);
     }
   };
 
@@ -1055,16 +964,33 @@ CREATE TABLE IF NOT EXISTS submissions (
     reader.readAsDataURL(file);
   };
 
+  const checkIfReunionsExist = async (): Promise<boolean> => {
+    try {
+      // Try to fetch any reunion to see if any exist in the system
+      const res = await fetch("/api/admin/reunions/any");
+      if (res.ok) {
+        const data = await res.json();
+        return (data.count || 0) > 0;
+      }
+      return false;
+    } catch (err) {
+      console.error("Error checking for reunions:", err);
+      return false;
+    }
+  };
+
   const registerUser = async (cleanUsername: string, role: "user" | "admin") => {
     setAuthError(null);
     setIsAuthLoading(true);
     try {
+      const savedInviteCode = localStorage.getItem("wilderhunt_invite_code") || manualInviteCode.trim().toLowerCase();
       const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: cleanUsername,
           role,
+          inviteCode: role === "user" ? savedInviteCode : undefined,
         }),
       });
 
@@ -1093,14 +1019,16 @@ CREATE TABLE IF NOT EXISTS submissions (
       return;
     }
 
-    if (cleanUsername.toLowerCase() === "admin") {
-      setPendingAdminName(cleanUsername);
-      setAdminAuthError(null);
-      setIsAdminAuthOpen(true);
-      return;
-    }
-
     await registerUser(cleanUsername, "user");
+    // Load reunion for normal users after they register
+    await loadReunionForNormalUser();
+  };
+
+  // Open admin login directly from logo click
+  const handleAdminLogoClick = () => {
+    setPendingAdminName("admin");
+    setAdminAuthError(null);
+    setIsAdminAuthOpen(true);
   };
 
   const handleAdminAuthSuccess = async (password: string) => {
@@ -1137,10 +1065,140 @@ CREATE TABLE IF NOT EXISTS submissions (
     setAdminAuthError(null);
   };
 
+  // ============================================
+  // Reunion Management Handlers
+  // ============================================
+
+  const loadReunionsForAdmin = async (adminId: string) => {
+    try {
+      setReunionLoading(true);
+      const res = await fetch(`/api/admin/reunions/${adminId}`);
+      if (res.ok) {
+        const reunions = await res.json();
+        setAvailableReunions(reunions);
+        setReunionsChecked(true);
+        
+        // If this is first run (no reunions), open create modal
+        if (reunions.length === 0) {
+          setNoReunionsExist(true);
+          setReunionModalOpen(true);
+          setEditingReunion(null);
+        } else {
+          setNoReunionsExist(false);
+          // Load first reunion if none selected
+          if (!currentReunion) {
+            const savedReunionId = localStorage.getItem("current_reunion_id");
+            const selectedReunion = savedReunionId 
+              ? reunions.find((r: Reunion) => r.id === savedReunionId) 
+              : reunions[0];
+            if (selectedReunion) {
+              setCurrentReunion(selectedReunion);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load reunions:", err);
+      setReunionError("Failed to load reunions");
+    } finally {
+      setReunionLoading(false);
+    }
+  };
+
+  // Load reunion for normal users based on their invite code
+  const loadReunionForNormalUser = async () => {
+    try {
+      const savedInviteCode = localStorage.getItem("wilderhunt_invite_code");
+      if (!savedInviteCode) return;
+      
+      const res = await fetch(`/api/reunions/code/${savedInviteCode}`);
+      if (res.ok) {
+        const reunion = await res.json();
+        setCurrentReunion(reunion);
+        localStorage.setItem("current_reunion_id", reunion.id);
+      }
+    } catch (err) {
+      console.error("Failed to load reunion for user:", err);
+    }
+  };
+
+  // Removed loadDefaultReunion - all reunions must be explicitly created by admins
+  // Players access reunions via invite codes only
+
+  const handleSelectReunion = (reunion: Reunion) => {
+    setCurrentReunion(reunion);
+    localStorage.setItem("current_reunion_id", reunion.id);
+  };
+
+  const handleCreateReunion = () => {
+    setEditingReunion(null);
+    setReunionModalOpen(true);
+    // Fetch storage info when reunion modal opens
+    fetch("/api/storage-info")
+      .then(res => res.json())
+      .then(data => setStorageInfo(data))
+      .catch(err => console.error("Failed to fetch storage info:", err));
+  };
+
+  const handleEditReunion = (reunion: Reunion) => {
+    setEditingReunion(reunion);
+    setReunionModalOpen(true);
+    // Fetch storage info when reunion modal opens
+    fetch("/api/storage-info")
+      .then(res => res.json())
+      .then(data => setStorageInfo(data))
+      .catch(err => console.error("Failed to fetch storage info:", err));
+  };
+
+  const handleSaveReunion = async (data: Partial<Reunion>) => {
+    if (!profile) return;
+    try {
+      setReunionLoading(true);
+      setReunionError(null);
+      
+      const method = editingReunion ? "PUT" : "POST";
+      const url = editingReunion ? `/api/reunions/${editingReunion.id}` : "/api/reunions";
+      
+      const payload = editingReunion 
+        ? { ...editingReunion, ...data }
+        : { ...data, adminId: profile.id, inviteCode: data.inviteCode };
+      
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.ok) {
+        const saved = await res.json();
+        
+        // Update current reunion if it was the one being edited
+        if (editingReunion?.id === currentReunion?.id) {
+          setCurrentReunion(saved);
+        }
+        
+        // Reload reunions list
+        await loadReunionsForAdmin(profile.id);
+        setReunionModalOpen(false);
+      } else {
+        const errData = await res.json();
+        setReunionError(errData.error || "Failed to save reunion");
+      }
+    } catch (err: any) {
+      console.error("Failed to save reunion:", err);
+      setReunionError(err.message || "Failed to save reunion");
+    } finally {
+      setReunionLoading(false);
+    }
+  };
+
   const handleSignOut = () => {
     localStorage.removeItem("scavenger_uid");
     localStorage.removeItem("scavenger_user");
+    localStorage.removeItem("current_reunion_id");
     setProfile(null);
+    setCurrentReunion(null);
+    setAvailableReunions([]);
   };
 
   // Submit base64 photo with current coordinates to server
@@ -1162,7 +1220,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           itemId,
           base64Image,
           userLat || undefined,
-          userLng || undefined
+          userLng || undefined,
+          currentReunion?.id
         );
 
         setSubmitErrorMap((prev) => ({
@@ -1244,7 +1303,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           retryReason as "rate_limit" | "timeout" | "error",
           err instanceof Error ? err.message : "Network error",
           forceSubmit,
-          submissionId
+          submissionId,
+          currentReunion?.id
         );
         
         setSubmitErrorMap((prev) => ({
@@ -1280,7 +1340,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   const handleDeleteSubmission = async (subId: string) => {
     try {
       const response = await fetch(`/api/submissions/${subId}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile?.id, adminId: profile?.role === "admin" ? profile?.id : undefined })
       });
       if (!response.ok) {
         throw new Error("Could not delete proof from self-hosted store.");
@@ -1296,7 +1358,8 @@ CREATE TABLE IF NOT EXISTS submissions (
     try {
       const response = await fetch(`/api/submissions/${subId}/retry`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reunionId: currentReunion?.id })
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -1332,6 +1395,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             userLng: sub.userLng,
             forceSubmit: sub.forceSubmit,
             submissionId: sub.submissionId,
+            reunionId: sub.reunionId,
           }),
         });
 
@@ -1371,7 +1435,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       const response = await fetch(`/api/submissions/${subId}/manual-approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "approved", points })
+        body: JSON.stringify({ status: "approved", points, adminId: profile?.id })
       });
       if (!response.ok) {
         throw new Error("Could not approve submission.");
@@ -1389,7 +1453,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       const response = await fetch(`/api/submissions/${subId}/manual-approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "rejected" })
+        body: JSON.stringify({ status: "rejected", adminId: profile?.id })
       });
       if (!response.ok) {
         throw new Error("Could not reject submission.");
@@ -1402,15 +1466,16 @@ CREATE TABLE IF NOT EXISTS submissions (
   };
 
   // Create customized challenge
-  const handleAddChallenge = async (newChallenge: Omit<ScavengerItem, "id">) => {
+  const handleAddChallenge = async (newChallenge: Omit<ScavengerItem, "id" | "reunionId" | "createdBy">) => {
     const response = await fetch("/api/challenges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...newChallenge, createdBy: profile?.id })
+      body: JSON.stringify({ ...newChallenge, reunionId: currentReunion?.id, createdBy: profile?.id })
     });
 
     if (!response.ok) {
-      throw new Error("Challenge registration failed.");
+      const errData = await response.json();
+      throw new Error(errData.error || errData.details || "Challenge creation failed.");
     }
     // Saved in DB!
     setShowCreateMissionModal(false);
@@ -1538,8 +1603,11 @@ CREATE TABLE IF NOT EXISTS submissions (
   const isInviteModeActive = settings.inviteRequired !== false;
   const savedInviteCode = localStorage.getItem("wilderhunt_invite_code");
   const isInviteCodeValid = savedInviteCode && settings.activeInviteCode && savedInviteCode === settings.activeInviteCode;
-  const isUserAdmin = (profile?.role === "admin") || (registerName.trim().toLowerCase() === "admin") || (profile?.username?.toLowerCase() === "admin");
+  const isUserAdmin = profile?.role === "admin";
   const isAuthorized = !isInviteModeActive || isInviteCodeValid || isUserAdmin;
+
+  // Determine if user has provided an invite code (either from URL or manual entry)
+  const hasInviteCode = manualInviteCode || inviteCodeFromUrl || !!savedInviteCode;
 
   if (!isAuthorized) {
     return (
@@ -1612,13 +1680,18 @@ CREATE TABLE IF NOT EXISTS submissions (
       <>
         <div className="min-h-screen bg-[#f5f5f0] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
           <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-            <div className="mx-auto h-12 w-12 rounded-2xl bg-[#5a5a40] flex items-center justify-center shadow-lg text-white font-serif overflow-hidden">
+            <button
+              type="button"
+              onClick={handleAdminLogoClick}
+              className="mx-auto h-12 w-12 rounded-2xl bg-[#5a5a40] flex items-center justify-center shadow-lg text-white font-serif overflow-hidden cursor-pointer hover:shadow-xl transition-shadow"
+              title="Admin login (click logo)"
+            >
               {settings.icon ? (
                 <img src={settings.icon} alt="Game Icon" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <Compass className="h-6 w-6 animate-spin-slow text-[#f5f5f0]" />
               )}
-            </div>
+            </button>
             <h2 className="mt-6 text-center text-3xl font-serif font-bold text-[#5a5a40] tracking-tight text-balance">
               {settings.name}
             </h2>
@@ -1629,35 +1702,69 @@ CREATE TABLE IF NOT EXISTS submissions (
 
           <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
             <div className="bg-white py-8 px-6 shadow-sm border border-brand-border rounded-[32px] space-y-6">
-              <form onSubmit={handleRegisterInputSubmit} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
-                    Introduce Yourself (e.g. Aunt Sarah, Cousin Leo)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={18}
-                    placeholder="e.g. Aunt Sarah or Cousin Leo"
-                    value={registerName}
-                    onChange={(e) => setRegisterName(e.target.value)}
-                    className="w-full text-sm bg-[#f5f5f0]/50 border border-brand-border rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
-                  />
-                </div>
+              {/* Show invite code form if no code entered yet */}
+              {!hasInviteCode ? (
+                <form onSubmit={handleManualInviteSubmit} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
+                      Enter Family Access Key
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. reunion-2026"
+                      value={manualInviteCode}
+                      onChange={(e) => setManualInviteCode(e.target.value)}
+                      className="w-full text-xs bg-[#f5f5f0]/50 border border-[#dcdcd4] rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-mono text-center tracking-widest uppercase font-bold text-[#2d2d2d]"
+                    />
+                  </div>
 
-                <button
-                  type="submit"
-                  disabled={isAuthLoading}
-                  className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/10 cursor-pointer disabled:opacity-50"
-                >
-                  {isAuthLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <LogIn className="h-4 w-4" />
-                  )}
-                  Enter Family Reunion Lobby
-                </button>
-              </form>
+                  <button
+                    type="submit"
+                    className="w-full py-3 px-4 rounded-xl text-sm font-bold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/15 cursor-pointer flex items-center justify-center gap-1.5 font-sans"
+                  >
+                    <Shield className="h-4 w-4" />
+                    Unlock Family Portal
+                  </button>
+                </form>
+              ) : (
+                /* Show name form once invite code is provided */
+                <form onSubmit={handleRegisterInputSubmit} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-[#5a5a40] uppercase tracking-widest block font-sans">
+                      Introduce Yourself (e.g. Aunt Sarah, Cousin Leo)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={18}
+                      placeholder="e.g. Aunt Sarah or Cousin Leo"
+                      value={registerName}
+                      onChange={(e) => setRegisterName(e.target.value)}
+                      className="w-full text-sm bg-[#f5f5f0]/50 border border-brand-border rounded-xl px-4 py-3 outline-none focus:ring-1 focus:ring-[#5a5a40] font-medium"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isAuthLoading}
+                    className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/10 cursor-pointer disabled:opacity-50"
+                  >
+                    {isAuthLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <LogIn className="h-4 w-4" />
+                    )}
+                    Enter Family Reunion Lobby
+                  </button>
+                </form>
+              )}
+
+              {manualInviteError && (
+                <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex gap-2 border border-red-100 font-sans">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-500" />
+                  <span className="font-semibold">{manualInviteError}</span>
+                </div>
+              )}
 
               {authError && (
                 <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs flex items-center gap-2 border border-red-100">
@@ -1683,6 +1790,35 @@ CREATE TABLE IF NOT EXISTS submissions (
           error={adminAuthError}
         />
       </>
+    );
+  }
+
+  // Show "no events setup" message for players when no reunions exist
+  if (profile && profile.role === "user" && reunionsChecked && noReunionsExist) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f0] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+          <div className="mx-auto h-16 w-16 rounded-[24px] bg-red-100 flex items-center justify-center text-red-600 shadow-inner mb-6">
+            <AlertCircle className="h-8 w-8" />
+          </div>
+          <h2 className="text-3xl font-serif font-bold text-[#5a5a40] tracking-tight text-balance">
+            No Events Set Up
+          </h2>
+          <p className="mt-3 text-sm text-[#8c8c82] max-w-sm mx-auto font-medium leading-relaxed">
+            There are no family reunion events available at this time. Please contact the family reunion organizer to set up an event and share an invitation code with you.
+          </p>
+        </div>
+
+        <div className="mt-12 sm:mx-auto sm:w-full sm:max-w-md">
+          <button
+            onClick={handleSignOut}
+            className="w-full py-3 px-4 rounded-xl text-sm font-semibold text-white bg-[#5a5a40] hover:bg-[#464632] active:scale-98 transition shadow-md shadow-[#5a5a40]/10 cursor-pointer flex items-center justify-center gap-2"
+          >
+            <LogOut className="h-4 w-4" />
+            Exit
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -1819,6 +1955,20 @@ CREATE TABLE IF NOT EXISTS submissions (
                 </div>
               </button>
 
+              {/* Reunion Selector Dropdown - Admin Only */}
+              {profile?.role === "admin" && availableReunions && availableReunions.length > 0 && (
+                <ReunionSelector
+                  currentReunion={currentReunion}
+                  reunions={availableReunions}
+                  adminId={profile.id}
+                  onSelectReunion={handleSelectReunion}
+                  onCreateReunion={handleCreateReunion}
+                  onEditReunion={handleEditReunion}
+                  onLogout={handleSignOut}
+                  isLoading={reunionLoading}
+                />
+              )}
+
               {/* User Menu Dropdown */}
               <div className="relative" ref={userMenuRef}>
                 <button
@@ -1865,32 +2015,8 @@ CREATE TABLE IF NOT EXISTS submissions (
                 )}
               </div>
 
-              {/* Admin Branding Settings Cog */}
-              {profile?.role === "admin" && (
-                <button
-                  onClick={() => {
-                    setAdminPanelOpen(!adminPanelOpen);
-                    setAdminSaveSuccess(false);
-                    setAdminSaveError(null);
-                    // Fetch storage info when panel opens
-                    if (!adminPanelOpen) {
-                      fetch("/api/storage-info")
-                        .then(res => res.json())
-                        .then(data => setStorageInfo(data))
-                        .catch(err => console.error("Failed to fetch storage info:", err));
-                    }
-                  }}
-                  type="button"
-                  className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer shrink-0 ${
-                    adminPanelOpen
-                      ? "bg-[#5a5a40] text-white border-transparent"
-                      : "text-[#8c8c82] hover:text-[#5a5a40] hover:bg-white border-transparent hover:border-brand-border/40"
-                  }`}
-                  title="Branding Identity Control Panel"
-                >
-                  <Settings className="h-3.5 sm:h-4 w-3.5 sm:w-4" />
-                </button>
-              )}
+              {/* Admin Branding Settings - REMOVED */}
+              {/* Admins can manage settings via ReunionSelector or UserSettings */}
             </div>
           </div>
         </div>
@@ -2065,68 +2191,21 @@ CREATE TABLE IF NOT EXISTS submissions (
       )}
 
       {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* Admin Settings Modal */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6 pb-24">
+        {/* Reunion Management Modal */}
         {profile?.role === "admin" && (
-          <AdminSettingsModal
-            isOpen={adminPanelOpen}
-            onClose={() => setAdminPanelOpen(false)}
-            settings={settings}
-            nameInput={adminNameInput}
-            onNameChange={setAdminNameInput}
-            iconInput={adminIconInput}
-            onIconUpload={handleIconUploadChange}
-            latInput={adminLatInput}
-            onLatChange={setAdminLatInput}
-            lngInput={adminLngInput}
-            onLngChange={setAdminLngInput}
-            radiusInput={adminRadiusInput}
-            onRadiusChange={setAdminRadiusInput}
-            aiPromptInput={adminAiPromptCriteriaInput}
-            onAiPromptChange={setAdminAiPromptCriteriaInput}
-            aiVerificationEnabledInput={adminAiVerificationEnabledInput}
-            onAiVerificationEnabledChange={setAdminAiVerificationEnabledInput}
-            allowForceSubmitInput={adminAllowForceSubmitInput}
-            onAllowForceSubmitChange={setAdminAllowForceSubmitInput}
-            inviteCodeInput={adminActiveInviteCodeInput}
-            onInviteCodeChange={setAdminActiveInviteCodeInput}
-            inviteRequiredInput={adminInviteRequiredInput}
-            onInviteRequiredChange={setAdminInviteRequiredInput}
-            copiedInviteLink={copiedInviteLink}
-            onCopyInviteLink={() => {
-              const inviteLink = `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(adminActiveInviteCodeInput.trim().toLowerCase())}`;
-              navigator.clipboard.writeText(inviteLink);
-              setCopiedInviteLink(true);
-              setTimeout(() => setCopiedInviteLink(false), 2000);
+          <ReunionModal
+            isOpen={reunionModalOpen}
+            onClose={() => {
+              setReunionModalOpen(false);
+              setEditingReunion(null);
+              setReunionError(null);
             }}
-            imageCompressionMaxDimInput={adminImageCompressionMaxDimInput}
-            onImageCompressionMaxDimChange={setAdminImageCompressionMaxDimInput}
-            imageCompressionQualityInput={adminImageCompressionQualityInput}
-            onImageCompressionQualityChange={setAdminImageCompressionQualityInput}
-            showTitleInput={adminShowTitleInput}
-            onShowTitleChange={setAdminShowTitleInput}
-            showLogoInput={adminShowLogoInput}
-            onShowLogoChange={setAdminShowLogoInput}
+            onSave={handleSaveReunion}
+            reunion={editingReunion}
+            isLoading={reunionLoading}
+            error={reunionError}
             storageInfo={storageInfo}
-            isLoading={isAdminSaving}
-            saveSuccess={adminSaveSuccess}
-            saveError={adminSaveError}
-            onSubmit={handleSaveSettings}
-            onReset={handleResetSettings}
-            onGenerateCode={() => {
-              const rand = `hunt-${Math.floor(1000 + Math.random() * 9000)}`;
-              setAdminActiveInviteCodeInput(rand);
-            }}
-            onOpenSlideshowGenerator={() => setSlideshowGeneratorOpen(true)}
-            currentPasswordInput={adminCurrentPasswordInput}
-            onCurrentPasswordChange={setAdminCurrentPasswordInput}
-            newPasswordInput={adminNewPasswordInput}
-            onNewPasswordChange={setAdminNewPasswordInput}
-            confirmPasswordInput={adminConfirmPasswordInput}
-            onConfirmPasswordChange={setAdminConfirmPasswordInput}
-            passwordChangeSuccess={adminPasswordChangeSuccess}
-            passwordChangeError={adminPasswordChangeError}
-            onSubmitPasswordChange={handleAdminPasswordChange}
           />
         )}
 
@@ -2152,6 +2231,15 @@ CREATE TABLE IF NOT EXISTS submissions (
           syncStatusText={syncStatusText}
           isSyncing={isSyncing}
           onManualSync={handleManualSync}
+          currentPasswordInput={adminCurrentPasswordInput}
+          onCurrentPasswordChange={setAdminCurrentPasswordInput}
+          newPasswordInput={adminNewPasswordInput}
+          onNewPasswordChange={setAdminNewPasswordInput}
+          confirmPasswordInput={adminConfirmPasswordInput}
+          onConfirmPasswordChange={setAdminConfirmPasswordInput}
+          passwordChangeSuccess={adminPasswordChangeSuccess}
+          passwordChangeError={adminPasswordChangeError}
+          onSubmitPasswordChange={handleAdminPasswordChange}
         />
 
         {/* Create Mission Modal */}
@@ -2183,6 +2271,9 @@ CREATE TABLE IF NOT EXISTS submissions (
             isLoading={slideshowGenerating}
             error={slideshowError}
             generatedScript={slideshowGeneratedScript}
+            reunionId={currentReunion?.id || ""}
+            slideshowPrompt={adminSlideshowPromptInput}
+            onSlideshowPromptChange={setAdminSlideshowPromptInput}
             onScriptGenerated={(script) => {
               setSlideshowGeneratedScript(script);
             }}
@@ -2218,8 +2309,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         <div className="pt-2">
           {activeTab === "missions" && (
             <MissionsList
-              items={items}
-              submissions={submissions}
+              items={reunionItems}
+              submissions={reunionSubmissions}
               currentUserId={profile.id}
               currentUserRole={profile.role || "user"}
               onUploadSubmission={handleUploadSubmission}
@@ -2233,13 +2324,13 @@ CREATE TABLE IF NOT EXISTS submissions (
               onDeleteMission={handleDeleteMission}
               onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
-              players={players}
+              players={reunionPlayers}
             />
           )}
 
           {activeTab === "map" && (
             <GameMap
-              items={items}
+              items={reunionItems}
               userLat={userLat}
               userLng={userLng}
               onSelectChallenge={handleSelectChallengeFromMap}
@@ -2250,13 +2341,13 @@ CREATE TABLE IF NOT EXISTS submissions (
           )}
 
           {activeTab === "leaderboard" && (
-            <Leaderboard players={players} currentUserId={profile.id} />
+            <Leaderboard players={reunionPlayers} currentUserId={profile.id} />
           )}
 
           {activeTab === "feed" && (
             <Feed
-              submissions={submissions}
-              items={items}
+              submissions={reunionSubmissions}
+              items={reunionItems}
               currentUserId={profile.id}
               onDeleteSubmission={handleDeleteSubmission}
               onRetryPending={handleRetryPendingSubmission}
@@ -2266,8 +2357,8 @@ CREATE TABLE IF NOT EXISTS submissions (
 
           {activeTab === "gallery" && (
             <Gallery
-              submissions={submissions}
-              items={items}
+              submissions={reunionSubmissions}
+              items={reunionItems}
               currentUserId={profile?.id || null}
               userRole={profile?.role || "user"}
               onDeleteSubmission={handleDeleteSubmission}
@@ -2277,14 +2368,17 @@ CREATE TABLE IF NOT EXISTS submissions (
           {activeTab === "slideshows" && (
             <SlideshowViewer
               userId={profile.id}
+              reunionId={currentReunion?.id}
+              isAdmin={profile?.role === "admin"}
+              onOpenGenerator={() => setSlideshowGeneratorOpen(true)}
             />
           )}
 
           {activeTab === "approval" && profile?.role === "admin" && (
             <PhotoApprovalPanel
-              submissions={submissions}
-              items={items}
-              players={players}
+              submissions={reunionSubmissions}
+              items={reunionItems}
+              players={reunionPlayers}
               onApprove={handleApproveSubmission}
               onReject={handleRejectSubmission}
             />
@@ -2315,6 +2409,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               onlinePlayers={onlinePlayers}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
+              reunionId={currentReunion?.id}
               onDeleteMessage={handleDeleteMessage}
               onMuteUser={handleMuteUser}
               onUnmuteUser={handleUnmuteUser}
@@ -2335,6 +2430,14 @@ CREATE TABLE IF NOT EXISTS submissions (
         </button>
       )}
 
+      {/* Footer with Reunion Information for Non-Admin - Sticky at bottom */}
+      {profile && currentReunion && profile.role !== "admin" && (
+        <footer className="fixed bottom-0 left-0 right-0 border-t border-brand-border bg-[#f5f5f0]/95 py-4 px-4 sm:px-8 text-center z-40">
+          <p className="text-xs sm:text-sm font-semibold text-[#5a5a40]">
+            {currentReunion.name}
+          </p>
+        </footer>
+      )}
 
     </div>
   );

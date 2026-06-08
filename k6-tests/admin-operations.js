@@ -8,6 +8,7 @@ const slideshowGenerationDuration = new Trend('slideshow_generation_duration');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
 const ADMIN_PASSWORD = __ENV.ADMIN_PASSWORD || 'password';
+const REUNION_ID = __ENV.REUNION_ID || 'reunion_k6_test'; // Test reunion ID
 
 export const options = {
   scenarios: {
@@ -53,6 +54,7 @@ export default function () {
         JSON.stringify({
           username: 'admin_test_user',
           role: 'admin',
+          reunionId: REUNION_ID,
         }),
         {
           headers: { 'Content-Type': 'application/json' },
@@ -109,6 +111,7 @@ export default function () {
         lng: -118.2437 + Math.random() * 0.1,
         radius: 500 + Math.random() * 5000,
         createdBy: adminUserId,
+        reunionId: REUNION_ID,
       }),
       {
         headers: { 'Content-Type': 'application/json' },
@@ -146,6 +149,53 @@ export default function () {
       'settings ok': (r) => r.status === 200,
     });
     adminOpDuration.add(settingsRes.timings.duration);
+  });
+
+  sleep(1);
+
+  group('Admin - Get Reunions', () => {
+    const reunionsRes = http.get(`${BASE_URL}/api/admin/reunions/${adminUserId}`, {
+      tags: { name: 'AdminGetReunions' },
+    });
+
+    const reunionsOk = check(reunionsRes, {
+      'reunions retrieved': (r) => r.status === 200,
+      'reunions is array': (r) => {
+        try {
+          const body = JSON.parse(r.body);
+          return Array.isArray(body);
+        } catch {
+          return false;
+        }
+      },
+    });
+    if (!reunionsOk) adminErrors.add(1);
+    adminOpDuration.add(reunionsRes.timings.duration);
+  });
+
+  sleep(1);
+
+  group('Admin - Update Reunion Settings', () => {
+    const updateReunionRes = http.put(`${BASE_URL}/api/reunions/${REUNION_ID}`,
+      JSON.stringify({
+        aiVerificationEnabled: true,
+        allowForceSubmit: false,
+        imageCompressionMaxDim: 1200,
+        imageCompressionQuality: 0.8,
+        showTitle: true,
+        showLogo: true,
+      }),
+      {
+        headers: { 'Content-Type': 'application/json' },
+        tags: { name: 'AdminUpdateReunion' },
+      }
+    );
+
+    const updated = check(updateReunionRes, {
+      'reunion settings updated': (r) => r.status === 200 || r.status === 404,
+    });
+    if (!updated) adminErrors.add(1);
+    adminOpDuration.add(updateReunionRes.timings.duration);
   });
 
   sleep(1);
@@ -276,7 +326,7 @@ export default function () {
       // For this test, we'll generate a slideshow with mock submission IDs
       // In real scenarios, these would be approved submission IDs from the database
       const slideshowPayload = {
-        submissionIds: [
+        submissions: [
           `submission_test_1_${randomString(4)}`,
           `submission_test_2_${randomString(4)}`,
           `submission_test_3_${randomString(4)}`,
@@ -284,6 +334,7 @@ export default function () {
         title: `[TEST_ADMIN] Slideshow ${randomString(5)} - ${new Date().toISOString().split('T')[0]}`,
         description: `[TEST_ADMIN] Stress test slideshow for performance testing`,
         createdBy: adminUserId,
+        reunionId: REUNION_ID,
       };
 
       const generateRes = http.post(
