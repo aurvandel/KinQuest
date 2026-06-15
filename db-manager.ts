@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
+import { WebSocket as NodeWebSocket } from "ws";
 export interface ScavengerItem {
   createdBy: null;
   id: string;
@@ -15,6 +16,10 @@ export interface ScavengerItem {
   radius: number | null;
 }
 
+// Inject ws as global WebSocket for Supabase Realtime on Node.js 20
+if (typeof globalThis.WebSocket === "undefined") {
+  (globalThis as any).WebSocket = NodeWebSocket;
+}
 export interface PlayerProfile {
   id: string;
   username: string;
@@ -82,117 +87,7 @@ export interface DbStore {
   slideshows: { [id: string]: Slideshow };
 }
 
-// Default initial items
-const DEFAULT_ITEMS: ScavengerItem[] = [
-  {
-      id: "item_gen_gap",
-      title: "Generation Gap Smiles",
-      description: "Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!",
-      points: 100,
-      category: "Family",
-      icon: "Users",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_family_heirloom",
-      title: "Relic of the Elders",
-      description: "Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.",
-      points: 80,
-      category: "History",
-      icon: "Heart",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_cousins_selfie",
-      title: "The Multi-Clan Cousin Shot",
-      description: "Take a group selfie with at least three cousins representing at least two different family branches or lineages!",
-      points: 75,
-      category: "Family",
-      icon: "Camera",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_bbq_boss",
-      title: "The Grill Master / Feast Chief",
-      description: "Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!",
-      points: 50,
-      category: "Food",
-      icon: "Flame",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_ uncanny_lookalikes",
-      title: "Uncanny Family Lookalikes",
-      description: "Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.",
-      points: 60,
-      category: "Genetic",
-      icon: "Laugh",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_retro_moves",
-      title: "Old School Cool",
-      description: "Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!",
-      points: 70,
-      category: "Entertainment",
-      icon: "Music",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_group_hug",
-      title: "Group Hug Extravaganza",
-      description: "A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!",
-      points: 90,
-      category: "Joy",
-      icon: "Sparkles",
-      lat: null,
-      lng: null,
-      radius: null,
-      createdBy: null
-  },
-  {
-      id: "item_reunion_recreation",
-      title: "Nature Walk Keepsake",
-      description: "Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.",
-      points: 40,
-      category: "Nature",
-      icon: "Leaf",
-      lat: 40.7829,
-      lng: -73.9654,
-      radius: 500,
-      createdBy: null
-  },
-  {
-      id: "item_family_mascot",
-      title: "Reunion Mascot/Pet",
-      description: "Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.",
-      points: 45,
-      category: "Animal",
-      icon: "Footprints",
-      lat: 40.7812,
-      lng: -73.9665,
-      radius: 1000,
-      createdBy: null
-  }
-];
+
 
 // Supabase client instance
 // Note: File system fallback has been removed - app now relies exclusively on Supabase
@@ -210,9 +105,24 @@ export function getDbMode(): "supabase" {
   }
 
   if (!supabase) {
-    supabase = createClient(url, key, {
-      auth: { persistSession: false }
-    });
+    try {
+      supabase = createClient(url, key, {
+        auth: { persistSession: false }
+      });
+    } catch (err: any) {
+      console.error("Failed to initialize Supabase with realtime:", err.message);
+      // Try again without realtime
+      console.error("Supabase WebSocket error - providing ws transport");
+      supabase = createClient(url, key, {
+        auth: { persistSession: false },
+        realtime: {
+          params: {
+            eventsPerSecond: 0
+          },
+          transport: NodeWebSocket as any
+        }
+      });
+    }
   }
   return "supabase";
 }
@@ -236,24 +146,6 @@ export async function initializeDatabase() {
         return;
       }
       throw error;
-    }
-
-    // Seeding logic if items table is empty
-    const { count, error: countErr } = await supabase!.from("items").select("id", { count: "exact", head: true });
-    if (!countErr && count === 0) {
-      console.log("Supabase challenge index is currently empty. Seeding defaults...");
-      const mappedItems = DEFAULT_ITEMS.map(it => ({
-        id: it.id,
-        title: it.title,
-        description: it.description,
-        points: it.points,
-        category: it.category,
-        icon: it.icon,
-        lat: it.lat,
-        lng: it.lng,
-        radius: it.radius
-      }));
-      await supabase!.from("items").insert(mappedItems);
     }
 
     // Pre-seed default admin profiles if missing
@@ -304,6 +196,11 @@ export async function initializeDatabase() {
 
 export async function getAppState(): Promise<DbStore> {
   try {
+    // Ensure Supabase client is initialized
+    if (!supabase) {
+      getDbMode();
+    }
+
     // 1. Fetch profiles
     const { data: profiles, error: pErr } = await supabase!.from("profiles").select("*");
     if (pErr) throw pErr;
@@ -362,13 +259,6 @@ export async function getAppState(): Promise<DbStore> {
         createdBy: it.created_by
       };
     });
-
-    // Seed default items in itemsMap if they weren't in supabase table
-    if (Object.keys(itemsMap).length === 0) {
-      DEFAULT_ITEMS.forEach(it => {
-        itemsMap[it.id] = it;
-      });
-    }
 
     const subsMap: { [id: string]: Submission } = {};
     subs?.forEach(sb => {
@@ -1136,6 +1026,7 @@ export async function getAllSlideshows(): Promise<Slideshow[]> {
 export interface AppSettings {
   name: string;
   icon: string | null;
+  mapMode?: "original" | "satellite_labels";
   defaultLat?: number;
   defaultLng?: number;
   defaultRadius?: number;
@@ -1160,11 +1051,12 @@ export function getAppSettings(): AppSettings {
       return {
         name: parsed.name || "KinQuest",
         icon: parsed.icon || "/kinquest_logo.png",
+        mapMode: parsed.mapMode === "satellite_labels" ? "satellite_labels" : "original",
         defaultLat: Number(parsed.defaultLat) || 41.9076,
         defaultLng: Number(parsed.defaultLng) || -111.3800,
         defaultRadius: Number(parsed.defaultRadius) || 200,
         aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-        activeInviteCode: parsed.activeInviteCode || "stewart-test",
+        activeInviteCode: parsed.activeInviteCode || "watkins",
         inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true,
         aiVerificationEnabled: parsed.aiVerificationEnabled !== undefined ? !!parsed.aiVerificationEnabled : true,
         allowForceSubmit: parsed.allowForceSubmit !== undefined ? !!parsed.allowForceSubmit : false,
@@ -1180,11 +1072,12 @@ export function getAppSettings(): AppSettings {
   return {
     name: "KinQuest",
     icon: "/kinquest_logo.png",
+    mapMode: "original",
     defaultLat: 41.9076,
     defaultLng: -111.3800,
     defaultRadius: 2500,
     aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-    activeInviteCode: "stewart-test",
+    activeInviteCode: "watkins",
     inviteRequired: true,
     aiVerificationEnabled: true,
     allowForceSubmit: false,

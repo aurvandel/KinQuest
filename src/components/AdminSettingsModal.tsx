@@ -23,6 +23,8 @@ interface AdminSettingsModalProps {
   onNameChange: (value: string) => void;
   iconInput: string | null;
   onIconUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  mapModeInput: "original" | "satellite_labels";
+  onMapModeChange: (value: "original" | "satellite_labels") => void;
   latInput: number;
   onLatChange: (value: number) => void;
   lngInput: number;
@@ -76,6 +78,8 @@ export function AdminSettingsModal({
   onNameChange,
   iconInput,
   onIconUpload,
+  mapModeInput,
+  onMapModeChange,
   latInput,
   onLatChange,
   lngInput,
@@ -260,6 +264,21 @@ export function AdminSettingsModal({
           {/* Map & Location Section */}
           <div className="space-y-2 pt-2 border-t border-[#e5e5dd]">
             <h3 className="text-xs font-bold text-[#5a5a40] uppercase tracking-wider">🗺️ Map Settings</h3>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                Map Style
+              </label>
+              <select
+                value={mapModeInput}
+                onChange={(e) => onMapModeChange(e.target.value as "original" | "satellite_labels")}
+                className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
+              >
+                <option value="original">Original Map</option>
+                <option value="satellite_labels">Satellite + Labels</option>
+              </select>
+              <p className="text-[9px] text-[#8c8c82]">Controls how all player devices render the map background.</p>
+            </div>
             
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">

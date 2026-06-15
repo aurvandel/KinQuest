@@ -550,9 +550,7 @@ export function MissionsList({
           }}
           onSubmit={async (updates) => {
             if (editingItem && onEditMission) {
-              const updated = { ...editingItem, ...updates };
-              setEditingItem(updated);
-              await handleSaveEdit();
+              await onEditMission(editingItem.id, updates);
             }
           }}
         />

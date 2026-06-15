@@ -6,9 +6,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      platforms:
-        - "linux/arm64"
-        - "linux/amd64"
     container_name: kinquest-app
     restart: always
     ports:
@@ -24,9 +21,12 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       # Image upload directory (inside container)
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
+      - TILE_CACHE_DIR=${TILE_CACHE_DIR:-/app/tile-cache}
     volumes:
       # Mount the uploads volume to persist images
       - ./uploads:/app/uploads
+      # Mount the tile cache volume to persist satellite map tiles (offline support)
+      - ./tile-cache:/app/tile-cache
     depends_on:
       - kong
       - db
@@ -48,12 +48,17 @@ services:
       # Auto-run table creations, schema configurations and seeds on initial container birth
       - ./supabase/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - supabase-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # ----------------------------------------------------
   # 3. Local Supabase: PostgREST API Generator
   # ----------------------------------------------------
   rest:
-    image: postgrest/postgrest:v11.2.2-alpine
+    image: postgrest/postgrest:v12.0.1
     container_name: supabase-local-rest
     restart: always
     environment:
@@ -63,13 +68,14 @@ services:
       - PGRST_DB_ANON_ROLE=anon
       - PGRST_JWT_SECRET=${PGRST_JWT_SECRET}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   # ----------------------------------------------------
   # 4. Local Supabase: Kong Declarative Gateway
   # ----------------------------------------------------
   kong:
-    image: kong:3.7-alpine
+    image: kong:3.0-alpine
     container_name: supabase-local-kong
     restart: always
     environment:

@@ -33,7 +33,6 @@ COPY public ./dist/
 
 # Create data directory and copy initial database file for local fallback persistence
 RUN mkdir -p /app/data
-COPY db.json ./data/db.json
 
 # Expose server port
 EXPOSE 3000

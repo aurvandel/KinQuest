@@ -164,54 +164,27 @@ ON CONFLICT (id) DO NOTHING;
 -- Initial Scavenger Hunt Items (Optional Seed Data)
 -- ============================================
 INSERT INTO items (id, title, description, points, category, icon, lat, lng, radius) VALUES
--- 🟢 THE HERITAGE MUSEUM (Physical Heirlooms)
-('item_stewart_briefcase', 'The Depot Desk', 'Locate and photograph Grandpa’s briefcase from his days at the Tooele Army Depot!', 20, 'Heirloom', 'Briefcase', NULL, NULL, NULL),
-('item_stewart_dress', 'The Teacher’s Look', 'Find Grandma’s teacher dress! Bonus points if a grandkid tries it on for the photo.', 25, 'Heirloom', 'Dress', NULL, NULL, NULL),
-('item_stewart_kimono', 'The World Traveler', 'Find the Kimono from Japan and snap a photo of its beautiful patterns.', 30, 'Heirloom', 'Globe', NULL, NULL, NULL),
-('item_stewart_hunting', 'The Woodsman', 'Locate the deer hunting clothes and take a photo of someone posing for the hunt!', 20, 'Heirloom', 'Tree', NULL, NULL, NULL),
-('item_stewart_christmas', 'Holiday Spirit', 'Find the legendary Christmas shirt and snap a festive photo!', 15, 'Heirloom', 'Gift', NULL, NULL, NULL),
-('item_stewart_texts', 'The Guidebooks', 'Find a photo of the Book of Mormon and the Bible together.', 15, 'Heirloom', 'Book', NULL, NULL, NULL),
-('item_stewart_flashlight', 'The Searchlight', 'Locate Grandpa’s flashlight—the ultimate tool for any adventure!', 10, 'Heirloom', 'Flashlight', NULL, NULL, NULL),
-('item_stewart_whistle', 'The Signal', 'Find the whistle used to gather the troops!', 10, 'Heirloom', 'VolumeUp', NULL, NULL, NULL),
-('item_stewart_pot', 'The Feast Pot', 'Find the giant soup pot used for family gatherings.', 15, 'Heirloom', 'Pot', NULL, NULL, NULL),
+-- Grandpa Grant Missions
+('item_grant_fort_ord_clerk', 'Fort Ord Payday', 'Grandpa Grant served at Fort Ord as company clerk and lent money at high interest. Take a picture at the welcome kiosk holding some money.', 45, 'Grandpa Grant', 'Coins', 38.80116, -111.68356, 50),
+('item_grant_truck_rawlins', 'Rawlins Recovery Run', 'Grandpa Grant was a truck driver and once had appendix surgery in Rawlins, Wyoming during a trip. Take a picture with one of the trucks in the parking lot.', 30, 'Grandpa Grant', 'Footprints', 38.80104, -111.68362, 25),
+('item_grant_wrestling_champ', 'Provo Pin', 'Grandpa Grant pinned the best wrestler on the team twice and later took second at Utah state. Take a picture of wrestling in the rec hall.', 50, 'Grandpa Grant', 'Flag', 38.80039, -111.68339, 20),
+('item_grant_hitchhike_home', '1000-Mile Thumb', 'After Army basic training, Grandpa Grant hitchhiked over 1000 miles to get home. Take a picture thumbing for a ride at the ATV parking area.', 35, 'Grandpa Grant', 'Map', 38.80232, -111.68294, 30),
+('item_grant_milk_cows', 'Hunting Season Chores', 'As a young boy, Grandpa Grant stayed home to milk cows during deer hunting season. Take a picture with cows in the background.', 30, 'Grandpa Grant', 'Leaf', NULL, NULL, NULL),
+('item_grant_dummy_prank', 'Dummy Drop Dash', 'Grandpa Grant and Dick dropped a dummy near Harmon Park, then ran from police and snuck home. Take a picture by the big tree next to the entry road.', 40, 'Grandpa Grant', 'Tree', 38.80193, -111.68305, 50),
+('item_grant_overalls_wedding', 'Overalls Forever', 'Grandpa Grant always wore overalls and even wore them to tease Paula at Kirk and Paula''s wedding. Take a picture with the overalls at the water spigot by the bathroom.', 25, 'Grandpa Grant', 'Gift', 38.80103, -111.68292, 20),
+('item_grant_rodeo_champion', '18 Wheeler Champion', 'Grandpa Grant won the National 18 Wheeler Rodeo in Minneapolis, Minnesota. Take a picture by the trailer next to cabin 1.', 35, 'Grandpa Grant', 'Parachute', 38.80075, -111.68293, 23),
+('item_grant_gold_prospect', 'SanPete Gold Hunt', 'Grandpa Grant loved to prospect for gold and found low-grade ore in SanPete County. Take a picture by the FFA gate with a big rock.', 30, 'Grandpa Grant', 'Coins', NULL, NULL, NULL),
 
--- 🟡 TASTE OF TRADITION (Food & Treats)
-('item_treat_rootbeer', 'The Family Fizz', 'Capture a photo of some delicious homemade root beer!', 30, 'Treats', 'Glass', NULL, NULL, NULL),
-('item_treat_icecream', 'The Chilly Treat', 'Snap a photo of the homemade ice cream before it melts!', 30, 'Treats', 'IceCream', NULL, NULL, NULL),
-('item_treat_taffy', 'The Sweet Pull', 'Find the homemade taffy and take a "sweet" photo!', 30, 'Treats', 'Candy', NULL, NULL, NULL),
-('item_treat_donuts', 'Morning Delight', 'Locate and photograph a tray of donuts!', 20, 'Treats', 'Donut', NULL, NULL, NULL),
-('item_treat_licorice', 'Classic Candy', 'Find the licorice and snap a photo of a piece being eaten!', 20, 'Treats', 'Candy', NULL, NULL, NULL),
-('item_treat_popcorn', 'The Movie Snack', 'Find a bowl of popcorn and capture the salty goodness!', 15, 'Treats', 'Popcorn', NULL, NULL, NULL),
-
--- 🔵 IDEAL RESORT EXPLORATION (Resort Amenities)
-('item_resort_basketball', 'The Pro Athlete', 'Take a photo of a family member posing for a "slam dunk" at the basketball court!', 40, 'Resort', 'Basketball', NULL, NULL, NULL),
-('item_resort_golf', 'Hole-in-One', 'Snap a photo of someone putting a ball at the mini-golf course!', 40, 'Resort', 'Golf', NULL, NULL, NULL),
-('item_resort_playground', 'Playground Peak', 'Capture a photo of the kids (or adults!) conquering the playground equipment!', 30, 'Resort', 'Playground', NULL, NULL, NULL),
-('item_resort_view', 'The Ideal View', 'Take a photo of the turquoise water—MUST be taken from the grass or a balcony (Stay off the sand!)', 50, 'Resort', 'Water', NULL, NULL, NULL),
-('item_resort_sign', 'The Landmark', 'Find the Ideal Beach Resort signage and snap a group photo in front of it!', 20, 'Resort', 'Sign', NULL, NULL, NULL),
-('item_resort_apple', 'The Orchard Shot', 'Find the apple tree in the yard and take a creative nature photo!', 30, 'Resort', 'Apple', NULL, NULL, NULL),
-
--- 🔴 LEGACY & LORE (Stories and Action)
-('item_lore_monster', 'Monster Sighting', 'Stage a photo of someone "spotting" the Bear Lake Monster from a balcony or porch!', 60, 'Legacy', 'Monster', NULL, NULL, NULL),
-('item_lore_ephraim', 'The Pioneer Path', 'Capture a photo of someone telling the story of Old Ephraim under the shade of a tree!', 60, 'Legacy', 'Map', NULL, NULL, NULL),
-('item_lore_parade', 'The Parade Marshal', 'Take a photo of someone marching like they are leading the 24th of July Pioneer Day Parade!', 70, 'Legacy', 'Flag', NULL, NULL, NULL),
-('item_lore_poker', 'High-Stakes Gum', 'Photograph two people playing a game of poker in the shade using pieces of gum as chips!', 80, 'Legacy', 'Cards', NULL, NULL, NULL),
-('item_lore_camping', 'The Happy Camper', 'Find some camping gear in the grass and take a "roughing it" photo!', 40, 'Legacy', 'Tent', NULL, NULL, NULL),
-('item_lore_ammo', 'The Ammo Load', 'Find the "ammunition" (water guns) ready for battle on the porch!', 50, 'Legacy', 'WaterDrop', NULL, NULL, NULL),
-
--- 🚀 THE BIG FINALE (High Points)
-('item_finale_army', 'The Airborne Infantry', 'Take a slow-motion video or photo of the Parachute Army Men being launched from the balcony!', 100, 'Legacy', 'Parachute', NULL, NULL, NULL)
-
--- Fun seed items for the family reunion (Feel free to customize or add more!)
-('item_gen_gap', 'Generation Gap Smiles', 'Capture a heart-warming photo of two family members together: one from the oldest generation and one from the youngest generation smiling!', 100, 'Family', 'Users', NULL, NULL, NULL),
-('item_family_heirloom', 'Relic of the Elders', 'Locate and photograph a treasured heirloom, a vintage black-and-white family photo, an ancient diary, or a handwritten recipe card.', 80, 'History', 'Heart', NULL, NULL, NULL),
-('item_cousins_selfie', 'The Multi-Clan Cousin Shot', 'Take a group selfie with at least three cousins representing at least two different family branches or lineages!', 75, 'Family', 'Camera', NULL, NULL, NULL),
-('item_bbq_boss', 'The Grill Master / Feast Chief', 'Snap an action shot of our champion family chef/grill master managing the food, serving beverages, or cutting the reunion cake!', 50, 'Food', 'Flame', NULL, NULL, NULL),
-('item_uncanny_lookalikes', 'Uncanny Family Lookalikes', 'Photograph two family members side-by-side who look amazingly alike! Let the AI referee judge the facial similarities.', 60, 'Genetic', 'Laugh', NULL, NULL, NULL),
-('item_retro_moves', 'Old School Cool', 'Get an action photo of someone showing off a fun vintage dance move (disco point, hand jive, twist) or wearing a legendary retro outfit!', 70, 'Entertainment', 'Music', NULL, NULL, NULL),
-('item_group_hug', 'Group Hug Extravaganza', 'A wide group hug or silly squad picture featuring at least 5 laughing relatives in a single shot!', 90, 'Joy', 'Sparkles', NULL, NULL, NULL),
-('item_reunion_recreation', 'Nature Walk Keepsake', 'Find an attractive stone, pinecone, five-pointed leaf, or flower right outside our reunion headquarters venue.', 40, 'Nature', 'Leaf', 40.7829, -73.9654, 500),
-('item_family_mascot', 'Reunion Mascot/Pet', 'Take a picture of any pet participating in the reunion, or a warm plush animal/toy brought by the children.', 45, 'Animal', 'Footprints', 40.7812, -73.9665, 1000)
+-- Grandma Marcia Missions
+('item_marcia_cheerleader', 'Rec Hall Cheer', 'Grandma Marcia was a high school cheerleader. Take a picture at the side of the rec hall cheering for the team.', 25, 'Grandma Marcia', 'Flag', 38.8004, -111.68358, 20),
+('item_marcia_salutatorian', 'Salutatorian Spotlight', 'Grandma Marcia graduated as salutatorian of Tooele High School. Take a picture receiving a diploma at the flagpole.', 30, 'Grandma Marcia', 'Book', 38.80102, -111.68332, 25),
+('item_marcia_brick_builder', 'Brick Builder', 'Grandma Marcia carried bricks while pregnant with Kirk during the Orem home build. Take a picture by the bathroom with an armload of rocks.', 40, 'Grandma Marcia', 'Pot', 38.8009, -111.68297, 20),
+('item_marcia_fire_rescue', 'Fire Escape Story', 'Grandma Marcia was trapped in a burning car after being rear-ended until John Roach broke the window and pulled her out. Take a picture by the fire pit.', 35, 'Grandma Marcia', 'Flame', 38.8015, -111.68392, 40),
+('item_marcia_seamstress', 'Wedding Dress Maker', 'Grandma Marcia was an amazing seamstress who designed and sewed her own wedding dress and winter coats. Take a picture of the group holding the picture near the kitchen.', 35, 'Grandma Marcia', 'Heart', 38.80059, -111.68308, 15),
+('item_marcia_quarry_blast', 'Quarry Boom', 'Grandma Marcia hated blasting at the picture rock quarry and cried until John came back into view. Take a picture with your fingers in your ears behind cabin 3.', 30, 'Grandma Marcia', 'VolumeUp', 38.80096, -111.68391, 25),
+('item_marcia_irrigation', 'Ditch Crew', 'Grandma Marcia helped change irrigation water by moving the dam and directing water with a shovel. Take a picture with the shovel at the creek by the bridge.', 35, 'Grandma Marcia', 'WaterDrop', 38.80145, -111.68401, 50),
+('item_marcia_reading', 'Front Hall Book Time', 'Grandma Marcia read to her children nearly every day and taught a love of reading. Take a picture in front of the rec hall holding a book.', 20, 'Grandma Marcia', 'Book', 38.80071, -111.68344, 20),
+('item_marcia_mouse_story', 'Fireplace Mouse Watch', 'Grandma Marcia was not afraid of mice and the family watched one explore the fireplace wall. Take a picture holding the mouse by the tail at the side of cabin 4.', 45, 'Grandma Marcia', 'Footprints', 38.80118, -111.68395, 25)
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================

@@ -147,7 +147,7 @@ DEFAULT_SETTINGS='{
   "defaultLng": -111.3800,
   "defaultRadius": 2500,
   "aiPromptCriteria": "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-  "activeInviteCode": "stewart-test",
+  "activeInviteCode": "watkins",
   "inviteRequired": true,
   "aiVerificationEnabled": true,
   "allowForceSubmit": false,

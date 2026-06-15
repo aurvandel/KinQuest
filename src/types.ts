@@ -77,6 +77,7 @@ export interface Slideshow {
 export interface AppSettings {
   name: string;
   icon: string | null;
+  mapMode?: "original" | "satellite_labels";
   defaultLat?: number;
   defaultLng?: number;
   defaultRadius?: number;

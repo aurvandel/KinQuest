@@ -7,6 +7,12 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
+// Inject ws as global WebSocket for Supabase Realtime on Node.js 20
+import { WebSocket as NodeWebSocket } from "ws";
+if (typeof (globalThis as any).WebSocket === "undefined") {
+  (globalThis as any).WebSocket = NodeWebSocket;
+}
+
 // Import our central, resilient Database Manager
 import {
   initializeDatabase,
@@ -206,13 +212,14 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo } = req.body;
+  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
   const updated: AppSettings = {
     name: name.trim(),
     icon: icon || null,
+    mapMode: mapMode === "satellite_labels" ? "satellite_labels" : "original",
     defaultLat: defaultLat !== undefined ? Number(defaultLat) : undefined,
     defaultLng: defaultLng !== undefined ? Number(defaultLng) : undefined,
     defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : undefined,
@@ -1361,6 +1368,191 @@ app.post("/api/users/:userId/boot", async (req, res) => {
 });
 
 // 8. Serve uploaded submission images
+// ========== SATELLITE TILE CACHE SYSTEM ==========
+// Tiles are fetched from ESRI World Imagery and stored on disk so the server
+// can serve them to clients on a local network without any internet access.
+
+const TILE_CACHE_DIR = process.env.TILE_CACHE_DIR || path.join(process.cwd(), "tile-cache");
+const TILE_SOURCES = {
+  imagery: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  labels: "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+} as const;
+type TileLayerName = keyof typeof TILE_SOURCES;
+
+// Reunion site center + pre-cache config
+const PRECACHE_LAT  = 38.80071;
+const PRECACHE_LNG  = -111.68311;
+const PRECACHE_RADIUS_METERS = 1609; // 1 mile
+const PRECACHE_MIN_ZOOM = 13;
+const PRECACHE_MAX_ZOOM = 17;
+
+// Slippy-map tile coordinate helpers
+function lngToTileX(lng: number, zoom: number): number {
+  return Math.floor(((lng + 180) / 360) * Math.pow(2, zoom));
+}
+function latToTileY(lat: number, zoom: number): number {
+  const radLat = (lat * Math.PI) / 180;
+  return Math.floor(
+    ((1 - Math.log(Math.tan(radLat) + 1 / Math.cos(radLat)) / Math.PI) / 2) *
+      Math.pow(2, zoom)
+  );
+}
+function getTileBoundsForRadius(
+  centerLat: number,
+  centerLng: number,
+  radiusMeters: number,
+  zoom: number
+): { minX: number; maxX: number; minY: number; maxY: number } {
+  // Convert radius to rough degree offsets (1 deg lat ≈ 111 km)
+  const deltaLat = radiusMeters / 111320;
+  const deltaLng = radiusMeters / (111320 * Math.cos((centerLat * Math.PI) / 180));
+
+  const minX = lngToTileX(centerLng - deltaLng, zoom);
+  const maxX = lngToTileX(centerLng + deltaLng, zoom);
+  const minY = latToTileY(centerLat + deltaLat, zoom); // note: tile Y increases southward
+  const maxY = latToTileY(centerLat - deltaLat, zoom);
+
+  return { minX, maxX, minY, maxY };
+}
+
+async function fetchAndCacheTile(z: number, x: number, y: number): Promise<void> {
+  await fetchAndCacheTileForLayer("imagery", z, x, y);
+}
+
+function getTileCachePaths(layer: TileLayerName, z: number, x: number, y: number) {
+  const tileDir = path.join(TILE_CACHE_DIR, layer, String(z), String(x));
+  const dataPath = path.join(tileDir, `${y}.tile`);
+  const metaPath = path.join(tileDir, `${y}.json`);
+  return { tileDir, dataPath, metaPath };
+}
+
+async function fetchAndCacheTileForLayer(
+  layer: TileLayerName,
+  z: number,
+  x: number,
+  y: number
+): Promise<void> {
+  const { tileDir, dataPath, metaPath } = getTileCachePaths(layer, z, x, y);
+
+  if (fs.existsSync(dataPath) && fs.existsSync(metaPath)) return;
+
+  const url = TILE_SOURCES[layer].replace("{z}", String(z)).replace("{y}", String(y)).replace("{x}", String(x));
+
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "KinQuest-TileCache/1.0" }
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const contentType = resp.headers.get("content-type") || "image/png";
+    const buffer = Buffer.from(await resp.arrayBuffer());
+
+    fs.mkdirSync(tileDir, { recursive: true });
+    fs.writeFileSync(dataPath, buffer);
+    fs.writeFileSync(metaPath, JSON.stringify({ contentType }));
+  } catch (err) {
+    console.warn(`[TileCache] ${layer} miss z=${z} x=${x} y=${y}:`, err);
+  }
+}
+
+async function preCacheReunionTiles(): Promise<void> {
+  console.log(`[TileCache] Starting pre-cache for (${PRECACHE_LAT}, ${PRECACHE_LNG}) ±${PRECACHE_RADIUS_METERS}m zoom ${PRECACHE_MIN_ZOOM}-${PRECACHE_MAX_ZOOM}`);
+  let total = 0;
+  let downloaded = 0;
+
+  for (let z = PRECACHE_MIN_ZOOM; z <= PRECACHE_MAX_ZOOM; z++) {
+    const { minX, maxX, minY, maxY } = getTileBoundsForRadius(PRECACHE_LAT, PRECACHE_LNG, PRECACHE_RADIUS_METERS, z);
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        total++;
+        const imageryPaths = getTileCachePaths("imagery", z, x, y);
+        const labelsPaths = getTileCachePaths("labels", z, x, y);
+
+        if (!fs.existsSync(imageryPaths.dataPath) || !fs.existsSync(imageryPaths.metaPath)) {
+          await fetchAndCacheTileForLayer("imagery", z, x, y);
+          downloaded++;
+          await new Promise(r => setTimeout(r, 30));
+        }
+
+        if (!fs.existsSync(labelsPaths.dataPath) || !fs.existsSync(labelsPaths.metaPath)) {
+          await fetchAndCacheTileForLayer("labels", z, x, y);
+          downloaded++;
+          await new Promise(r => setTimeout(r, 30));
+        }
+      }
+    }
+  }
+  console.log(`[TileCache] Pre-cache complete. ${downloaded} new tiles downloaded, ${total - downloaded} already cached.`);
+}
+
+// Tile proxy endpoint with explicit layer: serves from disk cache or fetches live and caches
+app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
+  const layer = req.params.layer as TileLayerName;
+  if (layer !== "imagery" && layer !== "labels") {
+    return res.status(400).json({ error: "Invalid tile layer" });
+  }
+
+  const z = parseInt(req.params.z, 10);
+  const x = parseInt(req.params.x, 10);
+
+  // Strip extension that Leaflet appends
+  const yRaw = req.params.y.replace(/\.(png|jpg|jpeg)$/, "");
+  const y = parseInt(yRaw, 10);
+
+  if (isNaN(z) || isNaN(x) || isNaN(y) || z < 0 || z > 22 || x < 0 || y < 0) {
+    return res.status(400).json({ error: "Invalid tile coordinates" });
+  }
+
+  const { tileDir, dataPath, metaPath } = getTileCachePaths(layer, z, x, y);
+
+  // Security: ensure resolved path is inside tile cache dir
+  const resolvedTilePath = path.resolve(dataPath);
+  const resolvedCacheDir = path.resolve(TILE_CACHE_DIR);
+  if (!resolvedTilePath.startsWith(resolvedCacheDir)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  if (fs.existsSync(dataPath) && fs.existsSync(metaPath)) {
+    const metadata = JSON.parse(fs.readFileSync(metaPath, "utf8")) as { contentType?: string };
+    res.setHeader("Content-Type", metadata.contentType || "image/png");
+    res.setHeader("Cache-Control", "public, max-age=2592000, immutable"); // 30 days
+    return fs.createReadStream(dataPath).pipe(res);
+  }
+
+  // Not cached — try to fetch live and cache for next time
+  const url = TILE_SOURCES[layer].replace("{z}", String(z)).replace("{y}", String(y)).replace("{x}", String(x));
+  try {
+    const upstream = await fetch(url, {
+      headers: { "User-Agent": "KinQuest-TileCache/1.0" }
+    });
+    if (!upstream.ok) {
+      return res.status(502).json({ error: "Upstream tile unavailable" });
+    }
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    const contentType = upstream.headers.get("content-type") || "image/png";
+    fs.mkdirSync(tileDir, { recursive: true });
+    fs.writeFileSync(dataPath, buffer);
+    fs.writeFileSync(metaPath, JSON.stringify({ contentType }));
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    return res.send(buffer);
+  } catch (_err) {
+    return res.status(503).json({ error: "Tile unavailable offline" });
+  }
+});
+
+// Backward-compatible imagery route
+app.get("/tiles/:z/:x/:y", async (req, res) => {
+  const { z, x, y } = req.params;
+  return res.redirect(302, `/tiles/imagery/${z}/${x}/${y}`);
+});
+
+// Kick off tile pre-caching in the background after server starts
+// Wrapped in setTimeout so it doesn't block the event loop at startup
+setTimeout(() => {
+  preCacheReunionTiles().catch(err => console.error("[TileCache] Pre-cache error:", err));
+}, 5000);
+
 app.get("/api/uploads/:filename", (req, res) => {
   const { filename } = req.params;
   const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";

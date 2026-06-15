@@ -13,6 +13,7 @@ interface GameMapProps {
   items: ScavengerItem[];
   userLat: number | null;
   userLng: number | null;
+  mapMode: "original" | "satellite_labels";
   selectedItemId?: string | null;
   onSelectChallenge?: (itemId: string) => void;
   onSimulateCoordinates?: (lat: number, lng: number) => void;
@@ -24,6 +25,7 @@ export function GameMap({
   items,
   userLat,
   userLng,
+  mapMode,
   selectedItemId,
   onSelectChallenge,
   onSimulateCoordinates,
@@ -35,11 +37,16 @@ export function GameMap({
   const userMarkerRef = useRef<any>(null);
   const markersGroupRef = useRef<any>(null);
   const circlesGroupRef = useRef<any>(null);
+  const baseTileLayerRef = useRef<any>(null);
+  const labelsTileLayerRef = useRef<any>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [jumpLatInput, setJumpLatInput] = useState("");
+  const [jumpLngInput, setJumpLngInput] = useState("");
+  const [jumpError, setJumpError] = useState<string | null>(null);
 
-  // Default coordinate center (Central Park NYC)
-  const defaultLat = 41.9076;
-  const defaultLng = -111.3800;
+  // Default coordinate center (reunion site)
+  const defaultLat = 38.80071;
+  const defaultLng = -111.68311;
 
   const currentLat = userLat !== null ? userLat : defaultLat;
   const currentLng = userLng !== null ? userLng : defaultLng;
@@ -73,12 +80,36 @@ export function GameMap({
         scrollWheelZoom: true
       });
 
-      // Warm earthy map theme: use CartoDB Positron which looks incredible for Natural Tones!
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+      const originalLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
         subdomains: "abcd",
         maxZoom: 20
-      }).addTo(map);
+      });
+      const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
+        attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
+        maxZoom: 17,
+        tileSize: 256,
+        errorTileUrl: ""
+      });
+      const labelsLayer = L.tileLayer("/tiles/labels/{z}/{x}/{y}.png", {
+        attribution: 'Labels &copy; <a href="https://www.esri.com">Esri</a>',
+        maxZoom: 17,
+        tileSize: 256,
+        opacity: 1,
+        pane: "overlayPane",
+        errorTileUrl: ""
+      });
+
+      if (mapMode === "satellite_labels") {
+        imageryLayer.addTo(map);
+        labelsLayer.addTo(map);
+        baseTileLayerRef.current = imageryLayer;
+        labelsTileLayerRef.current = labelsLayer;
+      } else {
+        originalLayer.addTo(map);
+        baseTileLayerRef.current = originalLayer;
+        labelsTileLayerRef.current = null;
+      }
 
       // Create layers for item pins and visual radius circles
       markersGroupRef.current = L.layerGroup().addTo(map);
@@ -152,6 +183,51 @@ export function GameMap({
       setMapLoaded(true);
     }
   }, []);
+
+  // Update base map style when admin changes map mode
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const L = window.L;
+    const map = mapRef.current;
+
+    if (baseTileLayerRef.current) {
+      map.removeLayer(baseTileLayerRef.current);
+      baseTileLayerRef.current = null;
+    }
+    if (labelsTileLayerRef.current) {
+      map.removeLayer(labelsTileLayerRef.current);
+      labelsTileLayerRef.current = null;
+    }
+
+    if (mapMode === "satellite_labels") {
+      const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
+        attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
+        maxZoom: 17,
+        tileSize: 256,
+        errorTileUrl: ""
+      });
+      const labelsLayer = L.tileLayer("/tiles/labels/{z}/{x}/{y}.png", {
+        attribution: 'Labels &copy; <a href="https://www.esri.com">Esri</a>',
+        maxZoom: 17,
+        tileSize: 256,
+        opacity: 1,
+        pane: "overlayPane",
+        errorTileUrl: ""
+      });
+      imageryLayer.addTo(map);
+      labelsLayer.addTo(map);
+      baseTileLayerRef.current = imageryLayer;
+      labelsTileLayerRef.current = labelsLayer;
+    } else {
+      const originalLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: "abcd",
+        maxZoom: 20
+      });
+      originalLayer.addTo(map);
+      baseTileLayerRef.current = originalLayer;
+    }
+  }, [mapMode, mapLoaded]);
 
   // Update User position markers in real-time on movement
   useEffect(() => {
@@ -293,6 +369,25 @@ export function GameMap({
     }
   };
 
+  const handleJumpToCoordinates = () => {
+    if (!mapRef.current) return;
+    setJumpError(null);
+
+    const lat = Number(jumpLatInput);
+    const lng = Number(jumpLngInput);
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      setJumpError("Enter valid latitude and longitude values.");
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setJumpError("Latitude must be -90 to 90 and longitude must be -180 to 180.");
+      return;
+    }
+
+    mapRef.current.setView([lat, lng], 16, { animate: true });
+  };
+
   return (
     <div className="bg-white border border-brand-border rounded-[28px] overflow-hidden shadow-sm flex flex-col h-[520px]">
       <div className="bg-brand-beige-light px-5 py-4 border-b border-brand-border flex items-center justify-between">
@@ -322,6 +417,34 @@ export function GameMap({
             <Crosshair className="h-4 w-4" />
           </button>
         </div>
+      </div>
+
+      <div className="px-5 py-3 border-b border-brand-border bg-white flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-muted">Jump to GPS</span>
+        <input
+          type="number"
+          step="any"
+          placeholder="Latitude"
+          value={jumpLatInput}
+          onChange={(e) => setJumpLatInput(e.target.value)}
+          className="w-32 text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-lg px-2.5 py-1.5 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
+        />
+        <input
+          type="number"
+          step="any"
+          placeholder="Longitude"
+          value={jumpLngInput}
+          onChange={(e) => setJumpLngInput(e.target.value)}
+          className="w-36 text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-lg px-2.5 py-1.5 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
+        />
+        <button
+          type="button"
+          onClick={handleJumpToCoordinates}
+          className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-brand-moss text-white hover:bg-brand-moss-dark transition"
+        >
+          Go
+        </button>
+        {jumpError && <span className="text-[10px] text-red-600">{jumpError}</span>}
       </div>
 
       {/* Map iframe mockup / Leaflet div container */}

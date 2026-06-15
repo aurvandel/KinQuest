@@ -68,22 +68,24 @@ export default function App() {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [players, setPlayers] = useState<PlayerProfile[]>([]);
   const [items, setItems] = useState<ScavengerItem[]>([]);
+  const pendingDeleteIds = useRef<Set<string>>(new Set());
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [appReady, setAppReady] = useState(false);
   const [activeTab, setActiveTab] = useState<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
 
   // Game branding states
-  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: "/kinquest_logo.png", inviteRequired: true, activeInviteCode: "stewart-test" });
+  const [settings, setSettings] = useState<AppSettings>({ name: "KinQuest", icon: "/kinquest_logo.png", inviteRequired: true, activeInviteCode: "watkins" });
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [adminNameInput, setAdminNameInput] = useState("");
   const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
+  const [adminMapModeInput, setAdminMapModeInput] = useState<"original" | "satellite_labels">("original");
   const [adminLatInput, setAdminLatInput] = useState(41.9076);
   const [adminLngInput, setAdminLngInput] = useState(-111.3800);
   const [adminRadiusInput, setAdminRadiusInput] = useState(200);
   const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
   const [adminAiVerificationEnabledInput, setAdminAiVerificationEnabledInput] = useState(true);
   const [adminAllowForceSubmitInput, setAdminAllowForceSubmitInput] = useState(false);
-  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("stewart-test");
+  const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("watkins");
   const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
   const [manualInviteCode, setManualInviteCode] = useState("");
   const [manualInviteError, setManualInviteError] = useState<string | null>(null);
@@ -370,7 +372,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         if (res.ok) {
           const data = await res.json();
           setPlayers(data.users || []);
-          setItems(data.items || []);
+          setItems((data.items || []).filter((item: ScavengerItem) => !pendingDeleteIds.current.has(item.id)));
           setSubmissions(data.submissions || []);
           if (data.settings) {
             setSettings(data.settings);
@@ -779,6 +781,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       // Only initialize when opening, not on every settings change
       setAdminNameInput(settings.name);
       setAdminIconInput(settings.icon);
+      setAdminMapModeInput(settings.mapMode === "satellite_labels" ? "satellite_labels" : "original");
       setAdminLatInput(settings.defaultLat ?? 41.9076);
       setAdminLngInput(settings.defaultLng ?? -111.3800);
       setAdminRadiusInput(settings.defaultRadius ?? 200);
@@ -891,6 +894,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         body: JSON.stringify({
           name: adminNameInput.trim(),
           icon: adminIconInput,
+          mapMode: adminMapModeInput,
           defaultLat: Number(adminLatInput) || 41.9076,
           defaultLng: Number(adminLngInput) || -111.3800,
           defaultRadius: Number(adminRadiusInput) || 200,
@@ -932,13 +936,14 @@ CREATE TABLE IF NOT EXISTS submissions (
         body: JSON.stringify({
           name: "KinQuest",
           icon: "/kinquest_logo.png",
+          mapMode: "original",
           defaultLat: 41.9076,
           defaultLng: -111.3800,
           defaultRadius: 200,
           aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
           aiVerificationEnabled: true,
           allowForceSubmit: false,
-          activeInviteCode: "stewart-test",
+          activeInviteCode: "watkins",
           inviteRequired: true,
           imageCompressionMaxDim: 800,
           imageCompressionQuality: 0.7,
@@ -951,13 +956,14 @@ CREATE TABLE IF NOT EXISTS submissions (
         setSettings(data.settings);
         setAdminNameInput("KinQuest");
         setAdminIconInput("/kinquest_logo.png");
+        setAdminMapModeInput("original");
         setAdminLatInput(41.9076);
         setAdminLngInput(-111.3800);
         setAdminRadiusInput(200);
         setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
         setAdminAiVerificationEnabledInput(true);
         setAdminAllowForceSubmitInput(false);
-        setAdminActiveInviteCodeInput("stewart-test");
+        setAdminActiveInviteCodeInput("watkins");
         setAdminInviteRequiredInput(true);
         setAdminImageCompressionMaxDimInput(800);
         setAdminImageCompressionQualityInput(0.7);
@@ -1421,6 +1427,10 @@ CREATE TABLE IF NOT EXISTS submissions (
     const confirmed = window.confirm("Are you sure you want to delete this mission? This cannot be undone.");
     if (!confirmed) return;
 
+    // Optimistically mark as pending delete so polls don't bring it back
+    pendingDeleteIds.current.add(itemId);
+    setItems((prev) => prev.filter((item) => item.id !== itemId));
+
     try {
       const response = await fetch(`/api/challenges/${itemId}`, {
         method: "DELETE",
@@ -1431,12 +1441,14 @@ CREATE TABLE IF NOT EXISTS submissions (
       if (!response.ok) {
         throw new Error("Failed to delete mission.");
       }
-
-      // Remove from local state
-      setItems((prev) => prev.filter((item) => item.id !== itemId));
     } catch (err: any) {
+      // Restore item on failure by clearing the pending delete
+      pendingDeleteIds.current.delete(itemId);
       console.error("Delete mission error:", err);
       alert(err instanceof Error ? err.message : "Failed to delete mission.");
+    } finally {
+      // After a delay, clean up the pending set (poll will have fresh data by then)
+      setTimeout(() => pendingDeleteIds.current.delete(itemId), 5000);
     }
   };
 
@@ -2076,6 +2088,8 @@ CREATE TABLE IF NOT EXISTS submissions (
             onNameChange={setAdminNameInput}
             iconInput={adminIconInput}
             onIconUpload={handleIconUploadChange}
+            mapModeInput={adminMapModeInput}
+            onMapModeChange={setAdminMapModeInput}
             latInput={adminLatInput}
             onLatChange={setAdminLatInput}
             lngInput={adminLngInput}
@@ -2242,6 +2256,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               items={items}
               userLat={userLat}
               userLng={userLng}
+              mapMode={settings.mapMode === "satellite_labels" ? "satellite_labels" : "original"}
               onSelectChallenge={handleSelectChallengeFromMap}
               onSimulateCoordinates={handleSimulateCoordinates}
               onRevertToDeviceGPS={handleRevertToDeviceGPS}
