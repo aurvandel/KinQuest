@@ -6,6 +6,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      platforms:
+        - "linux/arm64"
+        - "linux/amd64"
     container_name: kinquest-app
     restart: always
     ports:
@@ -33,6 +36,9 @@ services:
   # ----------------------------------------------------
   db:
     image: postgres:15-alpine
+    platforms:
+      - "linux/arm64"
+      - "linux/amd64"
     container_name: supabase-local-db
     restart: always
     environment:
@@ -50,7 +56,10 @@ services:
   # 3. Local Supabase: PostgREST API Generator
   # ----------------------------------------------------
   rest:
-    image: postgrest/postgrest:v12.0.1
+    image: postgrest/postgrest:v11.2.2-alpine
+    platforms:
+      - "linux/arm64"
+      - "linux/amd64"
     container_name: supabase-local-rest
     restart: always
     environment:
@@ -66,7 +75,10 @@ services:
   # 4. Local Supabase: Kong Declarative Gateway
   # ----------------------------------------------------
   kong:
-    image: kong:2.8.4-alpine
+    image: kong:3.7-alpine
+    platforms:
+      - "linux/arm64"
+      - "linux/amd64"
     container_name: supabase-local-kong
     restart: always
     environment:
