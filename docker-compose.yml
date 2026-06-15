@@ -36,9 +36,6 @@ services:
   # ----------------------------------------------------
   db:
     image: postgres:15-alpine
-    platforms:
-      - "linux/arm64"
-      - "linux/amd64"
     container_name: supabase-local-db
     restart: always
     environment:
@@ -57,9 +54,6 @@ services:
   # ----------------------------------------------------
   rest:
     image: postgrest/postgrest:v11.2.2-alpine
-    platforms:
-      - "linux/arm64"
-      - "linux/amd64"
     container_name: supabase-local-rest
     restart: always
     environment:
@@ -76,9 +70,6 @@ services:
   # ----------------------------------------------------
   kong:
     image: kong:3.7-alpine
-    platforms:
-      - "linux/arm64"
-      - "linux/amd64"
     container_name: supabase-local-kong
     restart: always
     environment:
