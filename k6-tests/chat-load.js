@@ -6,7 +6,7 @@ import { Counter, Trend } from 'k6/metrics';
 const chatErrors = new Counter('chat_errors');
 const chatDuration = new Trend('chat_message_duration');
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost';
 const WS_URL = __ENV.WS_URL || 'ws://localhost:3000';
 
 // WebSocket Shoutbox and Chat stress test

@@ -6,8 +6,8 @@ const adminOpDuration = new Trend('admin_op_duration');
 const adminErrors = new Counter('admin_errors');
 const slideshowGenerationDuration = new Trend('slideshow_generation_duration');
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const ADMIN_PASSWORD = __ENV.ADMIN_PASSWORD || 'password';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost';
+const ADMIN_PASSWORD = __ENV.ADMIN_PASSWORD || 'admin1234';
 
 export const options = {
   scenarios: {

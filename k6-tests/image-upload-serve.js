@@ -6,7 +6,7 @@ const uploadErrors = new Counter('upload_errors');
 const uploadDuration = new Trend('upload_duration');
 const serveDuration = new Trend('serve_duration');
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost';
 
 // Test image serving and persistence
 // Tests:

@@ -6,7 +6,7 @@ const enduranceDuration = new Trend('endurance_duration');
 const enduranceErrors = new Counter('endurance_errors');
 const requestsPerSecond = new Gauge('rps');
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost';
 
 // Endurance test: sustained load over long period
 export const options = {

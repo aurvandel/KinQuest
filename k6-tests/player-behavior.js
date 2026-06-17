@@ -12,7 +12,7 @@ const slideshowDuration = new Trend('slideshow_duration');
 const errorRate = new Counter('errors');
 
 // Configuration
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost';
 const TEST_DURATION = __ENV.TEST_DURATION || '30s';
 const VU_COUNT = __ENV.VU_COUNT || 10;
 const RAMP_UP = __ENV.RAMP_UP || '5s';

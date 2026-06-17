@@ -9,7 +9,8 @@ services:
     container_name: kinquest-app
     restart: always
     ports:
-      - "3000:3000"
+      - "${HTTP_PORT:-3000}:${HTTP_PORT:-3000}"
+      - "${HTTPS_PORT:-3443}:${HTTPS_PORT:-3443}"
     environment:
       - NODE_ENV=production
       # Links automatically to the internal Kong API gateway
@@ -22,14 +23,27 @@ services:
       # Image upload directory (inside container)
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - TILE_CACHE_DIR=${TILE_CACHE_DIR:-/app/tile-cache}
+      # HTTP/HTTPS mode and ports
+      - SERVER_PROTOCOL=${SERVER_PROTOCOL:-auto}
+      - HTTP_PORT=${HTTP_PORT:-3000}
+      - HTTPS_PORT=${HTTPS_PORT:-3443}
+      - TILE_UPSTREAM_TIMEOUT_MS=${TILE_UPSTREAM_TIMEOUT_MS:-1000}
+      # Optional HTTPS cert/key paths (inside container)
+      - SSL_CERT_PATH=${SSL_CERT_PATH:-}
+      - SSL_KEY_PATH=${SSL_KEY_PATH:-}
+      - SSL_CA_PATH=${SSL_CA_PATH:-}
     volumes:
       # Mount the uploads volume to persist images
       - ./uploads:/app/uploads
       # Mount the tile cache volume to persist satellite map tiles (offline support)
       - ./tile-cache:/app/tile-cache
+      # Mount host certificates for optional HTTPS support
+      - /etc/ssl:/etc/ssl:ro
     depends_on:
-      - kong
-      - db
+      kong:
+        condition: service_healthy
+      db:
+        condition: service_healthy
 
   # ----------------------------------------------------
   # 2. Local Supabase: PostgreSQL Database Engine

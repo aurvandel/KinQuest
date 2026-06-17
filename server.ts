@@ -1,7 +1,9 @@
 import express from "express";
 import path from "path";
 import http from "http";
+import https from "https";
 import fs from "fs";
+import { promises as fsp } from "fs";
 import { WebSocketServer } from "ws";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
@@ -49,7 +51,7 @@ import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getAct
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 // Increase body size limit to support base64 snapshots of photographs
 app.use(express.json({ limit: "15mb" }));
@@ -1378,6 +1380,8 @@ const TILE_SOURCES = {
   labels: "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
 } as const;
 type TileLayerName = keyof typeof TILE_SOURCES;
+const TILE_UPSTREAM_TIMEOUT_MS = Number(process.env.TILE_UPSTREAM_TIMEOUT_MS || 1800);
+const tileContentTypeCache = new Map<string, string>();
 
 // Reunion site center + pre-cache config
 const PRECACHE_LAT  = 38.80071;
@@ -1426,6 +1430,82 @@ function getTileCachePaths(layer: TileLayerName, z: number, x: number, y: number
   return { tileDir, dataPath, metaPath };
 }
 
+function getLegacyImageryTilePathCandidates(z: number, x: number, y: number): string[] {
+  const base = path.join(TILE_CACHE_DIR, String(z), String(x), String(y));
+  return [`${base}.jpg`, `${base}.jpeg`, `${base}.png`, `${base}.tile`];
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fsp.access(filePath, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function guessTileContentType(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  return "image/png";
+}
+
+async function getCachedTileContentType(dataPath: string, metaPath: string): Promise<string> {
+  const cached = tileContentTypeCache.get(metaPath);
+  if (cached) return cached;
+
+  if (await fileExists(metaPath)) {
+    try {
+      const metadata = JSON.parse(await fsp.readFile(metaPath, "utf8")) as { contentType?: string };
+      const contentType = metadata.contentType || guessTileContentType(dataPath);
+      tileContentTypeCache.set(metaPath, contentType);
+      return contentType;
+    } catch {
+      // If metadata is corrupted, fall back to extension-based guess.
+    }
+  }
+
+  const fallbackType = guessTileContentType(dataPath);
+  tileContentTypeCache.set(metaPath, fallbackType);
+  return fallbackType;
+}
+
+function getTileSourceUrl(layer: TileLayerName, z: number, x: number, y: number): string {
+  return TILE_SOURCES[layer].replace("{z}", String(z)).replace("{y}", String(y)).replace("{x}", String(x));
+}
+
+async function fetchTileFromUpstream(
+  layer: TileLayerName,
+  z: number,
+  x: number,
+  y: number,
+  timeoutMs: number
+): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const url = getTileSourceUrl(layer, z, x, y);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const upstream = await fetch(url, {
+      headers: { "User-Agent": "KinQuest-TileCache/1.0" },
+      signal: controller.signal
+    });
+
+    if (!upstream.ok) {
+      return null;
+    }
+
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    const contentType = upstream.headers.get("content-type") || "image/png";
+    return { buffer, contentType };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchAndCacheTileForLayer(
   layer: TileLayerName,
   z: number,
@@ -1434,25 +1514,19 @@ async function fetchAndCacheTileForLayer(
 ): Promise<void> {
   const { tileDir, dataPath, metaPath } = getTileCachePaths(layer, z, x, y);
 
-  if (fs.existsSync(dataPath) && fs.existsSync(metaPath)) return;
+  if (await fileExists(dataPath) && await fileExists(metaPath)) return;
 
-  const url = TILE_SOURCES[layer].replace("{z}", String(z)).replace("{y}", String(y)).replace("{x}", String(x));
-
-  try {
-    const resp = await fetch(url, {
-      headers: { "User-Agent": "KinQuest-TileCache/1.0" }
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    const contentType = resp.headers.get("content-type") || "image/png";
-    const buffer = Buffer.from(await resp.arrayBuffer());
-
-    fs.mkdirSync(tileDir, { recursive: true });
-    fs.writeFileSync(dataPath, buffer);
-    fs.writeFileSync(metaPath, JSON.stringify({ contentType }));
-  } catch (err) {
-    console.warn(`[TileCache] ${layer} miss z=${z} x=${x} y=${y}:`, err);
+  const tileResponse = await fetchTileFromUpstream(layer, z, x, y, 12_000);
+  if (!tileResponse) {
+    console.warn(`[TileCache] ${layer} miss z=${z} x=${x} y=${y}: upstream unavailable`);
+    return;
   }
+
+  const { buffer, contentType } = tileResponse;
+  fs.mkdirSync(tileDir, { recursive: true });
+  fs.writeFileSync(dataPath, buffer);
+  fs.writeFileSync(metaPath, JSON.stringify({ contentType }));
+  tileContentTypeCache.set(metaPath, contentType);
 }
 
 async function preCacheReunionTiles(): Promise<void> {
@@ -1468,13 +1542,13 @@ async function preCacheReunionTiles(): Promise<void> {
         const imageryPaths = getTileCachePaths("imagery", z, x, y);
         const labelsPaths = getTileCachePaths("labels", z, x, y);
 
-        if (!fs.existsSync(imageryPaths.dataPath) || !fs.existsSync(imageryPaths.metaPath)) {
+        if (!await fileExists(imageryPaths.dataPath) || !await fileExists(imageryPaths.metaPath)) {
           await fetchAndCacheTileForLayer("imagery", z, x, y);
           downloaded++;
           await new Promise(r => setTimeout(r, 30));
         }
 
-        if (!fs.existsSync(labelsPaths.dataPath) || !fs.existsSync(labelsPaths.metaPath)) {
+        if (!await fileExists(labelsPaths.dataPath) || !await fileExists(labelsPaths.metaPath)) {
           await fetchAndCacheTileForLayer("labels", z, x, y);
           downloaded++;
           await new Promise(r => setTimeout(r, 30));
@@ -1512,33 +1586,43 @@ app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
     return res.status(403).json({ error: "Access denied" });
   }
 
-  if (fs.existsSync(dataPath) && fs.existsSync(metaPath)) {
-    const metadata = JSON.parse(fs.readFileSync(metaPath, "utf8")) as { contentType?: string };
-    res.setHeader("Content-Type", metadata.contentType || "image/png");
+  if (await fileExists(dataPath) && await fileExists(metaPath)) {
+    const contentType = await getCachedTileContentType(dataPath, metaPath);
+    res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "public, max-age=2592000, immutable"); // 30 days
+    res.setHeader("X-Tile-Cache", "hit");
     return fs.createReadStream(dataPath).pipe(res);
   }
 
-  // Not cached — try to fetch live and cache for next time
-  const url = TILE_SOURCES[layer].replace("{z}", String(z)).replace("{y}", String(y)).replace("{x}", String(x));
-  try {
-    const upstream = await fetch(url, {
-      headers: { "User-Agent": "KinQuest-TileCache/1.0" }
-    });
-    if (!upstream.ok) {
-      return res.status(502).json({ error: "Upstream tile unavailable" });
+  // Backward compatibility for legacy imagery caches at tile-cache/{z}/{x}/{y}.jpg.
+  if (layer === "imagery") {
+    const legacyCandidates = getLegacyImageryTilePathCandidates(z, x, y);
+    for (const legacyPath of legacyCandidates) {
+      if (await fileExists(legacyPath)) {
+        res.setHeader("Content-Type", guessTileContentType(legacyPath));
+        res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+        res.setHeader("X-Tile-Cache", "legacy-hit");
+        return fs.createReadStream(legacyPath).pipe(res);
+      }
     }
-    const buffer = Buffer.from(await upstream.arrayBuffer());
-    const contentType = upstream.headers.get("content-type") || "image/png";
-    fs.mkdirSync(tileDir, { recursive: true });
-    fs.writeFileSync(dataPath, buffer);
-    fs.writeFileSync(metaPath, JSON.stringify({ contentType }));
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-    return res.send(buffer);
-  } catch (_err) {
+  }
+
+  // Not cached — try to fetch live and cache for next time
+  const tileResponse = await fetchTileFromUpstream(layer, z, x, y, TILE_UPSTREAM_TIMEOUT_MS);
+  if (!tileResponse) {
     return res.status(503).json({ error: "Tile unavailable offline" });
   }
+
+  const { buffer, contentType } = tileResponse;
+  fs.mkdirSync(tileDir, { recursive: true });
+  fs.writeFileSync(dataPath, buffer);
+  fs.writeFileSync(metaPath, JSON.stringify({ contentType }));
+  tileContentTypeCache.set(metaPath, contentType);
+
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+  res.setHeader("X-Tile-Cache", "miss-fetch");
+  return res.send(buffer);
 });
 
 // Backward-compatible imagery route
@@ -1631,113 +1715,213 @@ async function startServer() {
     });
   }
 
-  const httpServer = http.createServer(app);
-  const wss = new WebSocketServer({ server: httpServer });
+  const sslCertPath = process.env.SSL_CERT_PATH;
+  const sslKeyPath = process.env.SSL_KEY_PATH;
+  const sslCaPath = process.env.SSL_CA_PATH;
+  const serverProtocolMode = (process.env.SERVER_PROTOCOL || "auto").toLowerCase();
+  const httpPort = Number(process.env.HTTP_PORT || PORT);
+  const httpsPort = Number(process.env.HTTPS_PORT || (serverProtocolMode === "both" ? 3443 : PORT));
+
+  const isValidMode = ["auto", "http", "https", "both"].includes(serverProtocolMode);
+  if (!isValidMode) {
+    throw new Error(`Invalid SERVER_PROTOCOL value: ${serverProtocolMode}. Use one of auto|http|https|both.`);
+  }
+
+  let tlsOptions: https.ServerOptions | null = null;
+  if (sslCertPath && sslKeyPath) {
+    try {
+      const key = fs.readFileSync(sslKeyPath);
+      const cert = fs.readFileSync(sslCertPath);
+      const ca = sslCaPath ? fs.readFileSync(sslCaPath) : undefined;
+      tlsOptions = { key, cert, ca };
+    } catch (err) {
+      if (serverProtocolMode === "https") {
+        throw new Error(`Failed to load SSL certificate or key for HTTPS mode: ${err}`);
+      }
+      console.error("Failed to load SSL certificate or key, HTTPS will be disabled:", err);
+    }
+  } else if (sslCertPath || sslKeyPath) {
+    if (serverProtocolMode === "https") {
+      throw new Error("SERVER_PROTOCOL=https requires both SSL_CERT_PATH and SSL_KEY_PATH.");
+    }
+    console.warn("Incomplete SSL configuration detected. Set both SSL_CERT_PATH and SSL_KEY_PATH to enable HTTPS.");
+  }
+
+  let enableHttp = false;
+  let enableHttps = false;
+
+  if (serverProtocolMode === "http") {
+    enableHttp = true;
+  } else if (serverProtocolMode === "https") {
+    enableHttps = true;
+  } else if (serverProtocolMode === "both") {
+    enableHttp = true;
+    enableHttps = true;
+  } else {
+    // auto mode: prefer HTTPS when certs are configured, otherwise run HTTP.
+    enableHttps = !!tlsOptions;
+    enableHttp = !enableHttps;
+  }
+
+  if (enableHttps && !tlsOptions) {
+    if (serverProtocolMode === "both") {
+      console.warn("SERVER_PROTOCOL=both but HTTPS is unavailable; starting HTTP only.");
+      enableHttps = false;
+      enableHttp = true;
+    } else {
+      throw new Error("HTTPS requested but SSL_CERT_PATH/SSL_KEY_PATH are not valid.");
+    }
+  }
+
+  if (enableHttp && enableHttps && httpPort === httpsPort) {
+    throw new Error(`HTTP_PORT and HTTPS_PORT cannot be the same value (${httpPort}) when SERVER_PROTOCOL=both.`);
+  }
+
+  const webServers: Array<{ server: http.Server | https.Server; protocol: "http" | "https"; port: number }> = [];
+
+  if (enableHttp) {
+    webServers.push({
+      server: http.createServer(app),
+      protocol: "http",
+      port: httpPort,
+    });
+  }
+
+  if (enableHttps && tlsOptions) {
+    webServers.push({
+      server: https.createServer(tlsOptions, app),
+      protocol: "https",
+      port: httpsPort,
+    });
+    console.log(`HTTPS enabled with cert: ${sslCertPath}`);
+  }
+
+  const wsServers = webServers.map(({ server }) => new WebSocketServer({ server }));
 
   const activeSockets = new Map<any, { userId: string; username: string }>();
 
-  wss.on("connection", (ws) => {
-    console.log("WebSocket client connected.");
-
-    ws.on("message", async (data: string) => {
-      try {
-        const payload = JSON.parse(data);
-        console.log("Server received message from client:", payload);
-        if (!payload.type) {
-          console.log("Message has no type, ignoring");
-          return;
+  const sendToAllWsClients = (payload: string) => {
+    const sentClients = new Set<any>();
+    wsServers.forEach((wsServer) => {
+      wsServer.clients.forEach((client) => {
+        if (client.readyState === 1 && !sentClients.has(client)) {
+          sentClients.add(client);
+          client.send(payload);
         }
+      });
+    });
+  };
 
-        if (payload.type === "join") {
-          const { userId, username } = payload;
-          console.log("Client joining:", { userId, username });
-          if (userId && username) {
-            // Ensure profile exists for this user before allowing them to send messages
-            try {
-              await ensureProfileExists(userId, username);
-              console.log("Profile ensured for user:", userId);
-            } catch (err) {
-              console.error("Failed to ensure profile exists:", err);
-              // Don't prevent join if profile creation fails - we'll let the message send attempt fail
-            }
-            activeSockets.set(ws, { userId, username });
-            console.log("Added socket to activeSockets, total active:", activeSockets.size);
-            // Broadcast active user list
-            broadcastOnlineUsers(wss, activeSockets);
-          }
-        } else if (payload.type === "send_message") {
-          const { userId, username, receiverId, text } = payload;
-          console.log("Received send_message event:", { userId, username, receiverId, textLength: text?.length });
-          
-          if (!userId || !text || text.trim() === "") {
-            console.log("Rejecting message: missing userId, text, or text is empty");
+  const registerWsHandlers = (wss: WebSocketServer) => {
+    wss.on("connection", (ws) => {
+      console.log("WebSocket client connected.");
+
+      ws.on("message", async (data: string) => {
+        try {
+          const payload = JSON.parse(data);
+          console.log("Server received message from client:", payload);
+          if (!payload.type) {
+            console.log("Message has no type, ignoring");
             return;
           }
 
-          const chatMsg = {
-            id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-            senderId: userId,
-            senderName: username || "Explorer",
-            receiverId: receiverId || null,
-            text: text.trim(),
-            createdAt: new Date().toISOString()
-          };
-
-          console.log("Creating chat message:", chatMsg);
-          // Save message to database/file
-          await saveChatMessage(chatMsg);
-          console.log("Message saved successfully");
-
-          // Broadcast appropriately
-          const rawBroadcast = JSON.stringify({
-            type: "message",
-            message: chatMsg
-          });
-
-          if (!receiverId) {
-            // Shout box - broadcast to ALL
-            console.log("Broadcasting to all clients (shout box), total clients:", wss.clients.size);
-            wss.clients.forEach((client) => {
-              if (client.readyState === 1) {
-                client.send(rawBroadcast);
+          if (payload.type === "join") {
+            const { userId, username } = payload;
+            console.log("Client joining:", { userId, username });
+            if (userId && username) {
+              // Ensure profile exists for this user before allowing them to send messages
+              try {
+                await ensureProfileExists(userId, username);
+                console.log("Profile ensured for user:", userId);
+              } catch (err) {
+                console.error("Failed to ensure profile exists:", err);
+                // Don't prevent join if profile creation fails - we'll let the message send attempt fail
               }
+              activeSockets.set(ws, { userId, username });
+              console.log("Added socket to activeSockets, total active:", activeSockets.size);
+              // Broadcast active user list
+              broadcastOnlineUsers(wsServers, activeSockets);
+            }
+          } else if (payload.type === "send_message") {
+            const { userId, username, receiverId, text } = payload;
+            console.log("Received send_message event:", { userId, username, receiverId, textLength: text?.length });
+            
+            if (!userId || !text || text.trim() === "") {
+              console.log("Rejecting message: missing userId, text, or text is empty");
+              return;
+            }
+
+            const chatMsg = {
+              id: `msg_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+              senderId: userId,
+              senderName: username || "Explorer",
+              receiverId: receiverId || null,
+              text: text.trim(),
+              createdAt: new Date().toISOString()
+            };
+
+            console.log("Creating chat message:", chatMsg);
+            // Save message to database/file
+            await saveChatMessage(chatMsg);
+            console.log("Message saved successfully");
+
+            // Broadcast appropriately
+            const rawBroadcast = JSON.stringify({
+              type: "message",
+              message: chatMsg
             });
-          } else {
-            // Private message - send only to sender and receiver
-            console.log("Broadcasting to specific recipients (DM), searching in", activeSockets.size, "active sockets");
-            activeSockets.forEach((info, clientSocket) => {
-              if (info.userId === receiverId || info.userId === userId) {
-                if (clientSocket.readyState === 1) {
-                  console.log("Sending DM to:", info.userId);
-                  clientSocket.send(rawBroadcast);
+
+            if (!receiverId) {
+              // Shout box - broadcast to ALL
+              console.log("Broadcasting to all clients (shout box)");
+              sendToAllWsClients(rawBroadcast);
+            } else {
+              // Private message - send only to sender and receiver
+              console.log("Broadcasting to specific recipients (DM), searching in", activeSockets.size, "active sockets");
+              activeSockets.forEach((info, clientSocket) => {
+                if (info.userId === receiverId || info.userId === userId) {
+                  if (clientSocket.readyState === 1) {
+                    console.log("Sending DM to:", info.userId);
+                    clientSocket.send(rawBroadcast);
+                  }
                 }
-              }
-            });
+              });
+            }
           }
+        } catch (err) {
+          console.error("WebSocket message handling error:", err);
         }
-      } catch (err) {
-        console.error("WebSocket message handling error:", err);
-      }
-    });
+      });
 
-    ws.on("close", () => {
-      console.log("WebSocket client disconnected.");
-      activeSockets.delete(ws);
-      console.log("Remaining active sockets:", activeSockets.size);
-      broadcastOnlineUsers(wss, activeSockets);
-    });
+      ws.on("close", () => {
+        console.log("WebSocket client disconnected.");
+        activeSockets.delete(ws);
+        console.log("Remaining active sockets:", activeSockets.size);
+        broadcastOnlineUsers(wsServers, activeSockets);
+      });
 
-    ws.on("error", (err) => {
-      console.error("WebSocket socket error:", err);
+      ws.on("error", (err) => {
+        console.error("WebSocket socket error:", err);
+      });
     });
-  });
+  };
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Self-hosted Scavenger Hunt with WebSockets started on http://0.0.0.0:${PORT}`);
-  });
+  wsServers.forEach((wss) => registerWsHandlers(wss));
+
+  await Promise.all(
+    webServers.map(({ server, protocol, port }) =>
+      new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "0.0.0.0", () => {
+          console.log(`Self-hosted Scavenger Hunt with WebSockets started on ${protocol}://0.0.0.0:${port}`);
+          resolve();
+        });
+      }),
+    ),
+  );
 }
 
-function broadcastOnlineUsers(wss: WebSocketServer, activeSockets: Map<any, { userId: string; username: string }>) {
+function broadcastOnlineUsers(wsServers: WebSocketServer[], activeSockets: Map<any, { userId: string; username: string }>) {
   const usersMap = new Map<string, { id: string; username: string }>();
   activeSockets.forEach((info) => {
     usersMap.set(info.userId, { id: info.userId, username: info.username });
@@ -1747,10 +1931,14 @@ function broadcastOnlineUsers(wss: WebSocketServer, activeSockets: Map<any, { us
     type: "online_users",
     users: onlineList
   });
-  wss.clients.forEach((client) => {
-    if (client.readyState === 1) {
-      client.send(payload);
-    }
+  const sentClients = new Set<any>();
+  wsServers.forEach((wss) => {
+    wss.clients.forEach((client) => {
+      if (client.readyState === 1 && !sentClients.has(client)) {
+        sentClients.add(client);
+        client.send(payload);
+      }
+    });
   });
 }
 

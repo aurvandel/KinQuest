@@ -5,7 +5,7 @@ import { Trend, Counter } from 'k6/metrics';
 const peakLoadDuration = new Trend('peak_load_duration');
 const peakErrorRate = new Counter('peak_errors');
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost';
 
 // Spike test: Start low, spike high, return low
 export const options = {
