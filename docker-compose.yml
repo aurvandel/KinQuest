@@ -8,6 +8,15 @@ services:
       dockerfile: Dockerfile
     container_name: kinquest-app
     restart: always
+    command:
+      - sh
+      - -c
+      - |
+        until node -e "const net=require('net');const s=net.connect(8000,'kong');s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),1000);"; do
+          echo "Waiting for kong:8000...";
+          sleep 1;
+        done
+        npm run start
     ports:
       - "${HTTP_PORT:-3000}:${HTTP_PORT:-3000}"
       - "${HTTPS_PORT:-3443}:${HTTPS_PORT:-3443}"

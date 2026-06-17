@@ -160,9 +160,9 @@ echo "$DEFAULT_SETTINGS" > settings.json
 
 # Try to reset settings via API if server is running
 echo "Attempting to reset settings via API..."
-if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+if curl -s http://localhost/api/health > /dev/null 2>&1; then
   echo "  ✓ Server is running, resetting settings via API..."
-  curl -X POST http://localhost:3000/api/settings \
+  curl -X POST http://localhost/api/settings \
     -H "Content-Type: application/json" \
     -d "$DEFAULT_SETTINGS" \
     2>/dev/null || echo "  ⚠ Settings API call failed (server may not be ready yet)"

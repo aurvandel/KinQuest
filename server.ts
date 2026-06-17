@@ -1385,9 +1385,9 @@ const TILE_UPSTREAM_TIMEOUT_MS = Number(process.env.TILE_UPSTREAM_TIMEOUT_MS || 
 const tileContentTypeCache = new Map<string, string>();
 
 // Reunion site center + pre-cache config
-const PRECACHE_LAT  = 38.80071;
-const PRECACHE_LNG  = -111.68311;
-const PRECACHE_RADIUS_METERS = 1609; // 1 mile
+const PRECACHE_LAT  = 38.80162;
+const PRECACHE_LNG  = -111.68307;
+const PRECACHE_RADIUS_METERS = 32187; // 20 miles
 const PRECACHE_MIN_ZOOM = 13;
 const PRECACHE_MAX_ZOOM = 17;
 
@@ -1534,24 +1534,25 @@ async function preCacheReunionTiles(): Promise<void> {
   console.log(`[TileCache] Starting pre-cache for (${PRECACHE_LAT}, ${PRECACHE_LNG}) ±${PRECACHE_RADIUS_METERS}m zoom ${PRECACHE_MIN_ZOOM}-${PRECACHE_MAX_ZOOM}`);
   let total = 0;
   let downloaded = 0;
+  const layers: TileLayerName[] = ["original", "imagery", "labels"];
 
   for (let z = PRECACHE_MIN_ZOOM; z <= PRECACHE_MAX_ZOOM; z++) {
     const { minX, maxX, minY, maxY } = getTileBoundsForRadius(PRECACHE_LAT, PRECACHE_LNG, PRECACHE_RADIUS_METERS, z);
     for (let x = minX; x <= maxX; x++) {
       for (let y = minY; y <= maxY; y++) {
-        total++;
-        const imageryPaths = getTileCachePaths("imagery", z, x, y);
-        const labelsPaths = getTileCachePaths("labels", z, x, y);
+        for (const layer of layers) {
+          total++;
+          const layerPaths = getTileCachePaths(layer, z, x, y);
+          const hasTile = await fileExists(layerPaths.dataPath) && await fileExists(layerPaths.metaPath);
+          if (hasTile) continue;
 
-        if (!await fileExists(imageryPaths.dataPath) || !await fileExists(imageryPaths.metaPath)) {
-          await fetchAndCacheTileForLayer("imagery", z, x, y);
-          downloaded++;
-          await new Promise(r => setTimeout(r, 30));
-        }
+          await fetchAndCacheTileForLayer(layer, z, x, y);
 
-        if (!await fileExists(labelsPaths.dataPath) || !await fileExists(labelsPaths.metaPath)) {
-          await fetchAndCacheTileForLayer("labels", z, x, y);
-          downloaded++;
+          const nowCached = await fileExists(layerPaths.dataPath) && await fileExists(layerPaths.metaPath);
+          if (nowCached) {
+            downloaded++;
+          }
+
           await new Promise(r => setTimeout(r, 30));
         }
       }

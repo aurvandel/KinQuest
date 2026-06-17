@@ -86,18 +86,12 @@ export function GameMap({
         scrollWheelZoom: true
       });
 
-      const originalLayer = isAdmin
-        ? L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            maxZoom: 20,
-            tileSize: 256,
-            errorTileUrl: ""
-          })
-        : L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: "abcd",
-            maxZoom: 20
-          });
+      const originalLayer = L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        maxZoom: 20,
+        tileSize: 256,
+        errorTileUrl: ""
+      });
       const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
         attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
         maxZoom: 17,
@@ -232,22 +226,16 @@ export function GameMap({
       baseTileLayerRef.current = imageryLayer;
       labelsTileLayerRef.current = labelsLayer;
     } else {
-      const originalLayer = isAdmin
-        ? L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            maxZoom: 20,
-            tileSize: 256,
-            errorTileUrl: ""
-          })
-        : L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: "abcd",
-            maxZoom: 20
-          });
+      const originalLayer = L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        maxZoom: 20,
+        tileSize: 256,
+        errorTileUrl: ""
+      });
       originalLayer.addTo(map);
       baseTileLayerRef.current = originalLayer;
     }
-  }, [isAdmin, mapMode, mapLoaded]);
+  }, [mapMode, mapLoaded]);
 
   // Update User position markers in real-time on movement
   useEffect(() => {
