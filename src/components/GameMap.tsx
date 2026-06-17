@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ScavengerItem } from "../types";
 import { MapPin, Navigation, Compass, AlertCircle, Crosshair, HelpCircle, Star, Sparkles } from "lucide-react";
 
+const ADMIN_CACHE_LAYERS = ["original", "imagery", "labels"] as const;
+
 // Explicit declaration for window with global L (Leaflet) loaded via CDN
 declare global {
   interface Window {
@@ -13,6 +15,7 @@ interface GameMapProps {
   items: ScavengerItem[];
   userLat: number | null;
   userLng: number | null;
+  isAdmin?: boolean;
   mapMode: "original" | "satellite_labels";
   selectedItemId?: string | null;
   onSelectChallenge?: (itemId: string) => void;
@@ -25,6 +28,7 @@ export function GameMap({
   items,
   userLat,
   userLng,
+  isAdmin = false,
   mapMode,
   selectedItemId,
   onSelectChallenge,
@@ -39,6 +43,8 @@ export function GameMap({
   const circlesGroupRef = useRef<any>(null);
   const baseTileLayerRef = useRef<any>(null);
   const labelsTileLayerRef = useRef<any>(null);
+  const adminPrefetchedTilesRef = useRef<Set<string>>(new Set());
+  const adminPrefetchFrameRef = useRef<number | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [jumpLatInput, setJumpLatInput] = useState("");
   const [jumpLngInput, setJumpLngInput] = useState("");
@@ -80,11 +86,18 @@ export function GameMap({
         scrollWheelZoom: true
       });
 
-      const originalLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        subdomains: "abcd",
-        maxZoom: 20
-      });
+      const originalLayer = isAdmin
+        ? L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            maxZoom: 20,
+            tileSize: 256,
+            errorTileUrl: ""
+          })
+        : L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: "abcd",
+            maxZoom: 20
+          });
       const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
         attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
         maxZoom: 17,
@@ -219,15 +232,22 @@ export function GameMap({
       baseTileLayerRef.current = imageryLayer;
       labelsTileLayerRef.current = labelsLayer;
     } else {
-      const originalLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        subdomains: "abcd",
-        maxZoom: 20
-      });
+      const originalLayer = isAdmin
+        ? L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            maxZoom: 20,
+            tileSize: 256,
+            errorTileUrl: ""
+          })
+        : L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: "abcd",
+            maxZoom: 20
+          });
       originalLayer.addTo(map);
       baseTileLayerRef.current = originalLayer;
     }
-  }, [mapMode, mapLoaded]);
+  }, [isAdmin, mapMode, mapLoaded]);
 
   // Update User position markers in real-time on movement
   useEffect(() => {
@@ -246,6 +266,72 @@ export function GameMap({
       </div>
     `);
   }, [currentLat, currentLng, mapLoaded]);
+
+  // Admin-only background prefetch so both map styles are cached for visited areas.
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current || !isAdmin || typeof window.L === "undefined") return;
+
+    const map = mapRef.current;
+    const L = window.L;
+
+    const schedulePrefetch = () => {
+      if (adminPrefetchFrameRef.current !== null) {
+        cancelAnimationFrame(adminPrefetchFrameRef.current);
+      }
+
+      adminPrefetchFrameRef.current = requestAnimationFrame(() => {
+        adminPrefetchFrameRef.current = null;
+
+        const zoom = map.getZoom();
+        if (typeof zoom !== "number" || zoom < 0 || zoom > 22) return;
+
+        const bounds = map.getBounds();
+        const northWest = bounds.getNorthWest();
+        const southEast = bounds.getSouthEast();
+
+        const northWestPoint = L.CRS.EPSG3857.latLngToPoint(northWest, zoom);
+        const southEastPoint = L.CRS.EPSG3857.latLngToPoint(southEast, zoom);
+
+        const minTileX = Math.floor(northWestPoint.x / 256);
+        const maxTileX = Math.floor(southEastPoint.x / 256);
+        const minTileY = Math.floor(northWestPoint.y / 256);
+        const maxTileY = Math.floor(southEastPoint.y / 256);
+
+        const worldTileCount = Math.pow(2, zoom);
+
+        for (let x = minTileX; x <= maxTileX; x++) {
+          for (let y = minTileY; y <= maxTileY; y++) {
+            if (y < 0 || y >= worldTileCount) continue;
+            const wrappedX = ((x % worldTileCount) + worldTileCount) % worldTileCount;
+
+            for (const layer of ADMIN_CACHE_LAYERS) {
+              const key = `${layer}/${zoom}/${wrappedX}/${y}`;
+              if (adminPrefetchedTilesRef.current.has(key)) continue;
+              adminPrefetchedTilesRef.current.add(key);
+
+              const tileUrl = `/tiles/${layer}/${zoom}/${wrappedX}/${y}.png`;
+              void fetch(tileUrl, { cache: "no-store" }).catch(() => {
+                // Keep navigation smooth even if upstream tile fetch fails.
+              });
+            }
+          }
+        }
+      });
+    };
+
+    map.on("moveend", schedulePrefetch);
+    map.on("zoomend", schedulePrefetch);
+    schedulePrefetch();
+
+    return () => {
+      map.off("moveend", schedulePrefetch);
+      map.off("zoomend", schedulePrefetch);
+      if (adminPrefetchFrameRef.current !== null) {
+        cancelAnimationFrame(adminPrefetchFrameRef.current);
+        adminPrefetchFrameRef.current = null;
+      }
+    };
+  }, [isAdmin, mapLoaded]);
 
   // Render Challenge pins and geofence circles in real-time
   useEffect(() => {

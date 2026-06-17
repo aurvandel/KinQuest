@@ -1376,6 +1376,7 @@ app.post("/api/users/:userId/boot", async (req, res) => {
 
 const TILE_CACHE_DIR = process.env.TILE_CACHE_DIR || path.join(process.cwd(), "tile-cache");
 const TILE_SOURCES = {
+  original: "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
   imagery: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   labels: "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
 } as const;
@@ -1562,7 +1563,7 @@ async function preCacheReunionTiles(): Promise<void> {
 // Tile proxy endpoint with explicit layer: serves from disk cache or fetches live and caches
 app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
   const layer = req.params.layer as TileLayerName;
-  if (layer !== "imagery" && layer !== "labels") {
+  if (layer !== "original" && layer !== "imagery" && layer !== "labels") {
     return res.status(400).json({ error: "Invalid tile layer" });
   }
 

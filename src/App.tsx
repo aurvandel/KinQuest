@@ -2256,6 +2256,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               items={items}
               userLat={userLat}
               userLng={userLng}
+              isAdmin={profile?.role === "admin"}
               mapMode={settings.mapMode === "satellite_labels" ? "satellite_labels" : "original"}
               onSelectChallenge={handleSelectChallengeFromMap}
               onSimulateCoordinates={handleSimulateCoordinates}
