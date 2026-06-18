@@ -97,7 +97,7 @@ export class MeshSyncManager {
     this.lastSyncTime = Date.now();
 
     try {
-      const pendingSubmissions = this.submissionQueue.getQueuedSubmissions();
+      const pendingSubmissions = this.submissionQueue.getRetryableSubmissions();
 
       if (pendingSubmissions.length === 0) {
         this.isSyncing = false;
@@ -112,7 +112,7 @@ export class MeshSyncManager {
 
       for (const submission of pendingSubmissions) {
         try {
-          await this.submissionQueue.updateSubmissionStatus(submission.id, "syncing");
+          await this.submissionQueue.markAsRetrying(submission.id);
 
           const result = await this.syncSubmissionToServer(submission);
 
@@ -140,6 +140,11 @@ export class MeshSyncManager {
           await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
           console.error(`[SyncManager] Error syncing submission ${submission.id}:`, error);
+          await this.submissionQueue.updateSubmissionStatus(
+            submission.id,
+            "queued",
+            error instanceof Error ? error.message : "Unknown error"
+          );
           await this.submissionQueue.incrementRetryCount(submission.id);
           failed++;
           results.push({
@@ -177,7 +182,9 @@ export class MeshSyncManager {
           itemId: submission.itemId,
           imageBase64: submission.imageBase64,
           userLat: submission.userLat,
-          userLng: submission.userLng
+          userLng: submission.userLng,
+          forceSubmit: submission.forceSubmit,
+          submissionId: submission.submissionId
         })
       });
 

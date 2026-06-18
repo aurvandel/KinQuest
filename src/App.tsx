@@ -14,17 +14,8 @@ import { AdminSettingsModal } from "./components/AdminSettingsModal";
 import { CreateMissionModal } from "./components/CreateMissionModal";
 import { SlideshowGeneratorModal } from "./components/SlideshowGeneratorModal";
 import { ServerLogs } from "./components/ServerLogs";
-import {
-  getPendingSubmissions,
-  getRetryableSubmissions,
-  addToRetryQueue,
-  removeFromRetryQueue,
-  markAsRetrying,
-  clearRetryQueue,
-  getQueueStatusText,
-  PendingSubmission,
-} from "./utils/submissionRetryQueue";
 import { useMeshNetwork } from "./utils/useMeshNetwork";
+import { QueuedSubmission } from "./utils/meshSubmissionQueue";
 
 import {
   Flame,
@@ -234,9 +225,19 @@ export default function App() {
   const [rejectedSubmissionMap, setRejectedSubmissionMap] = useState<{ [itemId: string]: { id: string; explanation: string; base64: string } }>({});
 
   // Submission retry queue state
-  const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [pendingSubmissions, setPendingSubmissions] = useState<QueuedSubmission[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState("All submissions synced ✓");
+
+  const buildQueueStatusText = (pendingCount: number, syncing: boolean) => {
+    if (syncing) {
+      return `Syncing ${pendingCount} pending submission${pendingCount !== 1 ? "s" : ""}...`;
+    }
+    if (pendingCount === 0) {
+      return "All submissions synced ✓";
+    }
+    return `${pendingCount} pending submission${pendingCount !== 1 ? "s" : ""}`;
+  };
 
   const [registerName, setRegisterName] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -407,98 +408,13 @@ CREATE TABLE IF NOT EXISTS submissions (
     return () => clearInterval(intervalId);
   }, []);
 
-  // Load pending submissions from localStorage on mount
+  // Keep unified queue status in sync with mesh sync manager
   useEffect(() => {
-    const pending = getPendingSubmissions();
+    const pending = getQueuedSubmissions();
     setPendingSubmissions(pending);
-    setSyncStatusText(getQueueStatusText());
-  }, []);
-
-  // Auto-sync pending submissions with exponential backoff
-  useEffect(() => {
-    let retryIntervalId: any;
-
-    const attemptRetry = async () => {
-      const retryable = getRetryableSubmissions();
-      if (retryable.length === 0) {
-        // Update UI status
-        const pending = getPendingSubmissions();
-        setPendingSubmissions(pending);
-        setSyncStatusText(getQueueStatusText());
-        return;
-      }
-
-      setIsSyncing(true);
-
-      for (const sub of retryable) {
-        try {
-          console.log(`[AutoRetry] Retrying submission ${sub.id} (attempt ${sub.retryCount + 1})`);
-          markAsRetrying(sub.id);
-
-          const response = await fetch("/api/verify-submission", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: sub.userId,
-              itemId: sub.itemId,
-              imageBase64: sub.imageBase64,
-              userLat: sub.userLat,
-              userLng: sub.userLng,
-              forceSubmit: sub.forceSubmit,
-              submissionId: sub.submissionId,
-            }),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            const errorMsg = errorData.error || "Unknown error";
-
-            // Determine reason for failure
-            let reason: "rate_limit" | "timeout" | "error" = "error";
-            if (response.status === 429) {
-              reason = "rate_limit";
-            } else if (response.status === 408 || response.status === 504) {
-              reason = "timeout";
-            }
-
-            // Requeue with updated reason and error
-            const updated = getPendingSubmissions().find((s) => s.id === sub.id);
-            if (updated) {
-              updated.reason = reason;
-              updated.lastError = errorMsg;
-              const queue = getPendingSubmissions();
-              const idx = queue.findIndex((s) => s.id === sub.id);
-              if (idx !== -1) {
-                queue[idx] = updated;
-                localStorage.setItem("kinquest_submission_retry_queue", JSON.stringify(queue));
-              }
-            }
-            continue;
-          }
-
-          const payload = await response.json();
-          if (payload.submission.status !== "rejected" || sub.forceSubmit) {
-            // Success! Remove from queue
-            removeFromRetryQueue(sub.id);
-            console.log(`[AutoRetry] Submission ${sub.id} successfully synced!`);
-          }
-        } catch (err: any) {
-          console.error(`[AutoRetry] Error retrying ${sub.id}:`, err);
-          // Will be retried again next interval
-        }
-      }
-
-      setIsSyncing(false);
-      const pending = getPendingSubmissions();
-      setPendingSubmissions(pending);
-      setSyncStatusText(getQueueStatusText());
-    };
-
-    // Check every 10 seconds
-    retryIntervalId = setInterval(attemptRetry, 10000);
-
-    return () => clearInterval(retryIntervalId);
-  }, []);
+    setIsSyncing(syncStatus.isSyncing);
+    setSyncStatusText(buildQueueStatusText(pending.length, syncStatus.isSyncing));
+  }, [getQueuedSubmissions, syncStatus.isSyncing, syncStatus.pendingCount, syncStatus.failedCount]);
 
   // Download chat logs initially
   useEffect(() => {
@@ -1168,7 +1084,11 @@ CREATE TABLE IF NOT EXISTS submissions (
           itemId,
           base64Image,
           userLat || undefined,
-          userLng || undefined
+          userLng || undefined,
+          forceSubmit,
+          submissionId,
+          "error",
+          "Offline submission queued"
         );
 
         setSubmitErrorMap((prev) => ({
@@ -1187,6 +1107,9 @@ CREATE TABLE IF NOT EXISTS submissions (
         }
 
         setIsSubmittingMap((prev) => ({ ...prev, [itemId]: false }));
+        const pending = getQueuedSubmissions();
+        setPendingSubmissions(pending);
+        setSyncStatusText(buildQueueStatusText(pending.length, syncStatus.isSyncing));
         return;
       }
 
@@ -1239,18 +1162,19 @@ CREATE TABLE IF NOT EXISTS submissions (
                             err.message?.includes("rate");
       
       if (isNetworkError || (err instanceof TypeError)) {
-        // Network error - queue for retry
+        // Network error - queue into unified offline queue
         const retryReason = err.message?.includes("rate") ? "rate_limit" : "error";
-        addToRetryQueue(
+        await queueSubmission(
           profile.id,
+          profile.username,
           itemId,
           base64Image,
-          userLat,
-          userLng,
-          retryReason as "rate_limit" | "timeout" | "error",
-          err instanceof Error ? err.message : "Network error",
+          userLat || undefined,
+          userLng || undefined,
           forceSubmit,
-          submissionId
+          submissionId,
+          retryReason as "rate_limit" | "timeout" | "error",
+          err instanceof Error ? err.message : "Network error"
         );
         
         setSubmitErrorMap((prev) => ({
@@ -1259,9 +1183,9 @@ CREATE TABLE IF NOT EXISTS submissions (
         }));
         
         // Update pending submissions display
-        const pending = getPendingSubmissions();
+        const pending = getQueuedSubmissions();
         setPendingSubmissions(pending);
-        setSyncStatusText(getQueueStatusText());
+        setSyncStatusText(buildQueueStatusText(pending.length, syncStatus.isSyncing));
       } else {
         // Validation or other error - show to user
         setSubmitErrorMap((prev) => ({
@@ -1317,58 +1241,22 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   // Manually trigger a full sync of all pending submissions
   const handleManualSync = async () => {
-    setIsSyncing(true);
-    const retryable = getRetryableSubmissions();
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const sub of retryable) {
-      try {
-        console.log(`[ManualSync] Syncing submission ${sub.id}`);
-        markAsRetrying(sub.id);
-
-        const response = await fetch("/api/verify-submission", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: sub.userId,
-            itemId: sub.itemId,
-            imageBase64: sub.imageBase64,
-            userLat: sub.userLat,
-            userLng: sub.userLng,
-            forceSubmit: sub.forceSubmit,
-            submissionId: sub.submissionId,
-          }),
-        });
-
-        if (response.ok) {
-          const payload = await response.json();
-          if (payload.submission.status !== "rejected" || sub.forceSubmit) {
-            removeFromRetryQueue(sub.id);
-            successCount++;
-            console.log(`[ManualSync] ✓ Synced ${sub.id}`);
-          }
-        } else {
-          failCount++;
-        }
-      } catch (err: any) {
-        failCount++;
-        console.error(`[ManualSync] Failed to sync ${sub.id}:`, err);
-      }
-    }
-
-    setIsSyncing(false);
-    const pending = getPendingSubmissions();
-    setPendingSubmissions(pending);
-    setSyncStatusText(getQueueStatusText());
-
-    if (successCount > 0 || failCount > 0) {
-      alert(
-        `Manual sync complete!\n✓ ${successCount} synced\n✗ ${failCount} failed\n\nStill pending: ${pending.length}`
-      );
-    } else {
+    const before = getQueuedSubmissions();
+    if (before.length === 0) {
       alert("No pending submissions to sync");
+      return;
     }
+
+    setIsSyncing(true);
+    await meshManualSync();
+
+    const pending = getQueuedSubmissions();
+    const syncedCount = Math.max(0, before.length - pending.length);
+    setPendingSubmissions(pending);
+    setSyncStatusText(buildQueueStatusText(pending.length, false));
+    setIsSyncing(false);
+
+    alert(`Manual sync complete!\n✓ ${syncedCount} synced\n\nStill pending: ${pending.length}`);
   };
 
   // Approve submission - admin only

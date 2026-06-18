@@ -145,7 +145,11 @@ export function useMeshNetwork(options: UseMeshNetworkOptions) {
       itemId: string,
       imageBase64: string,
       userLat?: number,
-      userLng?: number
+      userLng?: number,
+      forceSubmit?: boolean,
+      submissionId?: string,
+      retryReason?: "rate_limit" | "timeout" | "error",
+      errorMessage?: string
     ) => {
       if (!submissionQueueRef.current) {
         throw new Error("Submission queue not initialized");
@@ -156,7 +160,11 @@ export function useMeshNetwork(options: UseMeshNetworkOptions) {
         itemId,
         imageBase64,
         userLat,
-        userLng
+        userLng,
+        forceSubmit,
+        submissionId,
+        retryReason,
+        errorMessage
       );
     },
     []

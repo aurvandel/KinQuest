@@ -11,9 +11,13 @@ export interface QueuedSubmission {
   imageBase64: string; // Full base64 data
   userLat?: number;
   userLng?: number;
+  forceSubmit?: boolean;
+  submissionId?: string;
   createdAt: string;
   status: "queued" | "syncing" | "synced" | "failed";
   attempts: number;
+  retryReason?: "rate_limit" | "timeout" | "error";
+  nextRetryAt?: string;
   lastAttempt?: string;
   errorMessage?: string;
 }
@@ -32,6 +36,8 @@ export class MeshSubmissionQueue {
   private localStorageKey = "kinquest_submission_queue";
   private maxRetries = 5;
   private retryDelay = 5000; // 5 seconds
+  private backoffMultiplier = 2;
+  private maxRetryDelay = 300000; // 5 minutes
 
   /**
    * Initialize the submission queue using IndexedDB with localStorage fallback
@@ -95,8 +101,13 @@ export class MeshSubmissionQueue {
     itemId: string,
     imageBase64: string,
     userLat?: number,
-    userLng?: number
+    userLng?: number,
+    forceSubmit?: boolean,
+    submissionId?: string,
+    retryReason?: "rate_limit" | "timeout" | "error",
+    errorMessage?: string
   ): Promise<QueuedSubmission> {
+    const now = new Date();
     const submission: QueuedSubmission = {
       id: `sub_queue_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       userId,
@@ -105,9 +116,14 @@ export class MeshSubmissionQueue {
       imageBase64,
       userLat,
       userLng,
-      createdAt: new Date().toISOString(),
+      forceSubmit,
+      submissionId,
+      createdAt: now.toISOString(),
       status: "queued",
-      attempts: 0
+      attempts: 0,
+      retryReason,
+      nextRetryAt: now.toISOString(),
+      errorMessage
     };
 
     this.queue.set(submission.id, submission);
@@ -128,6 +144,28 @@ export class MeshSubmissionQueue {
    */
   getQueuedSubmissions(): QueuedSubmission[] {
     return Array.from(this.queue.values()).filter(s => s.status === "queued" || s.status === "failed");
+  }
+
+  /**
+   * Get submissions that are eligible for retry now
+   */
+  getRetryableSubmissions(): QueuedSubmission[] {
+    const now = new Date();
+    return Array.from(this.queue.values()).filter((submission) => {
+      if (submission.status !== "queued" && submission.status !== "failed") {
+        return false;
+      }
+
+      if (submission.attempts >= this.maxRetries) {
+        return false;
+      }
+
+      if (!submission.nextRetryAt) {
+        return true;
+      }
+
+      return new Date(submission.nextRetryAt) <= now;
+    });
   }
 
   /**
@@ -169,10 +207,18 @@ export class MeshSubmissionQueue {
     if (!submission) return false;
 
     submission.attempts++;
+    submission.lastAttempt = new Date().toISOString();
 
     if (submission.attempts >= this.maxRetries) {
       submission.status = "failed";
       submission.errorMessage = `Failed after ${this.maxRetries} retry attempts`;
+    } else {
+      submission.status = "queued";
+      const delay = Math.min(
+        this.retryDelay * Math.pow(this.backoffMultiplier, submission.attempts),
+        this.maxRetryDelay
+      );
+      submission.nextRetryAt = new Date(Date.now() + delay).toISOString();
     }
 
     if (this.db) {
@@ -182,6 +228,23 @@ export class MeshSubmissionQueue {
     }
 
     return submission.attempts < this.maxRetries;
+  }
+
+  /**
+   * Mark submission as being retried now
+   */
+  async markAsRetrying(submissionId: string): Promise<void> {
+    const submission = this.queue.get(submissionId);
+    if (!submission) return;
+
+    submission.status = "syncing";
+    submission.lastAttempt = new Date().toISOString();
+
+    if (this.db) {
+      await this.saveToIndexedDB(submission);
+    } else {
+      this.saveToLocalStorage();
+    }
   }
 
   /**
