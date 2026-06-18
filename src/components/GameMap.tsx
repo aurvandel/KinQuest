@@ -41,6 +41,7 @@ export function GameMap({
   const userMarkerRef = useRef<any>(null);
   const markersGroupRef = useRef<any>(null);
   const circlesGroupRef = useRef<any>(null);
+  const markerByItemIdRef = useRef<Map<string, any>>(new Map());
   const baseTileLayerRef = useRef<any>(null);
   const labelsTileLayerRef = useRef<any>(null);
   const adminPrefetchedTilesRef = useRef<Set<string>>(new Set());
@@ -329,6 +330,7 @@ export function GameMap({
     // Clear old layers
     markersGroupRef.current.clearLayers();
     circlesGroupRef.current.clearLayers();
+    markerByItemIdRef.current.clear();
 
     // Map through only geofenced items
     items.forEach((item) => {
@@ -337,21 +339,22 @@ export function GameMap({
       const lat = Number(item.lat);
       const lng = Number(item.lng);
       const radius = Number(item.radius) || 100;
+      const isSelected = selectedItemId === item.id;
 
       // Distance calculation to shade color based on user proximity
       const distance = getDistance(currentLat, currentLng, lat, lng);
       const isInside = distance <= radius;
 
       // Draw geofence circle overlay
-      const circleColor = isInside ? "#22c55e" : "#5a5a40"; // moss tones
-      const circleFillColor = isInside ? "#4ade80" : "#dcdcd4";
+      const circleColor = isSelected ? "#f97316" : isInside ? "#22c55e" : "#5a5a40";
+      const circleFillColor = isSelected ? "#fdba74" : isInside ? "#4ade80" : "#dcdcd4";
 
       const boundaryCircle = L.circle([lat, lng], {
         radius: radius,
         color: circleColor,
-        weight: 1.5,
+        weight: isSelected ? 3 : 1.5,
         fillColor: circleFillColor,
-        fillOpacity: 0.15,
+        fillOpacity: isSelected ? 0.3 : 0.15,
         dashArray: isInside ? "none" : "4 4"
       });
       circlesGroupRef.current.addLayer(boundaryCircle);
@@ -362,10 +365,10 @@ export function GameMap({
           <div class="absolute -top-10 bg-gray-900 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition duration-200 pointer-events-none z-50">
             ${item.title} (+${item.points} pts)
           </div>
-          <div class="h-9 w-9 rounded-full ${isInside ? 'bg-green-600 border-green-400' : 'bg-[#5a5a40] border-[#dcdcd4]'} border-2 flex items-center justify-center text-white shadow-lg transition-all duration-300 transform group-hover:scale-110">
+          <div class="h-9 w-9 rounded-full ${isSelected ? 'bg-orange-500 border-orange-300 ring-2 ring-orange-300/80 ring-offset-2 ring-offset-white animate-pulse' : isInside ? 'bg-green-600 border-green-400' : 'bg-[#5a5a40] border-[#dcdcd4]'} border-2 flex items-center justify-center text-white shadow-lg transition-all duration-300 transform group-hover:scale-110">
             <span class="text-xs font-bold leading-none">${item.points}</span>
           </div>
-          <div class="absolute -bottom-1.5 w-2 h-2 ${isInside ? 'bg-green-600' : 'bg-[#5a5a40]'} rotate-45 border-r border-b border-transparent"></div>
+          <div class="absolute -bottom-1.5 w-2 h-2 ${isSelected ? 'bg-orange-500' : isInside ? 'bg-green-600' : 'bg-[#5a5a40]'} rotate-45 border-r border-b border-transparent"></div>
         </div>
       `;
 
@@ -377,6 +380,10 @@ export function GameMap({
       });
 
       const pinMarker = L.marker([lat, lng], { icon: pinIcon });
+      markerByItemIdRef.current.set(item.id, pinMarker);
+      if (isSelected) {
+        pinMarker.setZIndexOffset(1000);
+      }
       
       // Popup body
       const popupHtml = `
@@ -417,7 +424,26 @@ export function GameMap({
       markersGroupRef.current.addLayer(pinMarker);
     });
 
-  }, [items, mapLoaded, currentLat, currentLng]);
+  }, [items, mapLoaded, currentLat, currentLng, selectedItemId]);
+
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current || !selectedItemId) return;
+
+    const selectedItem = items.find((item) => item.id === selectedItemId);
+    if (!selectedItem || selectedItem.lat === null || selectedItem.lng === null) return;
+
+    const map = mapRef.current;
+    const nextZoom = Math.max(map.getZoom(), 16);
+    map.flyTo([selectedItem.lat, selectedItem.lng], nextZoom, {
+      animate: true,
+      duration: 0.8,
+    });
+
+    const selectedMarker = markerByItemIdRef.current.get(selectedItemId);
+    if (selectedMarker) {
+      selectedMarker.openPopup();
+    }
+  }, [selectedItemId, items, mapLoaded]);
 
   // Helper distance function
   function getDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {

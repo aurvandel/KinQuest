@@ -9,3 +9,5 @@ coverage/
 uploads/
 data/
 tile-cache/
+nginx/certs/wildcard_.narcolepsy.ninja.crt
+nginx/certs/wildcard_.narcolepsy.ninja.key

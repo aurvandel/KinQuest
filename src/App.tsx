@@ -225,8 +225,8 @@ export default function App() {
     }
   });
 
-  // Expanded card linkage
-  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  // Tracks which mission should be focused/highlighted on the map
+  const [selectedMapItemId, setSelectedMapItemId] = useState<string | null>(null);
 
   // Spinners / error maps per mission
   const [isSubmittingMap, setIsSubmittingMap] = useState<{ [itemId: string]: boolean }>({});
@@ -1407,6 +1407,24 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   };
 
+  // Update points for an approved submission
+  const handleUpdateSubmissionPoints = async (subId: string, points: number) => {
+    try {
+      const response = await fetch(`/api/submissions/${subId}/update-points`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ points })
+      });
+      if (!response.ok) {
+        throw new Error("Could not update submission points.");
+      }
+      // Success: automatically visual refresh occurs in periodic loop!
+    } catch (err) {
+      console.error("Error updating submission points:", err);
+      throw err;
+    }
+  };
+
   // Create customized challenge
   const handleAddChallenge = async (newChallenge: Omit<ScavengerItem, "id">) => {
     const response = await fetch("/api/challenges", {
@@ -1508,8 +1526,14 @@ CREATE TABLE IF NOT EXISTS submissions (
     setShowCreateMissionModal(true);
   };
 
+  const handleFocusMissionOnMap = (itemId: string) => {
+    setSelectedMapItemId(itemId);
+    setActiveTab("map");
+  };
+
   // Map clicks link directly to challenge cards and expands them!
   const handleSelectChallengeFromMap = (itemId: string) => {
+    setSelectedMapItemId(itemId);
     setActiveTab("missions");
     // Trigger scroll-to frame
     setTimeout(() => {
@@ -2247,6 +2271,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               onDeleteMission={handleDeleteMission}
               onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
+              onFocusMissionOnMap={handleFocusMissionOnMap}
               players={players}
             />
           )}
@@ -2258,6 +2283,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               userLng={userLng}
               isAdmin={profile?.role === "admin"}
               mapMode={settings.mapMode === "satellite_labels" ? "satellite_labels" : "original"}
+              selectedItemId={selectedMapItemId}
               onSelectChallenge={handleSelectChallengeFromMap}
               onSimulateCoordinates={handleSimulateCoordinates}
               onRevertToDeviceGPS={handleRevertToDeviceGPS}
@@ -2303,6 +2329,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               players={players}
               onApprove={handleApproveSubmission}
               onReject={handleRejectSubmission}
+              onUpdatePoints={handleUpdateSubmissionPoints}
             />
           )}
 

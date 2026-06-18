@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Submission, ScavengerItem, PlayerProfile } from "../types";
-import { CheckCircle, XCircle, AlertCircle, MapPin, User, Zap, Filter, Loader2 } from "lucide-react";
+import { CheckCircle, XCircle, AlertCircle, MapPin, User, Zap, Filter, Loader2, Edit2 } from "lucide-react";
 
 interface PhotoApprovalPanelProps {
   submissions: Submission[];
@@ -8,6 +8,7 @@ interface PhotoApprovalPanelProps {
   players: PlayerProfile[];
   onApprove: (subId: string, points?: number) => Promise<void>;
   onReject: (subId: string) => Promise<void>;
+  onUpdatePoints?: (subId: string, points: number) => Promise<void>;
 }
 
 const ITEMS_PER_PAGE = 5;
@@ -18,21 +19,24 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
   players,
   onApprove,
   onReject,
+  onUpdatePoints,
 }) => {
-  const [filter, setFilter] = useState<"all" | "pending" | "forced">("all");
+  const [filter, setFilter] = useState<"all" | "pending" | "forced" | "approved">("all");
   const [approving, setApproving] = useState<{ [key: string]: boolean }>({});
   const [rejecting, setRejecting] = useState<{ [key: string]: boolean }>({});
-  const [pointsModal, setPointsModal] = useState<{ visible: boolean; subId: string; points: number } | null>(null);
+  const [updating, setUpdating] = useState<{ [key: string]: boolean }>({});
+  const [pointsModal, setPointsModal] = useState<{ visible: boolean; subId: string; points: number; isApproved?: boolean } | null>(null);
   const [displayLimit, setDisplayLimit] = useState(ITEMS_PER_PAGE);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Filter submissions - exclude approved ones from the panel
+  // Filter submissions based on selected filter
   const filteredSubmissions = submissions.filter((sub) => {
-    if (sub.status === "approved") return false; // Remove approved submissions from panel
+    if (filter === "approved") return sub.status === "approved";
     if (filter === "pending") return sub.status === "pending";
     if (filter === "forced") return sub.forcedApproval === true;
-    return true;
+    // "all" filter excludes approved submissions
+    return sub.status !== "approved";
   });
 
   // Infinite scroll detection using Intersection Observer
@@ -81,18 +85,30 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
     const maxPoints = item?.points || 0;
     const defaultPoints = submission.pointsAwarded || maxPoints;
     
-    setPointsModal({ visible: true, subId, points: defaultPoints });
+    setPointsModal({ visible: true, subId, points: defaultPoints, isApproved: submission.status === "approved" });
   };
 
   const handleConfirmApprove = async () => {
     if (!pointsModal) return;
     
-    setApproving((prev) => ({ ...prev, [pointsModal.subId]: true }));
-    try {
-      await onApprove(pointsModal.subId, pointsModal.points);
-      setPointsModal(null);
-    } finally {
-      setApproving((prev) => ({ ...prev, [pointsModal.subId]: false }));
+    if (pointsModal.isApproved && onUpdatePoints) {
+      // Update points for already-approved submission
+      setUpdating((prev) => ({ ...prev, [pointsModal.subId]: true }));
+      try {
+        await onUpdatePoints(pointsModal.subId, pointsModal.points);
+        setPointsModal(null);
+      } finally {
+        setUpdating((prev) => ({ ...prev, [pointsModal.subId]: false }));
+      }
+    } else {
+      // Approve new submission
+      setApproving((prev) => ({ ...prev, [pointsModal.subId]: true }));
+      try {
+        await onApprove(pointsModal.subId, pointsModal.points);
+        setPointsModal(null);
+      } finally {
+        setApproving((prev) => ({ ...prev, [pointsModal.subId]: false }));
+      }
     }
   };
 
@@ -105,30 +121,10 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
     }
   };
 
-  if (filteredSubmissions.length === 0) {
-    return (
-      <div className="bg-white rounded-2xl p-8 border border-brand-border shadow-sm text-center">
-        <div className="flex justify-center mb-4">
-          <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-            <CheckCircle className="h-6 w-6 text-green-600" />
-          </div>
-        </div>
-        <h3 className="text-lg font-bold text-[#5a5a40] mb-2">All Caught Up!</h3>
-        <p className="text-sm text-[#8c8c82]">
-          {filter === "pending"
-            ? "No pending submissions to review."
-            : filter === "forced"
-              ? "No force-approved submissions."
-              : "No submissions to review."}
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       {/* Filter Controls */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-6 flex-wrap">
         <button
           onClick={() => {
             setFilter("all");
@@ -140,7 +136,7 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
               : "bg-white text-[#5a5a40] border border-brand-border hover:bg-[#f5f5f0]"
           }`}
         >
-          All ({submissions.length})
+          All ({submissions.filter((s) => s.status !== "approved").length})
         </button>
         <button
           onClick={() => {
@@ -170,28 +166,62 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
           <Zap className="h-4 w-4" />
           Force-Approved ({submissions.filter((s) => s.forcedApproval).length})
         </button>
+        <button
+          onClick={() => {
+            setFilter("approved");
+            setDisplayLimit(ITEMS_PER_PAGE);
+          }}
+          className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
+            filter === "approved"
+              ? "bg-[#5a5a40] text-white"
+              : "bg-white text-[#5a5a40] border border-brand-border hover:bg-[#f5f5f0]"
+          }`}
+        >
+          <CheckCircle className="h-4 w-4" />
+          Approved ({submissions.filter((s) => s.status === "approved").length})
+        </button>
       </div>
 
-      {/* Submission Cards */}
-      <div className="grid gap-4">
-        {displayedSubmissions.map((submission) => (
-          <div
-            key={submission.id}
-            className="bg-white border border-brand-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition"
-          >
-            <div className="flex flex-col md:flex-row gap-4 p-4">
-              {/* Image */}
-              <div className="md:w-48 h-40 md:h-40 flex-shrink-0">
-                <img
-                  src={submission.imageUrl}
-                  alt={`Submission ${submission.id}`}
-                  className="w-full h-full object-cover rounded-xl"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23ddd' viewBox='0 0 100 100'%3E%3Crect fill='%23ddd' width='100' height='100'/%3E%3C/svg%3E";
-                  }}
-                />
-              </div>
+      {filteredSubmissions.length === 0 ? (
+        <div className="bg-white rounded-2xl p-8 border border-brand-border shadow-sm text-center">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+              <CheckCircle className="h-6 w-6 text-green-600" />
+            </div>
+          </div>
+          <h3 className="text-lg font-bold text-[#5a5a40] mb-2">All Caught Up!</h3>
+          <p className="text-sm text-[#8c8c82]">
+            {filter === "pending"
+              ? "No pending submissions to review."
+              : filter === "forced"
+                ? "No force-approved submissions."
+                : filter === "approved"
+                  ? "No approved submissions."
+                  : "No submissions to review."}
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* Submission Cards */}
+          <div className="grid gap-4">
+            {displayedSubmissions.map((submission) => (
+              <div
+                key={submission.id}
+                className="bg-white border border-brand-border rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition"
+              >
+                <div className="flex flex-col md:flex-row gap-4 p-4">
+                  {/* Image */}
+                  <div className="md:w-48 h-40 md:h-40 flex-shrink-0">
+                    <img
+                      src={submission.imageUrl}
+                      alt={`Submission ${submission.id}`}
+                      className="w-full h-full object-cover rounded-xl"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src =
+                          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23ddd' viewBox='0 0 100 100'%3E%3Crect fill='%23ddd' width='100' height='100'/%3E%3C/svg%3E";
+                      }}
+                    />
+                  </div>
 
               {/* Details */}
               <div className="flex-1 flex flex-col justify-between">
@@ -264,24 +294,37 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
                   )}
                 </div>
 
-                {/* Action Buttons - always show for admin review */}
+                {/* Action Buttons - different based on status */}
                 <div className="flex gap-2 mt-4">
-                  <button
-                    onClick={() => handleApprove(submission.id)}
-                    disabled={approving[submission.id]}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50"
-                  >
-                    <CheckCircle className="h-4 w-4" />
-                    {approving[submission.id] ? "Approving..." : "Approve"}
-                  </button>
-                  <button
-                    onClick={() => handleReject(submission.id)}
-                    disabled={rejecting[submission.id]}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50"
-                  >
-                    <XCircle className="h-4 w-4" />
-                    {rejecting[submission.id] ? "Rejecting..." : "Reject"}
-                  </button>
+                  {submission.status === "approved" ? (
+                    <button
+                      onClick={() => handleApprove(submission.id)}
+                      disabled={updating[submission.id]}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50"
+                    >
+                      <Edit2 className="h-4 w-4" />
+                      {updating[submission.id] ? "Updating..." : "Edit Points"}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleApprove(submission.id)}
+                        disabled={approving[submission.id]}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        {approving[submission.id] ? "Approving..." : "Approve"}
+                      </button>
+                      <button
+                        onClick={() => handleReject(submission.id)}
+                        disabled={rejecting[submission.id]}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50"
+                      >
+                        <XCircle className="h-4 w-4" />
+                        {rejecting[submission.id] ? "Rejecting..." : "Reject"}
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 {/* Status timestamp */}
@@ -295,35 +338,39 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
                 )}
               </div>
             </div>
-          </div>
-        ))}
+              </div>
+            ))}
 
-        {/* Loading more indicator */}
-        {isLoadingMore && (
-          <div className="flex justify-center py-8">
-            <Loader2 className="h-5 w-5 animate-spin text-[#5a5a40]" />
-          </div>
-        )}
+            {/* Loading more indicator */}
+            {isLoadingMore && (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-[#5a5a40]" />
+              </div>
+            )}
 
-        {/* Infinite scroll sentinel */}
-        {displayLimit < filteredSubmissions.length && (
-          <div ref={endRef} className="h-4" />
-        )}
+            {/* Infinite scroll sentinel */}
+            {displayLimit < filteredSubmissions.length && (
+              <div ref={endRef} className="h-4" />
+            )}
 
-        {/* End of submissions indicator */}
-        {displayLimit >= filteredSubmissions.length && filteredSubmissions.length > 0 && (
-          <div className="text-center py-8 text-[#8c8c82]">
-            <p className="text-xs">You've reviewed all {filteredSubmissions.length} submissions!</p>
+            {/* End of submissions indicator */}
+            {displayLimit >= filteredSubmissions.length && filteredSubmissions.length > 0 && (
+              <div className="text-center py-8 text-[#8c8c82]">
+                <p className="text-xs">You've reviewed all {filteredSubmissions.length} submissions!</p>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
 
       {/* Points Adjustment Tooltip */}
       {pointsModal?.visible && (
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4">
           <div className="bg-white rounded-xl p-4 shadow-lg border border-brand-border pointer-events-auto max-w-xs">
             <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-bold text-[#5a5a40]">Points to Award</label>
+              <label className="text-sm font-bold text-[#5a5a40]">
+                {pointsModal.isApproved ? "Adjust Points" : "Points to Award"}
+              </label>
               <button
                 onClick={() => setPointsModal(null)}
                 className="text-brand-muted hover:text-[#5a5a40] text-lg leading-none"
@@ -345,10 +392,14 @@ export const PhotoApprovalPanel: React.FC<PhotoApprovalPanelProps> = ({
               />
               <button
                 onClick={handleConfirmApprove}
-                disabled={approving[pointsModal.subId]}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold text-sm transition disabled:opacity-50 whitespace-nowrap"
+                disabled={approving[pointsModal.subId] || updating[pointsModal.subId]}
+                className={`px-4 py-2 text-white rounded-lg font-bold text-sm transition disabled:opacity-50 whitespace-nowrap ${
+                  pointsModal.isApproved
+                    ? "bg-blue-600 hover:bg-blue-700"
+                    : "bg-green-600 hover:bg-green-700"
+                }`}
               >
-                {approving[pointsModal.subId] ? "..." : "✓"}
+                {approving[pointsModal.subId] || updating[pointsModal.subId] ? "..." : "✓"}
               </button>
             </div>
           </div>

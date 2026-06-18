@@ -798,6 +798,73 @@ export async function manuallyApproveSubmission(
   }
 }
 
+export async function updateSubmissionPoints(
+  subId: string,
+  newPoints: number
+): Promise<Submission | null> {
+  try {
+    // Get current submission
+    const { data: sub, error: getErr } = await supabase!
+      .from("submissions")
+      .select("*")
+      .eq("id", subId)
+      .single();
+
+    if (getErr || !sub) return null;
+
+    // Only allow updating approved submissions
+    if (sub.status !== "approved") {
+      throw new Error("Can only update points for approved submissions");
+    }
+
+    const oldPoints = sub.points_awarded ?? 0;
+    const pointsDifference = newPoints - oldPoints;
+
+    // Update submission with new points
+    const { error: updateErr } = await supabase!
+      .from("submissions")
+      .update({ points_awarded: newPoints })
+      .eq("id", subId);
+
+    if (updateErr) throw updateErr;
+
+    // Update user's score with the difference
+    const { data: prof } = await supabase!
+      .from("profiles")
+      .select("score")
+      .eq("id", sub.user_id)
+      .single();
+
+    if (prof) {
+      const newScore = Math.max(0, (prof.score ?? 0) + pointsDifference);
+      await supabase!
+        .from("profiles")
+        .update({ score: newScore })
+        .eq("id", sub.user_id);
+    }
+
+    // Return updated submission
+    return {
+      id: sub.id,
+      userId: sub.user_id,
+      username: sub.username,
+      itemId: sub.item_id,
+      imageUrl: sub.image_url,
+      status: sub.status,
+      aiExplanation: sub.ai_explanation,
+      pointsAwarded: newPoints,
+      forcedApproval: sub.forced_approval,
+      createdAt: sub.created_at,
+      userLat: sub.user_lat,
+      userLng: sub.user_lng,
+      distanceMeters: sub.distance_meters
+    };
+  } catch (err) {
+    console.error("Supabase update submission points error:", err);
+    throw err;
+  }
+}
+
 export async function saveChatMessage(msg: ChatMessage): Promise<ChatMessage> {
   try {
     const row = {

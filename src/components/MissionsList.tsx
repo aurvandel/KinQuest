@@ -41,6 +41,7 @@ interface MissionsListProps {
   onDeleteMission?: (itemId: string) => Promise<void>;
   onEditMission?: (itemId: string, updates: Partial<ScavengerItem>) => Promise<void>;
   onShowCreateModal?: () => void;
+  onFocusMissionOnMap?: (itemId: string) => void;
 }
 
 export function MissionsList({
@@ -59,6 +60,7 @@ export function MissionsList({
   onDeleteMission,
   onEditMission,
   onShowCreateModal,
+  onFocusMissionOnMap,
   players
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -288,10 +290,22 @@ export function MissionsList({
                         +{item.points} PTS
                       </span>
                       {item.lat !== null && (
-                        <span className="text-[9px] bg-brand-beige text-brand-moss font-semibold px-2 py-0.5 rounded-md flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onFocusMissionOnMap?.(item.id);
+                          }}
+                          className={`text-[9px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-0.5 border transition ${
+                            prox.inRange
+                              ? "bg-green-100 text-green-700 border-green-200"
+                              : "bg-brand-beige text-brand-moss border-brand-border/40 hover:bg-brand-beige-light"
+                          }`}
+                          title="Open this mission on the map"
+                        >
                           <MapPin className="h-2.5 w-2.5 text-brand-moss" />
                           GPS Geofenced
-                        </span>
+                        </button>
                       )}
                     </div>
                     <h3

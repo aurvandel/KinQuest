@@ -28,6 +28,7 @@ import {
   submitHunterProof,
   deleteHunterSubmission,
   manuallyApproveSubmission,
+  updateSubmissionPoints,
   Submission,
   ScavengerItem,
   saveChatMessage,
@@ -908,6 +909,26 @@ app.post("/api/submissions/:subId/manual-approve", async (req, res) => {
     res.json({ success: true, submission: updated });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to update submission", details: err.message });
+  }
+});
+
+// 6.1b Update points for an already-approved submission (admin only)
+app.post("/api/submissions/:subId/update-points", async (req, res) => {
+  const { subId } = req.params;
+  const { points } = req.body;
+
+  if (points === undefined || typeof points !== "number" || points < 0) {
+    return res.status(400).json({ error: "Invalid points value" });
+  }
+
+  try {
+    const updated = await updateSubmissionPoints(subId, points);
+    if (!updated) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+    res.json({ success: true, submission: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to update submission points", details: err.message });
   }
 });
 

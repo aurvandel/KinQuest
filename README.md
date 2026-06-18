@@ -149,6 +149,39 @@ Key tables:
 - Missions are stored with creator ID for permission management
 - All API responses include error details for debugging
 
+## Internet Toggle For Tile Downloads
+
+If your KinQuest host has internet on `wlan0` but your local game network is on `eth0`, you can quickly enable/disable internet sharing for clients:
+
+```bash
+./scripts/toggle-internet.sh on eth0 wlan0
+./scripts/toggle-internet.sh status eth0 wlan0
+./scripts/toggle-internet.sh off eth0 wlan0
+```
+
+What this script does:
+- Enables/disables `net.ipv4.ip_forward`
+- Adds/removes `iptables` NAT (`MASQUERADE`) on the WAN interface
+- Adds/removes forwarding rules between LAN and WAN interfaces
+
+Notes:
+- It auto-elevates with `sudo` if needed.
+- Defaults are `eth0` (LAN) and `wlan0` (WAN), so `./scripts/toggle-internet.sh on` usually works.
+
+### Tile Upstream Reliability Tuning
+
+If you see repeated logs like `[TileCache] labels miss ... upstream unavailable`, tune these env vars for slower links:
+
+```env
+TILE_UPSTREAM_TIMEOUT_MS=5000
+TILE_UPSTREAM_RETRIES=1
+TILE_WARN_THROTTLE_MS=30000
+```
+
+- `TILE_UPSTREAM_TIMEOUT_MS`: Per-attempt timeout.
+- `TILE_UPSTREAM_RETRIES`: Additional retries after the first attempt.
+- `TILE_WARN_THROTTLE_MS`: Minimum interval between similar warning logs.
+
 ## Future Enhancements
 
 - Team-based competitions

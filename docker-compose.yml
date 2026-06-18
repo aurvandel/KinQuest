@@ -1,5 +1,5 @@
 services:
-  # ----------------------------------------------------
+    # ----------------------------------------------------
   # 1. KinQuest Node.js Application container
   # ----------------------------------------------------
   kinquest-app:
@@ -8,6 +8,12 @@ services:
       dockerfile: Dockerfile
     container_name: kinquest-app
     restart: always
+    dns:
+      - ${APP_DNS_SERVER_1:-}
+    dns_search:
+      - watkins.narcolepsy.ninja
+    extra_hosts:
+      - "watkins.narcolepsy.ninja:192.168.0.1"
     command:
       - sh
       - -c
@@ -17,36 +23,24 @@ services:
           sleep 1;
         done
         npm run start
-    ports:
-      - "${HTTP_PORT:-3000}:${HTTP_PORT:-3000}"
-      - "${HTTPS_PORT:-3443}:${HTTPS_PORT:-3443}"
+    # --- CHANGE 1: REMOVE PUBLIC PORTS & USE EXPOSE ---
+    expose:
+      - "${HTTP_PORT:-3000}"
     environment:
       - NODE_ENV=production
-      # Links automatically to the internal Kong API gateway
       - SUPABASE_URL=${SUPABASE_URL:-http://kong:8000}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
-      # Place your personal Gemini API key here for AI-powered verification
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      # Admin password for access control
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      # Image upload directory (inside container)
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - TILE_CACHE_DIR=${TILE_CACHE_DIR:-/app/tile-cache}
-      # HTTP/HTTPS mode and ports
-      - SERVER_PROTOCOL=${SERVER_PROTOCOL:-auto}
+      # Set to plain HTTP mode since Nginx handles the SSL decryption layer
+      - SERVER_PROTOCOL=http
       - HTTP_PORT=${HTTP_PORT:-3000}
-      - HTTPS_PORT=${HTTPS_PORT:-3443}
       - TILE_UPSTREAM_TIMEOUT_MS=${TILE_UPSTREAM_TIMEOUT_MS:-1000}
-      # Optional HTTPS cert/key paths (inside container)
-      - SSL_CERT_PATH=${SSL_CERT_PATH:-}
-      - SSL_KEY_PATH=${SSL_KEY_PATH:-}
-      - SSL_CA_PATH=${SSL_CA_PATH:-}
     volumes:
-      # Mount the uploads volume to persist images
       - ./uploads:/app/uploads
-      # Mount the tile cache volume to persist satellite map tiles (offline support)
       - ./tile-cache:/app/tile-cache
-      # Mount host certificates for optional HTTPS support
       - /etc/ssl:/etc/ssl:ro
     depends_on:
       kong:
@@ -68,7 +62,6 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      # Auto-run table creations, schema configurations and seeds on initial container birth
       - ./supabase/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - supabase-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -85,7 +78,6 @@ services:
     container_name: supabase-local-rest
     restart: always
     environment:
-      # Handshake connection to postgres database via our secure authenticator role
       - PGRST_DB_URI=postgres://authenticator:postgres-super-secure-authenticator-password@db:5432/postgres
       - PGRST_DB_SCHEMAS=public
       - PGRST_DB_ANON_ROLE=anon
@@ -110,6 +102,22 @@ services:
       - "8000:8000"
     depends_on:
       - rest
+
+  # ----------------------------------------------------
+  # CHANGE 2: THE NGINX REVERSE PROXY SHIELD
+  # ----------------------------------------------------
+  nginx_proxy:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - kinquest-app
 
 volumes:
   supabase-db-data:
