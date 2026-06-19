@@ -734,7 +734,6 @@ You MUST respond strictly in valid JSON matching this schema:
 
     let parsedResult = { isMatch: false, explanation: "Verification service timed out. Please try again.", confidence: 0, creativityScore: 0 };
     let rateLimited = false;
-    let isTimeout = false;
     
     try {
       const response = await ai.models.generateContent({
@@ -774,13 +773,11 @@ You MUST respond strictly in valid JSON matching this schema:
       if (isGeminiRateLimitError(aiErr)) {
         rateLimited = true;
         console.warn("⚠️ Gemini rate limit detected. Saving submission as pending for retry.");
-      } else if (aiErr?.code === "ECONNABORTED" || aiErr?.message?.includes("timeout")) {
-        isTimeout = true;
       }
       
-      // If rate limited or timeout, we'll save as pending for retry
-      // Otherwise, fall back to auto-approval
-      if (!rateLimited && !isTimeout) {
+      // Keep gameplay flowing when external AI is unreachable:
+      // queue only true rate-limits, otherwise gracefully approve.
+      if (!rateLimited) {
         parsedResult = {
           isMatch: true, // fallback to gracious approval in sandbox on live API congestion
           explanation: "The AI scanner experienced a connection hiccup, but because of your explorer spirit, the GPS referee verified your coordinates and approved your hunt!",
@@ -791,9 +788,9 @@ You MUST respond strictly in valid JSON matching this schema:
     }
 
 
-    // If rate limited or timeout: save as pending for server-side retry
-    if (rateLimited || isTimeout) {
-      const retryReason = rateLimited ? "rate_limit" : "timeout";
+    // If rate-limited: save as pending for server-side retry
+    if (rateLimited) {
+      const retryReason = "rate_limit";
       const pendingSubmission: Submission = {
         id: subId,
         userId: user.id,
@@ -1173,21 +1170,43 @@ Format your response as a professional production guide that a video editor or s
 
 Make it uplifting and celebratory, suitable for a family reunion event!`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: slideshowPrompt,
-            },
-          ],
-        },
-      ],
-    });
-
-    const script = response.text || "";
+    let script = "";
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: slideshowPrompt,
+              },
+            ],
+          },
+        ],
+      });
+      script = response.text || "";
+    } catch (aiErr: any) {
+      console.warn("Slideshow AI unavailable, using offline fallback script:", aiErr?.message || aiErr);
+      script = [
+        "KinQuest Offline Slideshow Guide",
+        "",
+        "Suggested flow:",
+        ...imageDescriptions.map((line, idx) => `${idx + 1}. ${line} - show for 3 seconds with a gentle fade transition.`),
+        "",
+        "Music suggestion:",
+        "- Use one upbeat acoustic family-friendly track around 95-110 BPM.",
+        "",
+        "Text overlays:",
+        "- Opening title: Family Scavenger Highlights",
+        "- Per slide: challenge title + photographer name",
+        "- Closing slide: Thanks for playing KinQuest",
+        "",
+        "Pacing:",
+        "- Keep total runtime around 30-60 seconds.",
+        "- Alternate wide shots and close-ups for variety.",
+      ].join("\n");
+    }
 
     // Save slideshow to database
     const slideshowId = `slideshow_${Date.now()}_${Math.floor(Math.random() * 1000)}`;

@@ -15,6 +15,8 @@ declare global {
     umami?: {
       track: (event: string, data?: Record<string, any>) => void;
     };
+    __kinquestUmamiInitialized?: boolean;
+    __kinquestUmamiOnlineListenerAdded?: boolean;
   }
 }
 
@@ -245,6 +247,11 @@ function initializeCustomPerformanceTracking(): void {
 }
 
 export function initializeUmami(): void {
+  // Avoid duplicate script injection if initializeUmami is called more than once.
+  if (window.__kinquestUmamiInitialized) {
+    return;
+  }
+
   const trackingEnabled = import.meta.env.VITE_UMAMI_TRACKING_ENABLED === 'true';
   const replayEnabled = import.meta.env.VITE_UMAMI_REPLAY_ENABLED === 'true';
   const performanceEnabled = import.meta.env.VITE_UMAMI_PERFORMANCE_ENABLED === 'true';
@@ -258,6 +265,22 @@ export function initializeUmami(): void {
     console.info('Umami: Tracking disabled (missing configuration)');
     return;
   }
+
+  // Auto-disable when internet is unavailable, then retry automatically on reconnect.
+  if (!navigator.onLine) {
+    console.info('Umami: Tracking disabled (offline)');
+
+    if (!window.__kinquestUmamiOnlineListenerAdded) {
+      window.__kinquestUmamiOnlineListenerAdded = true;
+      window.addEventListener('online', () => {
+        window.__kinquestUmamiOnlineListenerAdded = false;
+        initializeUmami();
+      }, { once: true });
+    }
+    return;
+  }
+
+  window.__kinquestUmamiInitialized = true;
 
   // Initialize tracking script
   if (trackingEnabled) {

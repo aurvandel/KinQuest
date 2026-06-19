@@ -1,5 +1,6 @@
 import React from "react";
 import { Settings, Upload, Copy, Check, AlertCircle, Loader2, RotateCcw, QrCode, ExternalLink, HardDrive } from "lucide-react";
+import QRCode from "react-qr-code";
 import { AppSettings } from "../types";
 
 interface StorageInfo {
@@ -128,10 +129,6 @@ export function AdminSettingsModal({
 
   const inviteUrl = inviteCodeInput.trim() 
     ? `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(inviteCodeInput.trim().toLowerCase())}`
-    : "";
-
-  const qrCodeUrl = inviteCodeInput.trim()
-    ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(inviteUrl)}`
     : "";
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -514,15 +511,16 @@ export function AdminSettingsModal({
             )}
 
             {/* QR Code */}
-            {qrCodeUrl && (
+            {inviteUrl && (
               <div className="space-y-2 p-3 bg-emerald-50 rounded-2xl border border-emerald-100 flex flex-col items-center">
                 <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-widest self-start">Event Portal QR Code</span>
                 <div className="bg-white p-2.5 rounded-2xl border border-emerald-200 shadow-sm">
-                  <img
-                    src={qrCodeUrl}
-                    alt="Invite QR Code"
-                    className="w-40 h-40 object-contain"
-                    referrerPolicy="no-referrer"
+                  <QRCode
+                    value={inviteUrl}
+                    size={160}
+                    bgColor="#ffffff"
+                    fgColor="#064e3b"
+                    level="M"
                   />
                 </div>
                 <p className="text-[8px] text-center text-emerald-700 font-sans">

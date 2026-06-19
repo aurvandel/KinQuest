@@ -1,16 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import * as L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { ScavengerItem } from "../types";
 import { MapPin, Navigation, Compass, AlertCircle, Crosshair, HelpCircle, Star, Sparkles } from "lucide-react";
 
 const ADMIN_CACHE_LAYERS = ["original", "imagery", "labels"] as const;
 const TRANSPARENT_TILE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+H9kAAAAASUVORK5CYII=";
-
-// Explicit declaration for window with global L (Leaflet) loaded via CDN
-declare global {
-  interface Window {
-    L: any;
-  }
-}
 
 interface GameMapProps {
   items: ScavengerItem[];
@@ -63,143 +58,135 @@ export function GameMap({
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    // Wait until window.L is active
-    if (typeof window.L === "undefined") {
-      const interval = setInterval(() => {
-        if (typeof window.L !== "undefined") {
-          clearInterval(interval);
-          initializeLeaflet();
-        }
-      }, 200);
-      return () => clearInterval(interval);
+    // Construct map
+    const map = L.map(mapContainerRef.current, {
+      center: [currentLat, currentLng],
+      zoom: 14,
+      zoomControl: true,
+      scrollWheelZoom: true
+    });
+
+    const originalLayer = L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      maxZoom: 20,
+      tileSize: 256,
+      errorTileUrl: TRANSPARENT_TILE_DATA_URL
+    });
+    const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
+      attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
+      maxZoom: 17,
+      tileSize: 256,
+      errorTileUrl: TRANSPARENT_TILE_DATA_URL
+    });
+    const labelsLayer = L.tileLayer("/tiles/labels/{z}/{x}/{y}.png", {
+      attribution: 'Labels &copy; <a href="https://www.esri.com">Esri</a>',
+      maxZoom: 17,
+      tileSize: 256,
+      opacity: 1,
+      pane: "overlayPane",
+      errorTileUrl: TRANSPARENT_TILE_DATA_URL
+    });
+
+    if (mapMode === "satellite_labels") {
+      imageryLayer.addTo(map);
+      labelsLayer.addTo(map);
+      baseTileLayerRef.current = imageryLayer;
+      labelsTileLayerRef.current = labelsLayer;
+    } else if (mapMode === "original") {
+      originalLayer.addTo(map);
+      baseTileLayerRef.current = originalLayer;
+      labelsTileLayerRef.current = null;
+    } else {
+      baseTileLayerRef.current = null;
+      labelsTileLayerRef.current = null;
     }
 
-    initializeLeaflet();
+    // Create layers for item pins and visual radius circles
+    markersGroupRef.current = L.layerGroup().addTo(map);
+    circlesGroupRef.current = L.layerGroup().addTo(map);
 
-    function initializeLeaflet() {
-      if (!mapContainerRef.current) return;
-      const L = window.L;
+    // Create a blue animated visual pulsing icon for User's Location
+    const pulsarHtml = `
+      <div class="relative flex items-center justify-center">
+        <div class="absolute h-8 w-8 bg-amber-500 rounded-full animate-ping opacity-45"></div>
+        <div class="h-4 w-4 bg-amber-700 border-2 border-white rounded-full shadow-md flex items-center justify-center">
+          <div class="h-1.5 w-1.5 bg-white rounded-full"></div>
+        </div>
+      </div>
+    `;
 
-      // Construct map
-      const map = L.map(mapContainerRef.current, {
-        center: [currentLat, currentLng],
-        zoom: 14,
-        zoomControl: true,
-        scrollWheelZoom: true
-      });
+    const userIcon = L.divIcon({
+      html: pulsarHtml,
+      className: "custom-user-pulsar",
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
 
-      const originalLayer = L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 20,
-        tileSize: 256,
-        errorTileUrl: TRANSPARENT_TILE_DATA_URL
-      });
-      const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
-        attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
-        maxZoom: 17,
-        tileSize: 256,
-        errorTileUrl: TRANSPARENT_TILE_DATA_URL
-      });
-      const labelsLayer = L.tileLayer("/tiles/labels/{z}/{x}/{y}.png", {
-        attribution: 'Labels &copy; <a href="https://www.esri.com">Esri</a>',
-        maxZoom: 17,
-        tileSize: 256,
-        opacity: 1,
-        pane: "overlayPane",
-        errorTileUrl: TRANSPARENT_TILE_DATA_URL
-      });
+    userMarkerRef.current = L.marker([currentLat, currentLng], { icon: userIcon }).addTo(map);
 
-      if (mapMode === "satellite_labels") {
-        imageryLayer.addTo(map);
-        labelsLayer.addTo(map);
-        baseTileLayerRef.current = imageryLayer;
-        labelsTileLayerRef.current = labelsLayer;
-      } else if (mapMode === "original") {
-        originalLayer.addTo(map);
-        baseTileLayerRef.current = originalLayer;
-        labelsTileLayerRef.current = null;
-      } else {
-        baseTileLayerRef.current = null;
-        labelsTileLayerRef.current = null;
+    userMarkerRef.current.bindPopup(`
+      <div class="font-sans text-xs p-1">
+        <p class="font-bold text-amber-800 flex items-center gap-1">
+          <span class="inline-block h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+          Your Active Location
+        </p>
+        <p class="text-[10px] text-gray-500 font-mono mt-0.5">Lat: ${currentLat.toFixed(5)}<br>Lng: ${currentLng.toFixed(5)}</p>
+        <p class="text-[10px] text-amber-700 italic font-semibold mt-1">💡 Click anywhere on map to simulate moving your GPS location here!</p>
+      </div>
+    `);
+
+    // Bind Map click to Geolocation emulator coordinates
+    map.on("click", (e: any) => {
+      const { lat, lng } = e.latlng;
+      if (onSimulateCoordinates) {
+        onSimulateCoordinates(lat, lng);
       }
+    });
 
-      // Create layers for item pins and visual radius circles
-      markersGroupRef.current = L.layerGroup().addTo(map);
-      circlesGroupRef.current = L.layerGroup().addTo(map);
+    // Bind Map double-click to create mission at location
+    map.on("dblclick", (e: any) => {
+      const { lat, lng } = e.latlng;
+      if (onCreateMissionFromMap) {
+        onCreateMissionFromMap(lat, lng);
+      }
+    });
 
-      // Create a blue animated visual pulsing icon for User's Location
-      const pulsarHtml = `
-        <div class="relative flex items-center justify-center">
-          <div class="absolute h-8 w-8 bg-amber-500 rounded-full animate-ping opacity-45"></div>
-          <div class="h-4 w-4 bg-amber-700 border-2 border-white rounded-full shadow-md flex items-center justify-center">
-            <div class="h-1.5 w-1.5 bg-white rounded-full"></div>
-          </div>
-        </div>
-      `;
+    // Track long-tap for mobile (750ms hold)
+    let touchStartTime = 0;
+    let touchCoords = { lat: 0, lng: 0 };
 
-      const userIcon = L.divIcon({
-        html: pulsarHtml,
-        className: "custom-user-pulsar",
-        iconSize: [32, 32],
-        iconAnchor: [16, 16]
-      });
+    map.on("touchstart", (e: any) => {
+      touchStartTime = Date.now();
+      if (e.latlng) {
+        touchCoords = e.latlng;
+      }
+    });
 
-      userMarkerRef.current = L.marker([currentLat, currentLng], { icon: userIcon }).addTo(map);
+    map.on("touchend", () => {
+      const touchDuration = Date.now() - touchStartTime;
+      if (touchDuration > 750 && onCreateMissionFromMap) {
+        onCreateMissionFromMap(touchCoords.lat, touchCoords.lng);
+      }
+    });
 
-      userMarkerRef.current.bindPopup(`
-        <div class="font-sans text-xs p-1">
-          <p class="font-bold text-amber-800 flex items-center gap-1">
-            <span class="inline-block h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-            Your Active Location
-          </p>
-          <p class="text-[10px] text-gray-500 font-mono mt-0.5">Lat: ${currentLat.toFixed(5)}<br>Lng: ${currentLng.toFixed(5)}</p>
-          <p class="text-[10px] text-amber-700 italic font-semibold mt-1">💡 Click anywhere on map to simulate moving your GPS location here!</p>
-        </div>
-      `);
+    mapRef.current = map;
+    setMapLoaded(true);
 
-      // Bind Map click to Geolocation emulator coordinates
-      map.on("click", (e: any) => {
-        const { lat, lng } = e.latlng;
-        if (onSimulateCoordinates) {
-          onSimulateCoordinates(lat, lng);
-        }
-      });
-
-      // Bind Map double-click to create mission at location
-      map.on("dblclick", (e: any) => {
-        const { lat, lng } = e.latlng;
-        if (onCreateMissionFromMap) {
-          onCreateMissionFromMap(lat, lng);
-        }
-      });
-
-      // Track long-tap for mobile (750ms hold)
-      let touchStartTime = 0;
-      let touchCoords = { lat: 0, lng: 0 };
-      
-      map.on("touchstart", (e: any) => {
-        touchStartTime = Date.now();
-        if (e.latlng) {
-          touchCoords = e.latlng;
-        }
-      });
-
-      map.on("touchend", () => {
-        const touchDuration = Date.now() - touchStartTime;
-        if (touchDuration > 750 && onCreateMissionFromMap) {
-          onCreateMissionFromMap(touchCoords.lat, touchCoords.lng);
-        }
-      });
-
-      mapRef.current = map;
-      setMapLoaded(true);
-    }
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      userMarkerRef.current = null;
+      markersGroupRef.current = null;
+      circlesGroupRef.current = null;
+      baseTileLayerRef.current = null;
+      labelsTileLayerRef.current = null;
+      setMapLoaded(false);
+    };
   }, []);
 
   // Update base map style when admin changes map mode
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
-    const L = window.L;
     const map = mapRef.current;
 
     if (baseTileLayerRef.current) {
@@ -248,7 +235,6 @@ export function GameMap({
   // Update User position markers in real-time on movement
   useEffect(() => {
     if (!mapLoaded || !mapRef.current || !userMarkerRef.current) return;
-    const L = window.L;
 
     userMarkerRef.current.setLatLng([currentLat, currentLng]);
     userMarkerRef.current.getPopup().setContent(`
@@ -265,11 +251,10 @@ export function GameMap({
 
   // Admin-only background prefetch so both map styles are cached for visited areas.
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current || !isAdmin || typeof window.L === "undefined") return;
+    if (!mapLoaded || !mapRef.current || !isAdmin) return;
     if (mapMode !== "original" && mapMode !== "satellite_labels") return;
 
     const map = mapRef.current;
-    const L = window.L;
 
     const schedulePrefetch = () => {
       if (adminPrefetchFrameRef.current !== null) {
@@ -333,7 +318,6 @@ export function GameMap({
   // Render Challenge pins and geofence circles in real-time
   useEffect(() => {
     if (!mapLoaded || !mapRef.current || !markersGroupRef.current || !circlesGroupRef.current) return;
-    const L = window.L;
 
     // Clear old layers
     markersGroupRef.current.clearLayers();
