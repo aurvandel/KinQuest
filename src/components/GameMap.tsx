@@ -43,9 +43,6 @@ export function GameMap({
   const adminPrefetchedTilesRef = useRef<Set<string>>(new Set());
   const adminPrefetchFrameRef = useRef<number | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
-  const [jumpLatInput, setJumpLatInput] = useState("");
-  const [jumpLngInput, setJumpLngInput] = useState("");
-  const [jumpError, setJumpError] = useState<string | null>(null);
 
   // Default coordinate center (reunion site)
   const defaultLat = 38.80071;
@@ -461,25 +458,6 @@ export function GameMap({
     }
   };
 
-  const handleJumpToCoordinates = () => {
-    if (!mapRef.current) return;
-    setJumpError(null);
-
-    const lat = Number(jumpLatInput);
-    const lng = Number(jumpLngInput);
-
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
-      setJumpError("Enter valid latitude and longitude values.");
-      return;
-    }
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      setJumpError("Latitude must be -90 to 90 and longitude must be -180 to 180.");
-      return;
-    }
-
-    mapRef.current.setView([lat, lng], 16, { animate: true });
-  };
-
   return (
     <div className="bg-white border border-brand-border rounded-[28px] overflow-hidden shadow-sm flex flex-col h-[520px]">
       <div className="bg-brand-beige-light px-5 py-4 border-b border-brand-border flex items-center justify-between">
@@ -513,34 +491,6 @@ export function GameMap({
             <Crosshair className="h-4 w-4" />
           </button>
         </div>
-      </div>
-
-      <div className="px-5 py-3 border-b border-brand-border bg-white flex flex-wrap items-center gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-muted">Jump to GPS</span>
-        <input
-          type="number"
-          step="any"
-          placeholder="Latitude"
-          value={jumpLatInput}
-          onChange={(e) => setJumpLatInput(e.target.value)}
-          className="w-32 text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-lg px-2.5 py-1.5 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
-        />
-        <input
-          type="number"
-          step="any"
-          placeholder="Longitude"
-          value={jumpLngInput}
-          onChange={(e) => setJumpLngInput(e.target.value)}
-          className="w-36 text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-lg px-2.5 py-1.5 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
-        />
-        <button
-          type="button"
-          onClick={handleJumpToCoordinates}
-          className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-brand-moss text-white hover:bg-brand-moss-dark transition"
-        >
-          Go
-        </button>
-        {jumpError && <span className="text-[10px] text-red-600">{jumpError}</span>}
       </div>
 
       {/* Map iframe mockup / Leaflet div container */}
