@@ -69,7 +69,7 @@ export default function App() {
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [adminNameInput, setAdminNameInput] = useState("");
   const [adminIconInput, setAdminIconInput] = useState<string | null>(null);
-  const [adminMapModeInput, setAdminMapModeInput] = useState<"original" | "satellite_labels">("original");
+  const [adminMapModeInput, setAdminMapModeInput] = useState<"original" | "satellite_labels" | "missions_only" | "disabled">("original");
   const [adminLatInput, setAdminLatInput] = useState(41.9076);
   const [adminLngInput, setAdminLngInput] = useState(-111.3800);
   const [adminRadiusInput, setAdminRadiusInput] = useState(200);
@@ -229,6 +229,12 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatusText, setSyncStatusText] = useState("All submissions synced ✓");
 
+  const effectiveMapMode =
+    settings.mapMode === "satellite_labels" || settings.mapMode === "missions_only" || settings.mapMode === "disabled"
+      ? settings.mapMode
+      : "original";
+  const isMapDisabled = effectiveMapMode === "disabled";
+
   const buildQueueStatusText = (pendingCount: number, syncing: boolean) => {
     if (syncing) {
       return `Syncing ${pendingCount} pending submission${pendingCount !== 1 ? "s" : ""}...`;
@@ -363,11 +369,45 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   }, [userMenuOpen]);
 
-  // Central Game State Synchronizer (Polling loop every 2.5 seconds for real-time dynamic feel!)
+  // Offline snapshot + connectivity state
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [snapshotAge, setSnapshotAge] = useState<number | null>(null); // ms since last good state
+  const consecutiveFailuresRef = useRef(0);
+
   useEffect(() => {
+    const goOnline = () => setIsOffline(false);
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  // Central Game State Synchronizer — adapts its poll interval based on connectivity
+  useEffect(() => {
+    const FAST_INTERVAL = 2500;
+    const SLOW_INTERVAL = 15000; // back off after repeated failures
+    const OFFLINE_INTERVAL = 30000; // minimal check when offline
+    const SNAPSHOT_KEY = "kinquest_game_snapshot";
+
     let intervalId: any;
 
     const fetchGameState = async () => {
+      // Skip fetch if clearly offline — just update banner age
+      if (!navigator.onLine) {
+        const raw = localStorage.getItem(SNAPSHOT_KEY);
+        if (raw) {
+          try {
+            const snap = JSON.parse(raw);
+            setSnapshotAge(Date.now() - snap.savedAt);
+          } catch {}
+        }
+        setDbError(true);
+        return;
+      }
+
       try {
         const res = await fetch("/api/game-state");
         if (res.ok) {
@@ -378,7 +418,12 @@ CREATE TABLE IF NOT EXISTS submissions (
           if (data.settings) {
             setSettings(data.settings);
           }
-          setDbError(false); // Clear error on success
+          setDbError(false);
+          setSnapshotAge(null);
+          consecutiveFailuresRef.current = 0;
+
+          // Persist snapshot for offline fallback
+          localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
 
           // Sync active user profile score dynamically
           const cachedUid = localStorage.getItem("scavenger_uid");
@@ -388,22 +433,49 @@ CREATE TABLE IF NOT EXISTS submissions (
               setProfile(serverProfile);
               localStorage.setItem("scavenger_user", JSON.stringify(serverProfile));
             } else {
-              // Server wiped user data (e.g. during restart), need to re-register
               console.warn("Local profile was not found in server state database. Resetting auth.");
               handleSignOut();
             }
           }
         } else {
-          setDbError(true); // Set error on failed request
+          throw new Error(`HTTP ${res.status}`);
         }
       } catch (err) {
         console.error("Polling game state failed:", err);
-        setDbError(true); // Set error on network failure
+        consecutiveFailuresRef.current += 1;
+        setDbError(true);
+
+        // Hydrate from snapshot if we have one and haven't shown it yet
+        const raw = localStorage.getItem(SNAPSHOT_KEY);
+        if (raw) {
+          try {
+            const snap = JSON.parse(raw);
+            if (consecutiveFailuresRef.current === 1) {
+              // Only hydrate once — don't thrash state on every failure
+              setPlayers(snap.users || []);
+              setItems((snap.items || []).filter((item: ScavengerItem) => !pendingDeleteIds.current.has(item.id)));
+              setSubmissions(snap.submissions || []);
+              if (snap.settings) setSettings(snap.settings);
+            }
+            setSnapshotAge(Date.now() - snap.savedAt);
+          } catch {}
+        }
       }
+
+      // Reschedule at adaptive interval
+      const failures = consecutiveFailuresRef.current;
+      const nextInterval = !navigator.onLine
+        ? OFFLINE_INTERVAL
+        : failures >= 3
+          ? SLOW_INTERVAL
+          : FAST_INTERVAL;
+
+      clearInterval(intervalId);
+      intervalId = setInterval(fetchGameState, nextInterval);
     };
 
     fetchGameState();
-    intervalId = setInterval(fetchGameState, 2500);
+    intervalId = setInterval(fetchGameState, FAST_INTERVAL);
 
     return () => clearInterval(intervalId);
   }, []);
@@ -563,6 +635,34 @@ CREATE TABLE IF NOT EXISTS submissions (
     activeTabRef.current = activeTab;
   }, [activeTab]);
 
+  // Chat offline outbox — flush pending messages when socket becomes ready
+  const CHAT_OUTBOX_KEY = "kinquest_chat_outbox";
+
+  const saveChatOutbox = (msgs: ChatMessage[]) => {
+    try { localStorage.setItem(CHAT_OUTBOX_KEY, JSON.stringify(msgs)); } catch {}
+  };
+
+  const loadChatOutbox = (): ChatMessage[] => {
+    try { return JSON.parse(localStorage.getItem(CHAT_OUTBOX_KEY) || "[]"); } catch { return []; }
+  };
+
+  const flushChatOutbox = (ws: WebSocket) => {
+    const outbox = loadChatOutbox();
+    if (outbox.length === 0) return;
+    const remaining: ChatMessage[] = [];
+    for (const msg of outbox) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "send_message", userId: msg.senderId, username: msg.senderName, receiverId: msg.receiverId ?? null, text: msg.text, clientId: msg.id }));
+      } else {
+        remaining.push(msg);
+      }
+    }
+    saveChatOutbox(remaining);
+    if (outbox.length > remaining.length) {
+      console.log(`[ChatOutbox] Flushed ${outbox.length - remaining.length} queued message(s)`);
+    }
+  };
+
   const handleSendMessage = (text: string, receiverId: string | null) => {
     console.log("handleSendMessage called:", { text, receiverId, hasProfile: !!profile, socketState: socket?.readyState, onLine: navigator.onLine });
     
@@ -571,66 +671,63 @@ CREATE TABLE IF NOT EXISTS submissions (
       return;
     }
 
-    // Try online path first
-    if (navigator.onLine && socket && socket.readyState === WebSocket.OPEN) {
-      const message = {
-        type: "send_message",
-        userId: profile.id,
-        username: profile.username,
-        receiverId,
-        text
-      };
-      
-      console.log("📤 Sending message via WebSocket:", message);
-      socket.send(JSON.stringify(message));
-      return;
-    }
-
-    // Offline path: try mesh network
-    if (!navigator.onLine && meshEnabled && connectedPeers.length > 0) {
+    // Offline path: try mesh network first, then outbox
+    if (!navigator.onLine || !socket || socket.readyState !== WebSocket.OPEN) {
       const messagePayload: ChatMessage = {
-        id: `msg_${Date.now()}`,
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         senderId: profile.id,
         senderName: profile.username,
-        text: text,
+        text,
         receiverId: receiverId || null,
         createdAt: new Date().toISOString(),
         isRead: true
       };
 
-      try {
-        sendMeshMessage(
-          "chat",
-          messagePayload,
-          receiverId || undefined
-        );
-        // Add to local state immediately
-        setChatMessages(prev => [...prev, messagePayload]);
-        console.log("📡 Message sent via mesh network");
-        return;
-      } catch (error) {
-        console.error("[Mesh] Failed to send message via mesh:", error);
+      // Try mesh peers first
+      if (meshEnabled && connectedPeers.length > 0) {
+        try {
+          sendMeshMessage("chat", messagePayload, receiverId || undefined);
+          setChatMessages(prev => [...prev, messagePayload]);
+          console.log("📡 Message sent via mesh network");
+          return;
+        } catch (error) {
+          console.error("[Mesh] Failed to send message via mesh:", error);
+        }
       }
+
+      // Queue to outbox for delivery when socket reconnects
+      const outbox = loadChatOutbox();
+      if (!outbox.some(m => m.id === messagePayload.id)) {
+        outbox.push(messagePayload);
+        saveChatOutbox(outbox);
+      }
+      // Show optimistically in local chat
+      setChatMessages(prev => prev.some(m => m.id === messagePayload.id) ? prev : [...prev, { ...messagePayload, text: `[queued] ${text}` }]);
+      console.warn("[ChatOutbox] No connection — message queued for later delivery");
+      return;
     }
 
-    // Fallback: retry later if socket not ready
-    if (!navigator.onLine) {
-      console.warn("You are offline and mesh network is not available. Message not sent.");
-      return;
-    }
+    // Flush any outbox items before sending new message
+    flushChatOutbox(socket);
 
-    if (!socket) {
-      console.warn("Socket not ready yet, will retry in 500ms");
-      setTimeout(() => handleSendMessage(text, receiverId), 500);
-      return;
-    }
-    
-    if (socket.readyState !== WebSocket.OPEN) {
-      console.warn("Socket not OPEN (state:", socket.readyState, "), will retry in 500ms");
-      setTimeout(() => handleSendMessage(text, receiverId), 500);
-      return;
-    }
+    // Send online
+    const message = {
+      type: "send_message",
+      userId: profile.id,
+      username: profile.username,
+      receiverId,
+      text
+    };
+    console.log("📤 Sending message via WebSocket:", message);
+    socket.send(JSON.stringify(message));
   };
+
+  // Flush outbox whenever socket opens
+  useEffect(() => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      flushChatOutbox(socket);
+    }
+  }, [socket?.readyState]);
 
   // Admin action handlers for chat moderation
   const handleDeleteMessage = async (messageId: string) => {
@@ -697,7 +794,11 @@ CREATE TABLE IF NOT EXISTS submissions (
       // Only initialize when opening, not on every settings change
       setAdminNameInput(settings.name);
       setAdminIconInput(settings.icon);
-      setAdminMapModeInput(settings.mapMode === "satellite_labels" ? "satellite_labels" : "original");
+      setAdminMapModeInput(
+        settings.mapMode === "satellite_labels" || settings.mapMode === "missions_only" || settings.mapMode === "disabled"
+          ? settings.mapMode
+          : "original"
+      );
       setAdminLatInput(settings.defaultLat ?? 41.9076);
       setAdminLngInput(settings.defaultLng ?? -111.3800);
       setAdminRadiusInput(settings.defaultRadius ?? 200);
@@ -1415,9 +1516,18 @@ CREATE TABLE IF NOT EXISTS submissions (
   };
 
   const handleFocusMissionOnMap = (itemId: string) => {
+    if (isMapDisabled) {
+      return;
+    }
     setSelectedMapItemId(itemId);
     setActiveTab("map");
   };
+
+  useEffect(() => {
+    if (isMapDisabled && activeTab === "map") {
+      setActiveTab("missions");
+    }
+  }, [activeTab, isMapDisabled]);
 
   // Map clicks link directly to challenge cards and expands them!
   const handleSelectChallengeFromMap = (itemId: string) => {
@@ -1681,33 +1791,65 @@ CREATE TABLE IF NOT EXISTS submissions (
                 <span className="text-xs sm:hidden font-black font-mono">{onlinePlayers.length}</span>
               </div>
 
-              {/* Sync Status Badge - clickable to trigger manual sync */}
-              <button
-                onClick={handleManualSync}
-                disabled={isSyncing}
-                type="button"
-                className={`px-2 sm:px-3 py-1.5 rounded-xl flex items-center gap-1 sm:gap-1.5 shadow-sm whitespace-nowrap transition cursor-pointer font-bold text-xs sm:text-xs ${
-                  pendingSubmissions.length > 0
-                    ? "bg-amber-500/20 text-amber-700 hover:bg-amber-500/30 border border-amber-200/50"
-                    : "bg-green-500/20 text-green-700 border border-green-200/50"
-                } disabled:opacity-50`}
-                title={pendingSubmissions.length > 0 ? "Click to sync pending submissions" : "All submissions synced"}
-              >
-                {isSyncing ? (
-                  <Loader2 className="h-3.5 sm:h-4 w-3.5 sm:w-4 animate-spin flex-shrink-0" />
-                ) : pendingSubmissions.length > 0 ? (
-                  <>
-                    <RotateCcw className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">{pendingSubmissions.length}</span>
-                    <span className="sm:hidden font-black">{pendingSubmissions.length}</span>
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">Synced</span>
-                  </>
-                )}
-              </button>
+              {/* Sync Status Badge - clickable to trigger manual sync, hover for diagnostics */}
+              <div className="relative group">
+                <button
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  type="button"
+                  className={`px-2 sm:px-3 py-1.5 rounded-xl flex items-center gap-1 sm:gap-1.5 shadow-sm whitespace-nowrap transition cursor-pointer font-bold text-xs sm:text-xs ${
+                    pendingSubmissions.filter(s => s.status === "failed").length > 0
+                      ? "bg-red-500/20 text-red-700 hover:bg-red-500/30 border border-red-200/50"
+                      : pendingSubmissions.length > 0
+                        ? "bg-amber-500/20 text-amber-700 hover:bg-amber-500/30 border border-amber-200/50"
+                        : "bg-green-500/20 text-green-700 border border-green-200/50"
+                  } disabled:opacity-50`}
+                  title="Click to sync pending submissions"
+                >
+                  {isSyncing ? (
+                    <Loader2 className="h-3.5 sm:h-4 w-3.5 sm:w-4 animate-spin flex-shrink-0" />
+                  ) : pendingSubmissions.length > 0 ? (
+                    <>
+                      <RotateCcw className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">{pendingSubmissions.length}</span>
+                      <span className="sm:hidden font-black">{pendingSubmissions.length}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 sm:h-4 w-3.5 sm:w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Synced</span>
+                    </>
+                  )}
+                </button>
+                {/* Diagnostics tooltip on hover */}
+                <div className="absolute bottom-full mb-2 right-0 bg-[#2d2d2d] text-white px-3 py-2.5 rounded-lg text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition z-50 shadow-lg min-w-[180px]">
+                  <p className="font-bold mb-1.5">Submission Queue</p>
+                  <div className="space-y-0.5 text-[10px] font-mono">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-amber-300">Queued</span>
+                      <span>{pendingSubmissions.filter(s => s.status === "queued").length}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-blue-300">Syncing</span>
+                      <span>{pendingSubmissions.filter(s => s.status === "syncing").length}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-red-300">Failed</span>
+                      <span>{pendingSubmissions.filter(s => s.status === "failed").length}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-green-300">Synced</span>
+                      <span>{pendingSubmissions.filter(s => s.status === "synced").length}</span>
+                    </div>
+                  </div>
+                  {pendingSubmissions.length > 0 && (
+                    <p className="mt-1.5 text-[10px] opacity-70">Oldest: {Math.floor(
+                      Math.max(0, ...pendingSubmissions.map(s => Date.now() - new Date(s.createdAt).getTime())) / 60000
+                    )}m ago</p>
+                  )}
+                  <p className="mt-1 text-[10px] opacity-60">Click to force sync</p>
+                </div>
+              </div>
 
               {/* Database Status Indicator Icon - only visible if there's an error */}
               {dbError && (
@@ -1838,18 +1980,20 @@ CREATE TABLE IF NOT EXISTS submissions (
               </span>
             )}
           </button>
-          <button
-            onClick={() => setActiveTab("map")}
-            className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
-              activeTab === "map"
-                ? "bg-[#5a5a40] text-white shadow-sm"
-                : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
-            }`}
-            title="View live map"
-          >
-            <MapIcon className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
-            <span className="hidden sm:inline">Map</span>
-          </button>
+          {!isMapDisabled && (
+            <button
+              onClick={() => setActiveTab("map")}
+              className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
+                activeTab === "map"
+                  ? "bg-[#5a5a40] text-white shadow-sm"
+                  : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
+              }`}
+              title="View live map"
+            >
+              <MapIcon className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
+              <span className="hidden sm:inline">Map</span>
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("leaderboard")}
             className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 ${
@@ -2140,6 +2284,20 @@ CREATE TABLE IF NOT EXISTS submissions (
           </span>
         </div>
 
+        {/* Offline / Snapshot Banner */}
+        {(isOffline || snapshotAge !== null) && (
+          <div className={`mx-4 mb-3 px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+            isOffline
+              ? "bg-amber-100 text-amber-800 border border-amber-200"
+              : "bg-blue-50 text-blue-800 border border-blue-200"
+          }`}>
+            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+            {isOffline
+              ? `You are offline. Showing last known game state${snapshotAge !== null ? ` (${Math.floor(snapshotAge / 60000)}m ago)` : ""}.`
+              : `Reconnecting… showing snapshot from ${Math.floor((snapshotAge ?? 0) / 60000)}m ago.`}
+          </div>
+        )}
+
         {/* Dynamic Panel Renders */}
         <div className="pt-2">
           {activeTab === "missions" && (
@@ -2159,7 +2317,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               onDeleteMission={handleDeleteMission}
               onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
-              onFocusMissionOnMap={handleFocusMissionOnMap}
+              onFocusMissionOnMap={isMapDisabled ? undefined : handleFocusMissionOnMap}
               players={players}
             />
           )}
@@ -2170,7 +2328,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               userLat={userLat}
               userLng={userLng}
               isAdmin={profile?.role === "admin"}
-              mapMode={settings.mapMode === "satellite_labels" ? "satellite_labels" : "original"}
+              mapMode={effectiveMapMode === "missions_only" ? "missions_only" : effectiveMapMode === "satellite_labels" ? "satellite_labels" : "original"}
               selectedItemId={selectedMapItemId}
               onSelectChallenge={handleSelectChallengeFromMap}
               onSimulateCoordinates={handleSimulateCoordinates}

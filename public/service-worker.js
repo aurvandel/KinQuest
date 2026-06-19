@@ -1,8 +1,9 @@
-const CACHE_VERSION = 'kinquest-v1';
+const CACHE_VERSION = 'kinquest-v3';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 const IMAGE_CACHE = `${CACHE_VERSION}-images`;
 const API_CACHE = `${CACHE_VERSION}-api`;
+const TILE_CACHE = 'kinquest-map-tiles';
 
 const STATIC_ASSETS = [
   '/',
@@ -38,7 +39,8 @@ self.addEventListener('activate', (event) => {
             cacheName !== STATIC_CACHE &&
             cacheName !== DYNAMIC_CACHE &&
             cacheName !== IMAGE_CACHE &&
-            cacheName !== API_CACHE
+            cacheName !== API_CACHE &&
+            cacheName !== TILE_CACHE
           ) {
             console.log('[Service Worker] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
@@ -92,6 +94,35 @@ self.addEventListener('fetch', (event) => {
             });
           });
         })
+    );
+    return;
+  }
+
+  // Map tile requests - cache-first and persistent across app updates.
+  if (url.pathname.startsWith('/tiles/')) {
+    event.respondWith(
+      caches.open(TILE_CACHE).then((cache) => {
+        return cache.match(request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          return fetch(request).then((response) => {
+            if (!response || response.status !== 200 || response.type === 'error') {
+              return response;
+            }
+            const responseToCache = response.clone();
+            cache.put(request, responseToCache);
+            return response;
+          });
+        });
+      }).catch(() => {
+        return new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect fill="transparent" width="256" height="256"/></svg>',
+          {
+            headers: { 'Content-Type': 'image/svg+xml' }
+          }
+        );
+      })
     );
     return;
   }

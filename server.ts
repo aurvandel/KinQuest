@@ -219,10 +219,15 @@ app.post("/api/settings", (req, res) => {
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
+  const normalizedMapMode =
+    mapMode === "satellite_labels" || mapMode === "missions_only" || mapMode === "disabled"
+      ? mapMode
+      : "original";
+
   const updated: AppSettings = {
     name: name.trim(),
     icon: icon || null,
-    mapMode: mapMode === "satellite_labels" ? "satellite_labels" : "original",
+    mapMode: normalizedMapMode,
     defaultLat: defaultLat !== undefined ? Number(defaultLat) : undefined,
     defaultLng: defaultLng !== undefined ? Number(defaultLng) : undefined,
     defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : undefined,
@@ -1403,7 +1408,32 @@ const TILE_SOURCES = {
 } as const;
 type TileLayerName = keyof typeof TILE_SOURCES;
 const TILE_UPSTREAM_TIMEOUT_MS = Number(process.env.TILE_UPSTREAM_TIMEOUT_MS || 1800);
+const TILE_CACHE_MAX_AGE_SECONDS = 31536000; // 1 year
 const tileContentTypeCache = new Map<string, string>();
+const TRANSPARENT_TILE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+H9kAAAAASUVORK5CYII=",
+  "base64"
+);
+
+function getCurrentMapMode(): NonNullable<AppSettings["mapMode"]> {
+  const mode = getAppSettings().mapMode;
+  if (mode === "satellite_labels" || mode === "missions_only" || mode === "disabled") {
+    return mode;
+  }
+  return "original";
+}
+
+function isTileDownloadModeEnabled(): boolean {
+  const mode = getCurrentMapMode();
+  return mode === "original" || mode === "satellite_labels";
+}
+
+function sendGracefulEmptyTile(res: express.Response, reason: string): void {
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("X-Tile-Cache", reason);
+  res.status(200).send(TRANSPARENT_TILE_PNG);
+}
 
 // Reunion site center + pre-cache config
 const PRECACHE_LAT  = 38.80162;
@@ -1552,6 +1582,11 @@ async function fetchAndCacheTileForLayer(
 }
 
 async function preCacheReunionTiles(): Promise<void> {
+  if (!isTileDownloadModeEnabled()) {
+    console.log(`[TileCache] Skipping pre-cache because map mode is '${getCurrentMapMode()}'.`);
+    return;
+  }
+
   console.log(`[TileCache] Starting pre-cache for (${PRECACHE_LAT}, ${PRECACHE_LNG}) ±${PRECACHE_RADIUS_METERS}m zoom ${PRECACHE_MIN_ZOOM}-${PRECACHE_MAX_ZOOM}`);
   let total = 0;
   let downloaded = 0;
@@ -1584,6 +1619,11 @@ async function preCacheReunionTiles(): Promise<void> {
 
 // Tile proxy endpoint with explicit layer: serves from disk cache or fetches live and caches
 app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
+  const mapMode = getCurrentMapMode();
+  if (mapMode === "disabled") {
+    return res.status(503).json({ error: "Map functionality is disabled by admin settings" });
+  }
+
   const layer = req.params.layer as TileLayerName;
   if (layer !== "original" && layer !== "imagery" && layer !== "labels") {
     return res.status(400).json({ error: "Invalid tile layer" });
@@ -1612,7 +1652,7 @@ app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
   if (await fileExists(dataPath) && await fileExists(metaPath)) {
     const contentType = await getCachedTileContentType(dataPath, metaPath);
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=2592000, immutable"); // 30 days
+    res.setHeader("Cache-Control", `public, max-age=${TILE_CACHE_MAX_AGE_SECONDS}, immutable`);
     res.setHeader("X-Tile-Cache", "hit");
     return fs.createReadStream(dataPath).pipe(res);
   }
@@ -1623,17 +1663,21 @@ app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
     for (const legacyPath of legacyCandidates) {
       if (await fileExists(legacyPath)) {
         res.setHeader("Content-Type", guessTileContentType(legacyPath));
-        res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+        res.setHeader("Cache-Control", `public, max-age=${TILE_CACHE_MAX_AGE_SECONDS}, immutable`);
         res.setHeader("X-Tile-Cache", "legacy-hit");
         return fs.createReadStream(legacyPath).pipe(res);
       }
     }
   }
 
+  if (!isTileDownloadModeEnabled()) {
+    return sendGracefulEmptyTile(res, "map-mode-no-download");
+  }
+
   // Not cached — try to fetch live and cache for next time
   const tileResponse = await fetchTileFromUpstream(layer, z, x, y, TILE_UPSTREAM_TIMEOUT_MS);
   if (!tileResponse) {
-    return res.status(503).json({ error: "Tile unavailable offline" });
+    return sendGracefulEmptyTile(res, "miss-unavailable");
   }
 
   const { buffer, contentType } = tileResponse;
@@ -1643,7 +1687,7 @@ app.get("/tiles/:layer/:z/:x/:y", async (req, res) => {
   tileContentTypeCache.set(metaPath, contentType);
 
   res.setHeader("Content-Type", contentType);
-  res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+  res.setHeader("Cache-Control", `public, max-age=${TILE_CACHE_MAX_AGE_SECONDS}, immutable`);
   res.setHeader("X-Tile-Cache", "miss-fetch");
   return res.send(buffer);
 });
@@ -1657,6 +1701,10 @@ app.get("/tiles/:z/:x/:y", async (req, res) => {
 // Kick off tile pre-caching in the background after server starts
 // Wrapped in setTimeout so it doesn't block the event loop at startup
 setTimeout(() => {
+  if (!isTileDownloadModeEnabled()) {
+    console.log(`[TileCache] Startup pre-cache skipped for map mode '${getCurrentMapMode()}'.`);
+    return;
+  }
   preCacheReunionTiles().catch(err => console.error("[TileCache] Pre-cache error:", err));
 }, 5000);
 

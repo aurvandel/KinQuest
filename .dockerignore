@@ -1,0 +1,41 @@
+# Dependencies (reinstalled during build)
+node_modules/
+
+# Build output (generated during build)
+dist/
+
+# Tile cache - large map tiles, served separately or mounted as a volume
+tile-cache/
+
+# User uploads - should be mounted as a volume in production
+uploads/
+
+# Local database file - mounted as a volume in production
+db.json
+
+# Development/test files
+k6-tests/
+*.test.ts
+*.spec.ts
+
+# Git
+.git/
+.gitignore
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example

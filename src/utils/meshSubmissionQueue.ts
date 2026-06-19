@@ -135,8 +135,22 @@ export class MeshSubmissionQueue {
       this.saveToLocalStorage();
     }
 
+    // Register background sync so the service worker can flush when online
+    this.requestBackgroundSync();
+
     console.log(`[Queue] Added submission ${submission.id} to queue`);
     return submission;
+  }
+
+  /**
+   * Register a Background Sync tag so the service worker will retry when online
+   */
+  private requestBackgroundSync(): void {
+    if ("serviceWorker" in navigator && "SyncManager" in window) {
+      navigator.serviceWorker.ready
+        .then((registration) => (registration.sync as any).register("sync-submissions"))
+        .catch((err) => console.warn("[Queue] Background sync registration failed:", err));
+    }
   }
 
   /**

@@ -3,6 +3,7 @@ import { ScavengerItem } from "../types";
 import { MapPin, Navigation, Compass, AlertCircle, Crosshair, HelpCircle, Star, Sparkles } from "lucide-react";
 
 const ADMIN_CACHE_LAYERS = ["original", "imagery", "labels"] as const;
+const TRANSPARENT_TILE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+H9kAAAAASUVORK5CYII=";
 
 // Explicit declaration for window with global L (Leaflet) loaded via CDN
 declare global {
@@ -16,7 +17,7 @@ interface GameMapProps {
   userLat: number | null;
   userLng: number | null;
   isAdmin?: boolean;
-  mapMode: "original" | "satellite_labels";
+  mapMode: "original" | "satellite_labels" | "missions_only";
   selectedItemId?: string | null;
   onSelectChallenge?: (itemId: string) => void;
   onSimulateCoordinates?: (lat: number, lng: number) => void;
@@ -91,13 +92,13 @@ export function GameMap({
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
         maxZoom: 20,
         tileSize: 256,
-        errorTileUrl: ""
+        errorTileUrl: TRANSPARENT_TILE_DATA_URL
       });
       const imageryLayer = L.tileLayer("/tiles/imagery/{z}/{x}/{y}.png", {
         attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
         maxZoom: 17,
         tileSize: 256,
-        errorTileUrl: ""
+        errorTileUrl: TRANSPARENT_TILE_DATA_URL
       });
       const labelsLayer = L.tileLayer("/tiles/labels/{z}/{x}/{y}.png", {
         attribution: 'Labels &copy; <a href="https://www.esri.com">Esri</a>',
@@ -105,7 +106,7 @@ export function GameMap({
         tileSize: 256,
         opacity: 1,
         pane: "overlayPane",
-        errorTileUrl: ""
+        errorTileUrl: TRANSPARENT_TILE_DATA_URL
       });
 
       if (mapMode === "satellite_labels") {
@@ -113,9 +114,12 @@ export function GameMap({
         labelsLayer.addTo(map);
         baseTileLayerRef.current = imageryLayer;
         labelsTileLayerRef.current = labelsLayer;
-      } else {
+      } else if (mapMode === "original") {
         originalLayer.addTo(map);
         baseTileLayerRef.current = originalLayer;
+        labelsTileLayerRef.current = null;
+      } else {
+        baseTileLayerRef.current = null;
         labelsTileLayerRef.current = null;
       }
 
@@ -212,7 +216,7 @@ export function GameMap({
         attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
         maxZoom: 17,
         tileSize: 256,
-        errorTileUrl: ""
+        errorTileUrl: TRANSPARENT_TILE_DATA_URL
       });
       const labelsLayer = L.tileLayer("/tiles/labels/{z}/{x}/{y}.png", {
         attribution: 'Labels &copy; <a href="https://www.esri.com">Esri</a>',
@@ -220,21 +224,24 @@ export function GameMap({
         tileSize: 256,
         opacity: 1,
         pane: "overlayPane",
-        errorTileUrl: ""
+        errorTileUrl: TRANSPARENT_TILE_DATA_URL
       });
       imageryLayer.addTo(map);
       labelsLayer.addTo(map);
       baseTileLayerRef.current = imageryLayer;
       labelsTileLayerRef.current = labelsLayer;
-    } else {
+    } else if (mapMode === "original") {
       const originalLayer = L.tileLayer("/tiles/original/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
         maxZoom: 20,
         tileSize: 256,
-        errorTileUrl: ""
+        errorTileUrl: TRANSPARENT_TILE_DATA_URL
       });
       originalLayer.addTo(map);
       baseTileLayerRef.current = originalLayer;
+    } else {
+      baseTileLayerRef.current = null;
+      labelsTileLayerRef.current = null;
     }
   }, [mapMode, mapLoaded]);
 
@@ -259,6 +266,7 @@ export function GameMap({
   // Admin-only background prefetch so both map styles are cached for visited areas.
   useEffect(() => {
     if (!mapLoaded || !mapRef.current || !isAdmin || typeof window.L === "undefined") return;
+    if (mapMode !== "original" && mapMode !== "satellite_labels") return;
 
     const map = mapRef.current;
     const L = window.L;
@@ -320,7 +328,7 @@ export function GameMap({
         adminPrefetchFrameRef.current = null;
       }
     };
-  }, [isAdmin, mapLoaded]);
+  }, [isAdmin, mapLoaded, mapMode]);
 
   // Render Challenge pins and geofence circles in real-time
   useEffect(() => {
@@ -495,7 +503,11 @@ export function GameMap({
           <Compass className="h-5 w-5 text-brand-moss animate-pulse" />
           <div>
             <h3 className="text-sm font-serif font-bold italic text-brand-moss">Live Map</h3>
-            <p className="text-[10px] text-brand-muted">Double-click to create a mission, click for coordinates</p>
+            <p className="text-[10px] text-brand-muted">
+              {mapMode === "missions_only"
+                ? "Missions + GPS only mode (no tile downloads)"
+                : "Double-click to create a mission, click for coordinates"}
+            </p>
           </div>
         </div>
 

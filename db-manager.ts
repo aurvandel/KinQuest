@@ -1093,7 +1093,7 @@ export async function getAllSlideshows(): Promise<Slideshow[]> {
 export interface AppSettings {
   name: string;
   icon: string | null;
-  mapMode?: "original" | "satellite_labels";
+  mapMode?: "original" | "satellite_labels" | "missions_only" | "disabled";
   defaultLat?: number;
   defaultLng?: number;
   defaultRadius?: number;
@@ -1115,10 +1115,15 @@ export function getAppSettings(): AppSettings {
     if (fs.existsSync(SETTINGS_FILE)) {
       const content = fs.readFileSync(SETTINGS_FILE, "utf-8");
       const parsed = JSON.parse(content);
+      const rawMapMode = parsed.mapMode;
+      const parsedMapMode =
+        rawMapMode === "satellite_labels" || rawMapMode === "missions_only" || rawMapMode === "disabled"
+          ? rawMapMode
+          : "original";
       return {
         name: parsed.name || "KinQuest",
         icon: parsed.icon || "/kinquest_logo.png",
-        mapMode: parsed.mapMode === "satellite_labels" ? "satellite_labels" : "original",
+        mapMode: parsedMapMode,
         defaultLat: Number(parsed.defaultLat) || 41.9076,
         defaultLng: Number(parsed.defaultLng) || -111.3800,
         defaultRadius: Number(parsed.defaultRadius) || 200,

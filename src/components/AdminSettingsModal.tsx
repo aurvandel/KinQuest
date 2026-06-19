@@ -23,8 +23,8 @@ interface AdminSettingsModalProps {
   onNameChange: (value: string) => void;
   iconInput: string | null;
   onIconUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  mapModeInput: "original" | "satellite_labels";
-  onMapModeChange: (value: "original" | "satellite_labels") => void;
+  mapModeInput: "original" | "satellite_labels" | "missions_only" | "disabled";
+  onMapModeChange: (value: "original" | "satellite_labels" | "missions_only" | "disabled") => void;
   latInput: number;
   onLatChange: (value: number) => void;
   lngInput: number;
@@ -271,11 +271,13 @@ export function AdminSettingsModal({
               </label>
               <select
                 value={mapModeInput}
-                onChange={(e) => onMapModeChange(e.target.value as "original" | "satellite_labels")}
+                onChange={(e) => onMapModeChange(e.target.value as "original" | "satellite_labels" | "missions_only" | "disabled")}
                 className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2 outline-none font-mono focus:ring-1 focus:ring-[#5a5a40]"
               >
                 <option value="original">Original Map</option>
                 <option value="satellite_labels">Satellite + Labels</option>
+                <option value="missions_only">Missions + GPS Only (No Tiles)</option>
+                <option value="disabled">Map Disabled</option>
               </select>
               <p className="text-[9px] text-[#8c8c82]">Controls how all player devices render the map background.</p>
             </div>

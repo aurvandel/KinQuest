@@ -289,7 +289,7 @@ export function MissionsList({
                       <span className="text-[11px] font-bold text-brand-terracotta bg-brand-terracotta-light px-2 py-0.5 rounded-full font-mono">
                         +{item.points} PTS
                       </span>
-                      {item.lat !== null && (
+                      {item.lat !== null && onFocusMissionOnMap && (
                         <button
                           type="button"
                           onClick={(event) => {
