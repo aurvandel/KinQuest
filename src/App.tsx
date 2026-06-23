@@ -600,6 +600,67 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   }, [userMenuOpen]);
 
+  // Back button warning state
+  const [showBackWarning, setShowBackWarning] = useState(false);
+  const [hasPendingPhoto, setHasPendingPhoto] = useState(false);
+  // Ref so popstate handler always reads current values without stale closures
+  const backStateRef = useRef({
+    hasPendingPhoto: false,
+    showCreateMissionModal: false,
+    adminPanelOpen: false,
+    userDashboardOpen: false,
+    slideshowGeneratorOpen: false,
+  });
+  useEffect(() => {
+    backStateRef.current = {
+      hasPendingPhoto,
+      showCreateMissionModal,
+      adminPanelOpen,
+      userDashboardOpen,
+      slideshowGeneratorOpen,
+    };
+  }, [hasPendingPhoto, showCreateMissionModal, adminPanelOpen, userDashboardOpen, slideshowGeneratorOpen]);
+
+  // Push sentinel state once so back button has something to intercept
+  useEffect(() => {
+    history.pushState({ kinquestSentinel: true }, "");
+
+    const handlePopState = () => {
+      const s = backStateRef.current;
+      // Always re-push the sentinel so the next back press is also intercepted
+      history.pushState({ kinquestSentinel: true }, "");
+
+      if (s.hasPendingPhoto || s.showCreateMissionModal) {
+        // Data-loss risk — show explicit warning
+        setShowBackWarning(true);
+      } else if (s.adminPanelOpen) {
+        setAdminPanelOpen(false);
+      } else if (s.userDashboardOpen) {
+        setUserDashboardOpen(false);
+      } else if (s.slideshowGeneratorOpen) {
+        setSlideshowGeneratorOpen(false);
+        setSlideshowGeneratedScript(null);
+        setSlideshowError(null);
+      }
+      // If nothing is open we silently swallow the event — keeps users in the PWA
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Native browser/tab-close warning for actual data-loss scenarios
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (backStateRef.current.hasPendingPhoto || backStateRef.current.showCreateMissionModal) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
   // Offline snapshot + connectivity state
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [snapshotAge, setSnapshotAge] = useState<number | null>(null); // ms since last good state
@@ -2690,6 +2751,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
               onFocusMissionOnMap={isMapDisabled ? undefined : handleFocusMissionOnMap}
+              onPendingPhotoChange={setHasPendingPhoto}
               players={players}
             />
           )}
@@ -2800,6 +2862,49 @@ CREATE TABLE IF NOT EXISTS submissions (
         </button>
       )}
 
+      {/* Back Button Warning Modal */}
+      {showBackWarning && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#f5f5f0] rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4 border border-[#d2d2c8]">
+            <div className="flex items-start gap-3">
+              <div className="shrink-0 w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                <AlertCircle className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#2d2d2d] leading-tight">
+                  {hasPendingPhoto ? "Unsaved Photo" : "Unsaved Mission Draft"}
+                </h2>
+                <p className="text-sm text-[#6b6b5a] mt-1 leading-snug">
+                  {hasPendingPhoto
+                    ? "You have a photo selected that hasn't been submitted yet. Going back will discard it."
+                    : "You have an unsaved mission draft. Going back will discard your changes."}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setShowBackWarning(false)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-[#5a5a40] text-white text-sm font-bold hover:bg-[#4a4a32] active:scale-95 transition-all cursor-pointer"
+              >
+                Stay Here
+              </button>
+              <button
+                onClick={() => {
+                  setShowBackWarning(false);
+                  if (showCreateMissionModal) {
+                    setShowCreateMissionModal(false);
+                    setCreatingFromMap(false);
+                  }
+                  setHasPendingPhoto(false);
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl border border-[#d2d2c8] bg-white text-[#c27d56] text-sm font-bold hover:bg-red-50 hover:border-red-200 active:scale-95 transition-all cursor-pointer"
+              >
+                Discard &amp; Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

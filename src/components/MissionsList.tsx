@@ -42,6 +42,7 @@ interface MissionsListProps {
   onEditMission?: (itemId: string, updates: Partial<ScavengerItem>) => Promise<void>;
   onShowCreateModal?: () => void;
   onFocusMissionOnMap?: (itemId: string) => void;
+  onPendingPhotoChange?: (hasPending: boolean) => void;
 }
 
 export function MissionsList({
@@ -61,6 +62,7 @@ export function MissionsList({
   onEditMission,
   onShowCreateModal,
   onFocusMissionOnMap,
+  onPendingPhotoChange,
   players
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -118,7 +120,11 @@ export function MissionsList({
   };
 
   const handleImageSelected = (itemId: string, base64: string) => {
-    setTempImageMap((prev) => ({ ...prev, [itemId]: base64 }));
+    setTempImageMap((prev) => {
+      const next = { ...prev, [itemId]: base64 };
+      onPendingPhotoChange?.(Object.keys(next).length > 0);
+      return next;
+    });
   };
 
   const handleTriggerUpload = async (itemId: string) => {
@@ -128,6 +134,7 @@ export function MissionsList({
     setTempImageMap((prev) => {
       const copy = { ...prev };
       delete copy[itemId];
+      onPendingPhotoChange?.(Object.keys(copy).length > 0);
       return copy;
     });
     setExpandedItemId(null);
