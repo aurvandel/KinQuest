@@ -46,6 +46,13 @@ export interface AdminSessionStore {
   lastModified: string;
 }
 
+function cleanupExpiredSessions(store: AdminSessionStore): void {
+  const now = Date.now();
+  store.sessions = store.sessions.filter(
+    (session) => new Date(session.expiresAt).getTime() > now
+  );
+}
+
 /**
  * Load admin sessions from storage
  */
@@ -324,12 +331,10 @@ export function getPasswordAuditLog(): {
  */
 export function createAdminSession(): AdminSession {
   const store = loadSessionStore();
-  
+
   // Remove expired sessions
   const now = new Date();
-  store.sessions = store.sessions.filter(session => 
-    new Date(session.expiresAt).getTime() > now.getTime()
-  );
+  cleanupExpiredSessions(store);
   
   // Check if we've hit max concurrent sessions
   if (store.sessions.length >= MAX_CONCURRENT_SESSIONS) {
@@ -360,16 +365,49 @@ export function createAdminSession(): AdminSession {
  */
 export function updateAdminSessionActivity(sessionId: string): boolean {
   const store = loadSessionStore();
-  const session = store.sessions.find(s => s.id === sessionId);
+  cleanupExpiredSessions(store);
+  const session = store.sessions.find((s) => s.id === sessionId);
   
   if (!session) {
+    store.lastModified = new Date().toISOString();
+    saveSessionStore(store);
     return false;
   }
   
-  session.lastActivityAt = new Date().toISOString();
-  store.lastModified = new Date().toISOString();
+  const now = new Date();
+  session.lastActivityAt = now.toISOString();
+  session.expiresAt = new Date(now.getTime() + SESSION_TIMEOUT_MS).toISOString();
+  store.lastModified = now.toISOString();
   saveSessionStore(store);
   return true;
+}
+
+/**
+ * Validate whether a session exists and is still active.
+ */
+export function hasActiveAdminSession(sessionId: string): boolean {
+  const store = loadSessionStore();
+  cleanupExpiredSessions(store);
+  const found = store.sessions.some((session) => session.id === sessionId);
+  store.lastModified = new Date().toISOString();
+  saveSessionStore(store);
+  return found;
+}
+
+/**
+ * Reuse an existing valid session when available, otherwise create a new one.
+ */
+export function createOrReuseAdminSession(existingSessionId?: string): AdminSession {
+  if (existingSessionId && updateAdminSessionActivity(existingSessionId)) {
+    const store = loadSessionStore();
+    cleanupExpiredSessions(store);
+    const existing = store.sessions.find((session) => session.id === existingSessionId);
+    if (existing) {
+      return existing;
+    }
+  }
+
+  return createAdminSession();
 }
 
 /**
@@ -377,6 +415,7 @@ export function updateAdminSessionActivity(sessionId: string): boolean {
  */
 export function endAdminSession(sessionId: string): boolean {
   const store = loadSessionStore();
+  cleanupExpiredSessions(store);
   const index = store.sessions.findIndex(s => s.id === sessionId);
   
   if (index === -1) {
@@ -396,10 +435,10 @@ export function endAdminSession(sessionId: string): boolean {
  */
 export function getActiveSessionsCount(): number {
   const store = loadSessionStore();
-  const now = new Date();
-  return store.sessions.filter(session => 
-    new Date(session.expiresAt).getTime() > now.getTime()
-  ).length;
+  cleanupExpiredSessions(store);
+  store.lastModified = new Date().toISOString();
+  saveSessionStore(store);
+  return store.sessions.length;
 }
 
 /**

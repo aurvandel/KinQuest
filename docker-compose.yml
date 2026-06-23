@@ -33,11 +33,10 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - TILE_CACHE_DIR=${TILE_CACHE_DIR:-/app/tile-cache}
-      - SERVER_PROTOCOL=${SERVER_PROTOCOL:-auto}
+      - SERVER_PROTOCOL=http
       - HTTP_PORT=${HTTP_PORT:-3000}
-      - HTTPS_PORT=${HTTPS_PORT:-3443}
-      - SSL_CERT_PATH=${SSL_CERT_PATH:-}
-      - SSL_KEY_PATH=${SSL_KEY_PATH:-}
+      - SSL_CERT_PATH=
+      - SSL_KEY_PATH=
       - APP_URL=${APP_URL:-}
       - TILE_UPSTREAM_TIMEOUT_MS=${TILE_UPSTREAM_TIMEOUT_MS:-1000}
     volumes:

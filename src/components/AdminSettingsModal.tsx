@@ -69,6 +69,9 @@ interface AdminSettingsModalProps {
   passwordChangeSuccess?: boolean;
   passwordChangeError?: string | null;
   onSubmitPasswordChange?: (e: React.FormEvent) => void;
+  adminSessionId?: string | null;
+  adminActiveSessions?: number;
+  adminCurrentSessionActive?: boolean;
 }
 
 export function AdminSettingsModal({
@@ -123,7 +126,10 @@ export function AdminSettingsModal({
   onConfirmPasswordChange,
   passwordChangeSuccess = false,
   passwordChangeError = null,
-  onSubmitPasswordChange
+  onSubmitPasswordChange,
+  adminSessionId = null,
+  adminActiveSessions = 0,
+  adminCurrentSessionActive = false
 }: AdminSettingsModalProps) {
   if (!isOpen) return null;
 
@@ -533,6 +539,28 @@ export function AdminSettingsModal({
           {/* Admin Password Change Section */}
           <div className="space-y-2 pt-4 border-t border-[#e5e5dd]">
             <h3 className="text-xs font-bold text-[#5a5a40] uppercase tracking-wider">🔐 Security</h3>
+
+            <div className="space-y-2 p-3 bg-amber-50 rounded-2xl border border-amber-100">
+              <p className="text-[9px] text-amber-700 font-semibold">Admin Session Debug</p>
+              <div className="text-[10px] font-mono text-amber-900 space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span>Active Sessions:</span>
+                  <span className="font-bold">{adminActiveSessions}/2</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span>Current Session:</span>
+                  <span className={`font-bold ${adminCurrentSessionActive ? "text-emerald-700" : "text-red-700"}`}>
+                    {adminCurrentSessionActive ? "active" : "inactive"}
+                  </span>
+                </div>
+                <div className="pt-1 border-t border-amber-200/60">
+                  <p className="text-[9px] text-amber-700 mb-1">Session ID</p>
+                  <p className="break-all text-[9px] bg-white border border-amber-200 rounded px-2 py-1">
+                    {adminSessionId || "none"}
+                  </p>
+                </div>
+              </div>
+            </div>
             
             <div className="space-y-2 p-3 bg-blue-50 rounded-2xl border border-blue-100">
               <p className="text-[9px] text-blue-700 font-semibold">Change Admin Password</p>

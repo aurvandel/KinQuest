@@ -47,7 +47,21 @@ import {
   saveAppSettings,
   AppSettings
 } from "./db-manager";
-import { hasActiveAdminPassword, verifyAdminPassword, createAdminSession, getActiveSessionsCount, changeAdminPassword } from "./password-manager";
+import {
+  hasActiveAdminPassword,
+  verifyAdminPassword,
+  createOrReuseAdminSession,
+  getActiveSessionsCount,
+  changeAdminPassword,
+  updateAdminSessionActivity,
+  endAdminSession
+} from "./password-manager";
+import {
+  createOrReuseUserSession,
+  refreshUserSession,
+  endUserSession,
+  hasActiveUserSession
+} from "./session-manager";
 
 dotenv.config();
 
@@ -290,6 +304,16 @@ app.get("/api/storage-info", async (req, res) => {
 
 // 2. Fetch live integrated state of play
 app.get("/api/game-state", async (req, res) => {
+  const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : null;
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+
+  if (sessionId && userId) {
+    const validSession = hasActiveUserSession(sessionId, userId);
+    if (!validSession) {
+      return res.status(401).json({ error: "Session expired or invalid" });
+    }
+  }
+
   try {
     const db = await getAppState();
     res.json({
@@ -305,7 +329,7 @@ app.get("/api/game-state", async (req, res) => {
 
 // 3. Authenticate / register callsing profile
 app.post("/api/auth/admin-verify", (req, res) => {
-  const { password } = req.body;
+  const { password, existingSessionId } = req.body;
   if (!password || typeof password !== "string") {
     return res.status(400).json({ error: "Admin password is required" });
   }
@@ -333,8 +357,17 @@ app.post("/api/auth/admin-verify", (req, res) => {
 
   // Password verified - create a new session
   try {
-    const session = createAdminSession();
-    res.json({ success: true, passwordConfigured: true, sessionId: session.id });
+    const session = createOrReuseAdminSession(
+      typeof existingSessionId === "string" && existingSessionId.trim().length > 0
+        ? existingSessionId.trim()
+        : undefined
+    );
+    res.json({
+      success: true,
+      passwordConfigured: true,
+      sessionId: session.id,
+      activeSessions: getActiveSessionsCount()
+    });
   } catch (err: any) {
     // Session limit reached
     const activeSessions = getActiveSessionsCount();
@@ -344,6 +377,76 @@ app.post("/api/auth/admin-verify", (req, res) => {
       maxSessions: 2
     });
   }
+});
+
+// Refresh admin session activity (sliding expiration)
+app.post("/api/auth/admin-session/refresh", (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId || typeof sessionId !== "string") {
+    return res.status(400).json({ error: "sessionId is required" });
+  }
+
+  const ok = updateAdminSessionActivity(sessionId);
+  if (!ok) {
+    return res.status(401).json({ error: "Admin session is invalid or expired" });
+  }
+
+  res.json({ success: true, sessionId, activeSessions: getActiveSessionsCount() });
+});
+
+// Explicitly terminate an admin session
+app.post("/api/auth/admin-session/logout", (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId || typeof sessionId !== "string") {
+    return res.status(400).json({ error: "sessionId is required" });
+  }
+
+  endAdminSession(sessionId);
+  res.json({ success: true, activeSessions: getActiveSessionsCount() });
+});
+
+app.get("/api/auth/admin-session/status", (req, res) => {
+  const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+  const currentSessionActive = sessionId ? updateAdminSessionActivity(sessionId) : false;
+
+  res.json({
+    activeSessions: getActiveSessionsCount(),
+    currentSessionId: sessionId || null,
+    currentSessionActive,
+    maxSessions: 2
+  });
+});
+
+app.post("/api/auth/session/refresh", (req, res) => {
+  const { sessionId, userId } = req.body;
+  if (!sessionId || typeof sessionId !== "string") {
+    return res.status(400).json({ error: "sessionId is required" });
+  }
+  if (!userId || typeof userId !== "string") {
+    return res.status(400).json({ error: "userId is required" });
+  }
+
+  const session = refreshUserSession(sessionId, userId);
+  if (!session) {
+    return res.status(401).json({ error: "User session is invalid or expired" });
+  }
+
+  res.json({
+    success: true,
+    sessionId: session.id,
+    userId: session.userId,
+    expiresAt: session.expiresAt
+  });
+});
+
+app.post("/api/auth/session/logout", (req, res) => {
+  const { sessionId, userId } = req.body;
+  if (!sessionId || typeof sessionId !== "string") {
+    return res.status(400).json({ error: "sessionId is required" });
+  }
+
+  endUserSession(sessionId, typeof userId === "string" ? userId : undefined);
+  res.json({ success: true });
 });
 
 // Change admin password endpoint
@@ -375,14 +478,28 @@ app.post("/api/admin/change-password", (req, res) => {
 });
 
 app.post("/api/auth/register", async (req, res) => {
-  const { username, role } = req.body;
+  const { username, role, existingSessionId } = req.body;
   if (!username || typeof username !== "string" || username.trim().length === 0) {
     return res.status(400).json({ error: "Username string is required" });
   }
 
   try {
     const user = await authRegisterPlayer(username.trim(), role);
-    res.json(user);
+    const normalizedRole = user.role === "admin" ? "admin" : "user";
+    const session = createOrReuseUserSession(
+      user.id,
+      normalizedRole,
+      typeof existingSessionId === "string" && existingSessionId.trim().length > 0
+        ? existingSessionId.trim()
+        : undefined
+    );
+
+    // Keep backwards compatibility by preserving user fields at top level.
+    res.json({
+      ...user,
+      sessionId: session.id,
+      sessionExpiresAt: session.expiresAt
+    });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to authenticate player profile", details: err.message });
   }
