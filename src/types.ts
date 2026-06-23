@@ -69,7 +69,7 @@ export interface Slideshow {
   description?: string;
   script: string;
   submissionIds: string[];
-  createdBy: string; // Admin user ID who generated it
+  createdBy?: string | null; // Admin user ID who generated it
   createdAt: string;
   isPublished: boolean;
 }

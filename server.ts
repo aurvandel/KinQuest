@@ -4,6 +4,8 @@ import http from "http";
 import https from "https";
 import fs from "fs";
 import { promises as fsp } from "fs";
+import os from "os";
+import { spawn } from "child_process";
 import { WebSocketServer } from "ws";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
@@ -42,6 +44,7 @@ import {
   saveSlideshow,
   getSlideshow,
   getAllSlideshows,
+  deleteSlideshow,
   Slideshow,
   getAppSettings,
   saveAppSettings,
@@ -146,6 +149,271 @@ function saveImageToDisk(base64Data: string, mimeType: string): { url: string; f
   } catch (error) {
     console.error("Image save error:", error);
     return null;
+  }
+}
+
+function sanitizeSlideshowId(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Promise<string | null> {
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+
+  // Fast path for local uploads.
+  if (imageUrl.startsWith("/api/uploads/")) {
+    const filename = imageUrl.slice("/api/uploads/".length);
+    const candidate = path.resolve(path.join(uploadsDir, filename));
+    const uploadsRoot = path.resolve(uploadsDir);
+    if (!candidate.startsWith(uploadsRoot)) return null;
+    if (!fs.existsSync(candidate)) return null;
+    return candidate;
+  }
+
+  // Support absolute local paths under uploads root.
+  if (imageUrl.startsWith("/")) {
+    const candidate = path.resolve(imageUrl);
+    const uploadsRoot = path.resolve(uploadsDir);
+    if (candidate.startsWith(uploadsRoot) && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Fallback: download external URL to temp file.
+  if (/^https?:\/\//i.test(imageUrl)) {
+    const response = await fetch(imageUrl);
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+    const filePath = path.join(tmpDir, `remote_${Date.now()}_${Math.floor(Math.random() * 10000)}.${ext}`);
+    const data = Buffer.from(await response.arrayBuffer());
+    await fsp.writeFile(filePath, data);
+    return filePath;
+  }
+
+  return null;
+}
+
+async function renderSlideshowMp4(
+  slideshowId: string,
+  slides: Array<{ imageUrl: string; overlayText?: string; durationSeconds?: number; transition?: string }>
+): Promise<{ outputPath: string; outputUrl: string }> {
+  if (!slides.length) {
+    throw new Error("No images available to render slideshow video");
+  }
+
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const videosDir = path.join(uploadsDir, "slideshows");
+  await fsp.mkdir(videosDir, { recursive: true });
+
+  const cleanId = sanitizeSlideshowId(slideshowId);
+  if (!cleanId) throw new Error("Invalid slideshow id");
+
+  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
+  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
+
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "kinquest-slideshow-"));
+
+  try {
+    const resolvedSlides: Array<{ imagePath: string; overlayText: string; durationSeconds: number; transition: string }> = [];
+    for (const slide of slides) {
+      const resolved = await resolveImagePathForRender(slide.imageUrl, tmpDir);
+      if (!resolved) continue;
+      resolvedSlides.push({
+        imagePath: resolved,
+        overlayText: String(slide.overlayText || "").trim(),
+        durationSeconds: Math.max(2, Math.min(Number(slide.durationSeconds) || 3, 8)),
+        transition: String(slide.transition || "fade").toLowerCase(),
+      });
+    }
+
+    if (!resolvedSlides.length) {
+      throw new Error("Could not resolve slideshow images for rendering");
+    }
+
+    const transitionSeconds = resolvedSlides.length > 1 ? 0.8 : 0;
+    const totalDurationSeconds = resolvedSlides.reduce((sum, s) => sum + s.durationSeconds, 0) + transitionSeconds;
+    const fadeOutStart = Math.max(totalDurationSeconds - 1.5, 0);
+
+    const ffmpegInputs: string[] = [];
+    resolvedSlides.forEach((slide) => {
+      const clipDurationSeconds = slide.durationSeconds + transitionSeconds;
+      ffmpegInputs.push("-loop", "1", "-t", String(clipDurationSeconds), "-i", slide.imagePath);
+    });
+
+    const scalePadFilter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1";
+    const videoLabelParts: string[] = [];
+
+    resolvedSlides.forEach((slide, idx) => {
+      const textFilePath = path.join(tmpDir, `overlay_${idx}.txt`);
+      fs.writeFileSync(textFilePath, slide.overlayText || "", "utf8");
+      const drawText = `drawtext=textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=36:line_spacing=8:borderw=2:bordercolor=black@0.55:x=(w-text_w)/2:y=h-110`;
+      videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},format=rgba[v${idx}]`);
+    });
+
+    let currentLabel = "v0";
+    let cumulativeOffset = resolvedSlides[0]?.durationSeconds || 0;
+    if (resolvedSlides.length > 1) {
+      for (let idx = 1; idx < resolvedSlides.length; idx += 1) {
+        const previous = currentLabel;
+        const next = `v${idx}`;
+        const output = `vx${idx}`;
+        const transitionName = [
+          "fade",
+          "wipeleft",
+          "wiperight",
+          "slideleft",
+          "slideright",
+          "circlecrop",
+          "smoothleft",
+          "smoothright"
+        ].includes(resolvedSlides[idx].transition)
+          ? resolvedSlides[idx].transition
+          : "fade";
+        videoLabelParts.push(`[${previous}][${next}]xfade=transition=${transitionName}:duration=${transitionSeconds}:offset=${cumulativeOffset}[${output}]`);
+        cumulativeOffset += resolvedSlides[idx].durationSeconds;
+        currentLabel = output;
+      }
+    }
+
+    const audioExpr = "0.03*sin(2*PI*220*t)+0.02*sin(2*PI*329.63*t)+0.015*sin(2*PI*440*t)";
+    const filterComplex = `${videoLabelParts.join(";")};[${currentLabel}]format=yuv420p[vfinal]`;
+
+    await new Promise<void>((resolve, reject) => {
+      const ffmpeg = spawn("ffmpeg", [
+        "-y",
+        ...ffmpegInputs,
+        "-f", "lavfi",
+        "-t", String(totalDurationSeconds),
+        "-i", `aevalsrc=${audioExpr}:s=44100`,
+        "-filter_complex", filterComplex,
+        "-map", "[vfinal]",
+        "-map", `${resolvedSlides.length}:a`,
+        "-shortest",
+        "-r", "30",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-b:a", "160k",
+        "-af", `afade=t=in:st=0:d=1.2,afade=t=out:st=${fadeOutStart}:d=1.5`,
+        "-pix_fmt", "yuv420p",
+        outputPath
+      ]);
+
+      let stderr = "";
+      ffmpeg.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+
+      ffmpeg.on("error", (err: any) => {
+        if (err?.code === "ENOENT") {
+          reject(new Error("FFmpeg is not installed on the server"));
+          return;
+        }
+        reject(err);
+      });
+
+      ffmpeg.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        reject(new Error(stderr.trim() || `FFmpeg exited with code ${code}`));
+      });
+    });
+
+    return { outputPath, outputUrl };
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function generateGeminiSlideshowPlan(
+  script: string,
+  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>
+): Promise<{
+  plan: {
+    slides: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>;
+  };
+  aiModel: string;
+  usedFallbackPlan: boolean;
+}> {
+  const defaultPlan = {
+    slides: sourceSlides.map((slide) => ({
+      submissionId: slide.submissionId,
+      overlayText: slide.missionDescription || slide.missionTitle,
+      durationSeconds: 3,
+      transition: "fade"
+    }))
+  };
+
+  try {
+    const prompt = [
+      "You are creating a machine-readable edit decision list for a family slideshow video.",
+      "Use the provided script to decide timing, order, overlay text, and transitions.",
+      "Return only entries for the provided submission IDs.",
+      "Keep total runtime between 20 and 120 seconds.",
+      "Durations must be 2-8 seconds.",
+      "Transitions allowed: fade, wipeleft, wiperight, slideleft, slideright, circlecrop, smoothleft, smoothright.",
+      "Prefer overlay text from mission descriptions.",
+      "",
+      "SCRIPT:",
+      script,
+      "",
+      "AVAILABLE SLIDES:",
+      ...sourceSlides.map((slide, idx) => `${idx + 1}. submissionId=${slide.submissionId} | title=${slide.missionTitle} | description=${slide.missionDescription} | username=${slide.username}`),
+    ].join("\n");
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            slides: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  submissionId: { type: Type.STRING },
+                  overlayText: { type: Type.STRING },
+                  durationSeconds: { type: Type.NUMBER },
+                  transition: { type: Type.STRING }
+                },
+                required: ["submissionId", "overlayText", "durationSeconds", "transition"]
+              }
+            }
+          },
+          required: ["slides"]
+        }
+      }
+    });
+
+    const parsed = JSON.parse((response.text || "{}").trim());
+    const slides = Array.isArray(parsed?.slides) ? parsed.slides : [];
+    const allowedIds = new Set(sourceSlides.map((s) => s.submissionId));
+
+    const sanitizedSlides = slides
+      .map((entry: any) => ({
+        submissionId: String(entry?.submissionId || "").trim(),
+        overlayText: String(entry?.overlayText || "").trim(),
+        durationSeconds: Math.max(2, Math.min(Number(entry?.durationSeconds) || 3, 8)),
+        transition: String(entry?.transition || "fade").trim().toLowerCase(),
+      }))
+      .filter((entry: any) => entry.submissionId && allowedIds.has(entry.submissionId));
+
+    if (!sanitizedSlides.length) {
+      return { plan: defaultPlan, aiModel: "fallback-offline", usedFallbackPlan: true };
+    }
+
+    return {
+      plan: { slides: sanitizedSlides },
+      aiModel: "gemini-2.0-flash",
+      usedFallbackPlan: false
+    };
+  } catch (err) {
+    console.warn("Gemini slideshow plan generation failed, using fallback plan:", err);
+    return { plan: defaultPlan, aiModel: "fallback-offline", usedFallbackPlan: true };
   }
 }
 
@@ -324,6 +592,45 @@ app.get("/api/game-state", async (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to gather app state", details: err.message });
+  }
+});
+
+// 2.5 Full game-data backup snapshot (admin only)
+app.get("/api/admin/backup", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+
+  if (!userId) {
+    return res.status(400).json({ error: "userId query parameter is required" });
+  }
+
+  try {
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can download a backup" });
+    }
+
+    const settings = getAppSettings();
+
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: requestingUser.username,
+      version: 1,
+      settings,
+      users: Object.values(state.users),
+      items: Object.values(state.items),
+      submissions: Object.values(state.submissions),
+      messages: state.messages,
+      slideshows: Object.values(state.slideshows),
+    };
+
+    const filename = `kinquest-backup-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.json`;
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(JSON.stringify(backup, null, 2));
+  } catch (err: any) {
+    console.error("Backup error:", err);
+    return res.status(500).json({ error: "Failed to generate backup", details: err?.message || "Unknown error" });
   }
 });
 
@@ -1246,7 +1553,7 @@ You MUST respond strictly in valid JSON matching this schema:
 // 6.5 Generate AI slideshow script with animations and music
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
-    const { submissions, createdBy, title } = req.body;
+    const { submissions, createdBy, title, promptTemplate, includeMissionNarration } = req.body;
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for slideshow generation" });
@@ -1256,38 +1563,75 @@ app.post("/api/slideshow/generate", async (req, res) => {
       return res.status(400).json({ error: "Admin user ID is required" });
     }
 
-    // Prepare image data for AI processing
-    const imageParts: any[] = [];
-    const imageDescriptions: string[] = [];
-
-    for (let i = 0; i < Math.min(submissions.length, 10); i++) {
-      const sub = submissions[i];
-      imageDescriptions.push(`${i + 1}. ${sub.title} (captured by ${sub.username})`);
+    const state = await getAppState();
+    const creatorProfile = state.users[createdBy];
+    if (!creatorProfile || creatorProfile.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can generate slideshows" });
     }
 
-    const submissionsList = imageDescriptions.join("\n");
+    // Group by mission title while preserving first-seen mission order.
+    const groupedByMission = new Map<string, Array<{ id: string; imageUrl: string; title: string; description?: string; username: string }>>();
+    const missionOrder: string[] = [];
 
-    // Create prompt for Gemini to generate slideshow script
-    const slideshowPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
+    for (const rawSub of submissions) {
+      const normalized = {
+        id: String(rawSub?.id || ""),
+        imageUrl: String(rawSub?.imageUrl || ""),
+        title: String(rawSub?.title || "Unknown Mission"),
+        description: rawSub?.description ? String(rawSub.description) : "",
+        username: String(rawSub?.username || "Unknown Player"),
+      };
 
-I have a collection of photos from a family scavenger hunt. Here are the photos:
-${submissionsList}
+      if (!groupedByMission.has(normalized.title)) {
+        groupedByMission.set(normalized.title, []);
+        missionOrder.push(normalized.title);
+      }
+      groupedByMission.get(normalized.title)!.push(normalized);
+    }
+
+    const groupedSections: string[] = [];
+    const orderedSubmissions: Array<{ id: string; imageUrl: string; title: string; description?: string; username: string }> = [];
+    missionOrder.forEach((missionTitle, missionIdx) => {
+      const missionSubs = groupedByMission.get(missionTitle) || [];
+      groupedSections.push(`Mission ${missionIdx + 1}: ${missionTitle}`);
+      missionSubs.forEach((sub, subIdx) => {
+        groupedSections.push(`  - Photo ${subIdx + 1}: captured by ${sub.username}${sub.description ? ` | mission description: ${sub.description}` : ""}`);
+        orderedSubmissions.push(sub);
+      });
+    });
+
+    const submissionsList = groupedSections.join("\n");
+
+    const defaultPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
+
+I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
+{{PHOTO_LIST}}
 
 Please generate a detailed slideshow script that includes:
 
-1. **Slideshow Structure**: Suggest the optimal order and timing for each photo (2-4 seconds per slide)
-2. **Transitions**: Recommend specific transitions for each photo (fade, slide, zoom, etc.)
-3. **Music Recommendations**: Suggest 2-3 background music tracks that would work well (specify genre, mood, and tempo)
-4. **Timing & Pacing**: Provide overall duration estimate and suggest 2-3 music songs that match the pace
-5. **Animation Effects**: Suggest subtle animations for text overlays (title, photographer name, etc.)
-6. **Color Grading**: Suggest any filters or color adjustments to maintain visual consistency
-7. **Voiceover Suggestions**: Optional brief commentary between sections to engage the audience
+1. **Mission Group Structure**: Keep photos grouped by mission while suggesting timing (2-4 seconds per slide)
+2. **Transitions**: Recommend transitions between slides and between mission groups
+3. **Music Recommendations**: Suggest 2-3 background music tracks that fit the full story arc
+4. **Timing & Pacing**: Provide duration estimate and pacing guidance by mission group
+5. **Animation Effects**: Suggest text overlay animations for mission title and photographer names
+6. **Color Grading**: Suggest filters or adjustments to maintain visual consistency
+7. **Voiceover Suggestions**: Optional brief commentary between mission groups
 
 Format your response as a professional production guide that a video editor or slideshow software operator could follow.
 
 Make it uplifting and celebratory, suitable for a family reunion event!`;
 
+    // Admin can edit prompt before generation. If token omitted, append grouped list safely.
+    const basePrompt = typeof promptTemplate === "string" && promptTemplate.trim().length > 0
+      ? promptTemplate.trim()
+      : defaultPrompt;
+    const slideshowPrompt = basePrompt.includes("{{PHOTO_LIST}}")
+      ? basePrompt.replace("{{PHOTO_LIST}}", submissionsList)
+      : `${basePrompt}\n\nMission-grouped photo list:\n${submissionsList}`;
+
     let script = "";
+    let usedAiModel = "fallback-offline";
+    let usedFallbackScript = false;
     try {
       const response = await ai.models.generateContent({
         model: "gemini-2.0-flash",
@@ -1303,25 +1647,100 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
         ],
       });
       script = response.text || "";
+      usedAiModel = "gemini-2.0-flash";
     } catch (aiErr: any) {
       console.warn("Slideshow AI unavailable, using offline fallback script:", aiErr?.message || aiErr);
+      usedFallbackScript = true;
       script = [
         "KinQuest Offline Slideshow Guide",
         "",
-        "Suggested flow:",
-        ...imageDescriptions.map((line, idx) => `${idx + 1}. ${line} - show for 3 seconds with a gentle fade transition.`),
+        "Suggested mission-group flow:",
+        ...missionOrder.flatMap((missionTitle) => {
+          const missionSubs = groupedByMission.get(missionTitle) || [];
+          return [
+            `Mission: ${missionTitle}`,
+            ...missionSubs.map((sub, idx) => `  ${idx + 1}. Photo by ${sub.username} - show for 3 seconds with a gentle fade transition.`),
+          ];
+        }),
         "",
         "Music suggestion:",
         "- Use one upbeat acoustic family-friendly track around 95-110 BPM.",
         "",
         "Text overlays:",
         "- Opening title: Family Scavenger Highlights",
-        "- Per slide: challenge title + photographer name",
+        "- Per slide: challenge description + photographer name",
         "- Closing slide: Thanks for playing KinQuest",
         "",
         "Pacing:",
         "- Keep total runtime around 30-60 seconds.",
         "- Alternate wide shots and close-ups for variety.",
+      ].join("\n");
+    }
+
+    let narrationGeneratedByAi = false;
+    if (includeMissionNarration === true && missionOrder.length > 0) {
+      let narratorOverlayMap: Record<string, string> = {};
+      try {
+        const narratorResponse = await ai.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: `Create short narrator overlay lines for each mission title below. Keep each line under 24 words and make it warm and story-driven for a family reunion slideshow.\n\nMission titles:\n${missionOrder.map((missionTitle, idx) => `${idx + 1}. ${missionTitle}`).join("\n")}`,
+                },
+              ],
+            },
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                overlays: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      missionTitle: { type: Type.STRING },
+                      narration: { type: Type.STRING },
+                    },
+                    required: ["missionTitle", "narration"],
+                  },
+                },
+              },
+              required: ["overlays"],
+            },
+          },
+        });
+
+        const parsed = JSON.parse((narratorResponse.text || "{}").trim());
+        const overlays = Array.isArray(parsed?.overlays) ? parsed.overlays : [];
+        overlays.forEach((entry: any) => {
+          const missionTitle = String(entry?.missionTitle || "").trim();
+          const narration = String(entry?.narration || "").trim();
+          if (missionTitle && narration) {
+            narratorOverlayMap[missionTitle] = narration;
+          }
+        });
+        narrationGeneratedByAi = true;
+      } catch (overlayErr: any) {
+        console.warn("Narrator overlay generation failed, using fallback lines:", overlayErr?.message || overlayErr);
+      }
+
+      missionOrder.forEach((missionTitle) => {
+        if (!narratorOverlayMap[missionTitle]) {
+          narratorOverlayMap[missionTitle] = `Now we move into ${missionTitle}, where this chapter of the family adventure unfolds.`;
+        }
+      });
+
+      script = [
+        script,
+        "",
+        "MISSION_NARRATOR_OVERLAYS_JSON_START",
+        JSON.stringify(narratorOverlayMap, null, 2),
+        "MISSION_NARRATOR_OVERLAYS_JSON_END",
       ].join("\n");
     }
 
@@ -1331,7 +1750,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       id: slideshowId,
       title: title || `Family Slideshow - ${new Date().toLocaleDateString()}`,
       script: script,
-      submissionIds: submissions.map((s: any) => s.id),
+      submissionIds: orderedSubmissions.map((s) => s.id),
       createdBy: createdBy,
       createdAt: new Date().toISOString(),
       isPublished: true,
@@ -1342,7 +1761,13 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
     res.json({
       success: true,
       slideshow: slideshow,
-      photoCount: submissions.length,
+      photoCount: orderedSubmissions.length,
+      generation: {
+        aiModel: usedAiModel,
+        usedFallbackScript,
+        narrationRequested: includeMissionNarration === true,
+        narrationGeneratedByAi
+      },
       generatedAt: new Date().toISOString(),
     });
   } catch (err: any) {
@@ -1351,6 +1776,225 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       error: "Failed to generate slideshow script",
       details: err.message || "AI service error",
     });
+  }
+});
+
+app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can render slideshow videos" });
+    }
+
+    const slideshow = await getSlideshow(id);
+    if (!slideshow) {
+      return res.status(404).json({ error: "Slideshow not found" });
+    }
+
+    const submissionById = new Map(Object.values(state.submissions).map((s) => [s.id, s]));
+    const itemById = new Map(Object.values(state.items).map((it) => [it.id, it]));
+    const slides = slideshow.submissionIds
+      .map((subId) => {
+        const submission = submissionById.get(subId);
+        if (!submission?.imageUrl) return null;
+        const item = itemById.get(submission.itemId);
+        return {
+          imageUrl: submission.imageUrl,
+          overlayText: item?.description || item?.title || "",
+        };
+      })
+      .filter((slide): slide is { imageUrl: string; overlayText: string } => Boolean(slide));
+
+    if (!slides.length) {
+      return res.status(400).json({ error: "No slideshow images available for rendering" });
+    }
+
+    const rendered = await renderSlideshowMp4(slideshow.id, slides);
+
+    return res.json({
+      success: true,
+      slideshowId: slideshow.id,
+      videoUrl: rendered.outputUrl,
+      imageCount: slides.length
+    });
+  } catch (err: any) {
+    console.error("Slideshow MP4 render error:", err);
+    const message = err?.message || "Failed to render slideshow MP4";
+    const status = message.includes("FFmpeg is not installed") ? 503 : 500;
+    return res.status(status).json({ error: "Failed to render slideshow MP4", details: message });
+  }
+});
+
+app.patch("/api/slideshows/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, title, description, script, isPublished } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can edit slideshows" });
+    }
+
+    const slideshow = await getSlideshow(id);
+    if (!slideshow) {
+      return res.status(404).json({ error: "Slideshow not found" });
+    }
+
+    const updated: Slideshow = {
+      ...slideshow,
+      title: title !== undefined ? String(title) : slideshow.title,
+      description: description !== undefined ? String(description) : slideshow.description,
+      script: script !== undefined ? String(script) : slideshow.script,
+      isPublished: isPublished !== undefined ? !!isPublished : slideshow.isPublished,
+    };
+
+    await saveSlideshow(updated);
+    return res.json({ success: true, slideshow: updated });
+  } catch (err: any) {
+    console.error("Slideshow update error:", err);
+    return res.status(500).json({ error: "Failed to update slideshow", details: err?.message || "Unknown error" });
+  }
+});
+
+app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, script } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can create Gemini slideshows" });
+    }
+
+    const slideshow = await getSlideshow(id);
+    if (!slideshow) {
+      return res.status(404).json({ error: "Slideshow not found" });
+    }
+
+    const submissionById = new Map(Object.values(state.submissions).map((s) => [s.id, s]));
+    const itemById = new Map(Object.values(state.items).map((it) => [it.id, it]));
+    const sourceSlides = slideshow.submissionIds
+      .map((subId) => {
+        const submission = submissionById.get(subId);
+        if (!submission?.imageUrl) return null;
+        const item = itemById.get(submission.itemId);
+        return {
+          submissionId: submission.id,
+          imageUrl: submission.imageUrl,
+          missionTitle: item?.title || "Unknown Mission",
+          missionDescription: item?.description || item?.title || "",
+          username: submission.username,
+        };
+      })
+      .filter((entry): entry is { submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string } => Boolean(entry));
+
+    if (!sourceSlides.length) {
+      return res.status(400).json({ error: "No slideshow images available for Gemini creation" });
+    }
+
+    const workingScript = typeof script === "string" && script.trim().length > 0 ? script : slideshow.script;
+    if (workingScript !== slideshow.script) {
+      await saveSlideshow({ ...slideshow, script: workingScript });
+    }
+
+    const planned = await generateGeminiSlideshowPlan(workingScript, sourceSlides);
+    const imageBySubmissionId = new Map(sourceSlides.map((s) => [s.submissionId, s]));
+
+    const renderSlides = planned.plan.slides
+      .map((planSlide) => {
+        const source = imageBySubmissionId.get(planSlide.submissionId);
+        if (!source) return null;
+        return {
+          imageUrl: source.imageUrl,
+          overlayText: planSlide.overlayText || source.missionDescription || source.missionTitle,
+          durationSeconds: planSlide.durationSeconds,
+          transition: planSlide.transition,
+        };
+      })
+      .filter((slide): slide is { imageUrl: string; overlayText: string; durationSeconds: number; transition: string } => Boolean(slide));
+
+    if (!renderSlides.length) {
+      return res.status(400).json({ error: "Gemini did not produce a valid slideshow plan" });
+    }
+
+    const rendered = await renderSlideshowMp4(slideshow.id, renderSlides);
+
+    return res.json({
+      success: true,
+      slideshowId: slideshow.id,
+      videoUrl: rendered.outputUrl,
+      imageCount: renderSlides.length,
+      generation: {
+        aiModel: planned.aiModel,
+        usedFallbackPlan: planned.usedFallbackPlan,
+      }
+    });
+  } catch (err: any) {
+    console.error("Gemini slideshow creation error:", err);
+    const message = err?.message || "Failed to create Gemini slideshow";
+    const status = message.includes("FFmpeg is not installed") ? 503 : 500;
+    return res.status(status).json({ error: "Failed to create Gemini slideshow", details: message });
+  }
+});
+
+app.get("/api/slideshows/video/:filename", (req, res) => {
+  const { filename } = req.params;
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const videosDir = path.join(uploadsDir, "slideshows");
+  const filePath = path.join(videosDir, filename);
+
+  const resolvedPath = path.resolve(filePath);
+  const resolvedVideosDir = path.resolve(videosDir);
+  if (!resolvedPath.startsWith(resolvedVideosDir)) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "Video not found" });
+  }
+
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return fs.createReadStream(filePath).pipe(res);
+});
+
+app.get("/api/slideshows/:id/video-status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const cleanId = sanitizeSlideshowId(id);
+    if (!cleanId) {
+      return res.status(400).json({ error: "Invalid slideshow id" });
+    }
+
+    const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+    const videosDir = path.join(uploadsDir, "slideshows");
+    const filePath = path.join(videosDir, `${cleanId}.mp4`);
+    const exists = fs.existsSync(filePath);
+
+    return res.json({
+      exists,
+      videoUrl: exists ? `/api/slideshows/video/${cleanId}.mp4` : null
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to check video status", details: err?.message || "Unknown error" });
   }
 });
 
@@ -1375,6 +2019,43 @@ app.get("/api/slideshows/:id", async (req, res) => {
     res.json(slideshow);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch slideshow", details: err.message });
+  }
+});
+
+app.delete("/api/slideshows/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can delete slideshows" });
+    }
+
+    const slideshow = await getSlideshow(id);
+    if (!slideshow) {
+      return res.status(404).json({ error: "Slideshow not found" });
+    }
+
+    await deleteSlideshow(id);
+
+    const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+    const videosDir = path.join(uploadsDir, "slideshows");
+    const cleanId = sanitizeSlideshowId(id);
+    if (cleanId) {
+      const videoPath = path.join(videosDir, `${cleanId}.mp4`);
+      await fsp.rm(videoPath, { force: true });
+    }
+
+    return res.json({ success: true, slideshowId: id });
+  } catch (err: any) {
+    console.error("Slideshow delete error:", err);
+    return res.status(500).json({ error: "Failed to delete slideshow", details: err?.message || "Unknown error" });
   }
 });
 
@@ -1875,6 +2556,10 @@ app.get("/api/uploads/:filename", (req, res) => {
 
   // Set cache headers for images (1 day cache since they're immutable by filename)
   res.setHeader("Cache-Control", "public, max-age=86400");
+  // CORS headers to prevent cross-origin blocking
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Content-Type", contentType);
   
   // Stream the file

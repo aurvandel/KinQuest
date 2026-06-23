@@ -5,31 +5,64 @@ import { X, Loader2, Sparkles, Download, Copy, Check } from "lucide-react";
 interface SlideshowGeneratorModalProps {
   isOpen: boolean;
   onClose: () => void;
+  adminUserId: string | null;
   submissions: Submission[];
   items: ScavengerItem[];
   isLoading: boolean;
   error: string | null;
   generatedScript: string | null;
   onScriptGenerated?: (script: string) => void;
+  onSlideshowCreated?: (slideshowId: string) => void;
 }
+
+const DEFAULT_SLIDESHOW_PROMPT = `You are an expert multimedia producer specializing in creating family reunion slideshows.
+
+I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
+{{PHOTO_LIST}}
+
+Please generate a detailed slideshow script that includes:
+
+1. Mission Group Structure: Keep photos grouped by mission and suggest timing (2-4 seconds per slide)
+2. Transitions: Recommend transitions for each slide and between mission groups
+3. Music Recommendations: Suggest 2-3 background music tracks that fit the full story arc
+4. Timing & Pacing: Provide total duration estimate and pacing guidance
+5. Animation Effects: Suggest subtle text overlay animations (mission title, photographer name, etc.)
+6. Color Grading: Suggest filters or adjustments for visual consistency
+7. Voiceover Suggestions: Optional short commentary between mission groups
+
+Format your response as a professional production guide. Keep it uplifting and celebratory for a family reunion event.`;
 
 export function SlideshowGeneratorModal({
   isOpen,
   onClose,
+  adminUserId,
   submissions,
   items,
   isLoading,
   error,
   generatedScript,
-  onScriptGenerated
+  onScriptGenerated,
+  onSlideshowCreated
 }: SlideshowGeneratorModalProps) {
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set());
   const [generatingScript, setGeneratingScript] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localScript, setLocalScript] = useState<string | null>(generatedScript);
+  const [promptTemplate, setPromptTemplate] = useState(DEFAULT_SLIDESHOW_PROMPT);
+  const [includeMissionNarration, setIncludeMissionNarration] = useState(false);
+  const [generationSource, setGenerationSource] = useState<string | null>(null);
 
   const approvedSubmissions = submissions.filter((sub) => sub.status === "approved");
+  const groupedApprovedSubmissions = approvedSubmissions.reduce((acc, sub) => {
+    const item = items.find((it) => it.id === sub.itemId);
+    const missionTitle = item?.title || "Unknown";
+    if (!acc[missionTitle]) {
+      acc[missionTitle] = [];
+    }
+    acc[missionTitle].push(sub);
+    return acc;
+  }, {} as Record<string, Submission[]>);
 
   const toggleSubmission = (subId: string) => {
     const updated = new Set(selectedSubmissionIds);
@@ -50,10 +83,11 @@ export function SlideshowGeneratorModal({
   };
 
   const handleGenerateSlideshow = async () => {
-    if (selectedSubmissionIds.size === 0) return;
+    if (selectedSubmissionIds.size === 0 || !adminUserId) return;
 
     setGeneratingScript(true);
     setLocalError(null);
+    setGenerationSource(null);
     try {
       const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
       const response = await fetch("/api/slideshow/generate", {
@@ -64,10 +98,13 @@ export function SlideshowGeneratorModal({
             id: sub.id,
             imageUrl: sub.imageUrl,
             title: items.find((it) => it.id === sub.itemId)?.title || "Unknown",
+            description: items.find((it) => it.id === sub.itemId)?.description || "",
             username: sub.username,
           })),
-          createdBy: "admin", // Will be set by parent component if available
+          createdBy: adminUserId,
           title: `Family Slideshow - ${new Date().toLocaleDateString()}`,
+          promptTemplate,
+          includeMissionNarration,
         }),
       });
 
@@ -78,8 +115,18 @@ export function SlideshowGeneratorModal({
 
       const data = await response.json();
       setLocalScript(data.slideshow.script);
+      if (data?.generation?.usedFallbackScript) {
+        setGenerationSource("Offline fallback script used (Gemini unavailable)");
+      } else if (data?.generation?.aiModel) {
+        setGenerationSource(`Generated with ${data.generation.aiModel}`);
+      } else {
+        setGenerationSource("Generated successfully");
+      }
       if (onScriptGenerated) {
         onScriptGenerated(data.slideshow.script);
+      }
+      if (onSlideshowCreated && data?.slideshow?.id) {
+        onSlideshowCreated(data.slideshow.id);
       }
     } catch (err: any) {
       console.error("Slideshow generation error:", err);
@@ -150,6 +197,35 @@ export function SlideshowGeneratorModal({
                 </p>
               </div>
 
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Gemini Prompt Template</label>
+                  <button
+                    type="button"
+                    onClick={() => setPromptTemplate(DEFAULT_SLIDESHOW_PROMPT)}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Reset Default
+                  </button>
+                </div>
+                <textarea
+                  value={promptTemplate}
+                  onChange={(e) => setPromptTemplate(e.target.value)}
+                  rows={8}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
+                />
+                <p className="text-[11px] text-gray-500">Use <span className="font-mono">{"{{PHOTO_LIST}}"}</span> where you want mission-grouped photo details inserted.</p>
+                <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={includeMissionNarration}
+                    onChange={(e) => setIncludeMissionNarration(e.target.checked)}
+                    className="w-4 h-4 accent-purple-500"
+                  />
+                  Include mission narrator overlays (AI will create a short story line for each mission group)
+                </label>
+              </div>
+
               {approvedSubmissions.length === 0 ? (
                 <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-500">
                   <p className="text-sm">No approved submissions available</p>
@@ -169,40 +245,42 @@ export function SlideshowGeneratorModal({
                     </span>
                   </label>
 
-                  {/* Submission List */}
-                  <div className="space-y-2 max-h-60 overflow-y-auto border border-gray-100 rounded-lg p-3">
-                    {approvedSubmissions.map((sub) => {
-                      const item = items.find((it) => it.id === sub.itemId);
-                      return (
-                        <label
-                          key={sub.id}
-                          className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedSubmissionIds.has(sub.id)}
-                            onChange={() => toggleSubmission(sub.id)}
-                            className="w-4 h-4 accent-purple-500"
-                          />
-                          <img
-                            src={sub.imageUrl}
-                            alt={item?.title}
-                            className="w-12 h-12 object-cover rounded-lg"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-800 truncate">{item?.title || "Unknown"}</p>
-                            <p className="text-xs text-gray-500">by {sub.username}</p>
-                          </div>
-                        </label>
-                      );
-                    })}
+                  {/* Submission List Grouped by Mission */}
+                  <div className="space-y-3 max-h-72 overflow-y-auto border border-gray-100 rounded-lg p-3">
+                    {Object.entries(groupedApprovedSubmissions).map(([missionTitle, missionSubs]) => (
+                      <div key={missionTitle} className="space-y-1.5">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{missionTitle} ({missionSubs.length})</p>
+                        {missionSubs.map((sub) => (
+                          <label
+                            key={sub.id}
+                            className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedSubmissionIds.has(sub.id)}
+                              onChange={() => toggleSubmission(sub.id)}
+                              className="w-4 h-4 accent-purple-500"
+                            />
+                            <img
+                              src={sub.imageUrl}
+                              alt={missionTitle}
+                              className="w-12 h-12 object-cover rounded-lg"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">{missionTitle}</p>
+                              <p className="text-xs text-gray-500">by {sub.username}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    ))}
                   </div>
 
                   {/* Generate Button */}
                   <button
                     onClick={handleGenerateSlideshow}
-                    disabled={selectedSubmissionIds.size === 0 || generatingScript}
+                    disabled={selectedSubmissionIds.size === 0 || generatingScript || !adminUserId}
                     className="w-full bg-purple-600 text-white font-bold py-3 rounded-xl hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
                   >
                     {generatingScript ? (
@@ -236,6 +314,11 @@ export function SlideshowGeneratorModal({
                 <p className="text-xs text-gray-500 mb-4">
                   This script includes animation suggestions, music recommendations, and timing guidance for your family reunion slideshow.
                 </p>
+                {generationSource && (
+                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 inline-block">
+                    {generationSource}
+                  </p>
+                )}
               </div>
 
               {/* Script Display */}
@@ -277,6 +360,7 @@ export function SlideshowGeneratorModal({
                 onClick={() => {
                   setLocalScript(null);
                   setSelectedSubmissionIds(new Set());
+                  setGenerationSource(null);
                 }}
                 className="w-full text-gray-700 font-medium py-2 hover:bg-gray-100 rounded-lg transition"
               >

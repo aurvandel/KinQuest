@@ -11,3 +11,5 @@ data/
 tile-cache/
 nginx/certs/wildcard_.narcolepsy.ninja.crt
 nginx/certs/wildcard_.narcolepsy.ninja.key
+uploads copy/
+updates.md

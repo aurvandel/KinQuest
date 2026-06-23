@@ -136,6 +136,7 @@ export default function App() {
   const [slideshowGenerating, setSlideshowGenerating] = useState(false);
   const [slideshowGeneratedScript, setSlideshowGeneratedScript] = useState<string | null>(null);
   const [slideshowError, setSlideshowError] = useState<string | null>(null);
+  const [slideshowRefreshKey, setSlideshowRefreshKey] = useState(0);
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
   const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
@@ -2399,10 +2400,10 @@ CREATE TABLE IF NOT EXISTS submissions (
                 ? "bg-[#5a5a40] text-white shadow-sm"
                 : "text-brand-muted hover:text-brand-dark hover:bg-white/50"
             }`}
-            title="AI slideshows"
+            title="Slide Shows"
           >
             <Film className="h-4 sm:h-5 w-4 sm:w-5 flex-shrink-0" />
-            <span className="hidden sm:inline">Scripts</span>
+            <span className="hidden sm:inline">Slide Shows</span>
           </button>
           {profile?.role === "admin" && (
             <>
@@ -2613,6 +2614,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               setSlideshowGeneratedScript(null);
               setSlideshowError(null);
             }}
+            adminUserId={profile?.id || null}
             submissions={submissions}
             items={items}
             isLoading={slideshowGenerating}
@@ -2620,6 +2622,11 @@ CREATE TABLE IF NOT EXISTS submissions (
             generatedScript={slideshowGeneratedScript}
             onScriptGenerated={(script) => {
               setSlideshowGeneratedScript(script);
+            }}
+            onSlideshowCreated={() => {
+              setSlideshowGeneratorOpen(false);
+              setActiveTab("slideshows");
+              setSlideshowRefreshKey((prev) => prev + 1);
             }}
           />
         )}
@@ -2729,7 +2736,11 @@ CREATE TABLE IF NOT EXISTS submissions (
 
           {activeTab === "slideshows" && (
             <SlideshowViewer
-              userId={profile.id}
+              userId={profile?.id || null}
+              userRole={profile?.role || "user"}
+              submissions={submissions}
+              items={items}
+              refreshKey={slideshowRefreshKey}
             />
           )}
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Settings, Upload, Copy, Check, AlertCircle, Loader2, RotateCcw, QrCode, ExternalLink, HardDrive } from "lucide-react";
 import QRCode from "react-qr-code";
 import { AppSettings } from "../types";
@@ -131,6 +131,9 @@ export function AdminSettingsModal({
   adminActiveSessions = 0,
   adminCurrentSessionActive = false
 }: AdminSettingsModalProps) {
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   const inviteUrl = inviteCodeInput.trim() 
@@ -148,6 +151,39 @@ export function AdminSettingsModal({
     await onSubmit(e);
     // Close modal after save completes
     onClose();
+  };
+
+  const handleBackup = async () => {
+    const userId = localStorage.getItem("scavenger_uid");
+    if (!userId) {
+      setBackupError("Not logged in");
+      return;
+    }
+    setIsBackingUp(true);
+    setBackupError(null);
+    try {
+      const response = await fetch(`/api/admin/backup?userId=${encodeURIComponent(userId)}`);
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "Backup failed");
+      }
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : `kinquest-backup-${Date.now()}.json`;
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setBackupError(err?.message || "Failed to download backup");
+    } finally {
+      setIsBackingUp(false);
+    }
   };
 
   return (
@@ -628,10 +664,31 @@ export function AdminSettingsModal({
               <span>{saveError}</span>
             </div>
           )}
+
+          {backupError && (
+            <div className="p-2.5 bg-red-50 text-red-700 rounded-xl text-[11px] font-medium border border-red-100 flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+              <span>Backup failed: {backupError}</span>
+            </div>
+          )}
         </form>
 
         {/* Footer with buttons */}
         <div className="p-6 border-t border-[#e5e5dd] bg-[#fafaf7] flex gap-2 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={handleBackup}
+            disabled={isBackingUp}
+            className="py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {isBackingUp ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <HardDrive className="h-3.5 w-3.5" />
+            )}
+            {isBackingUp ? "Backing up..." : "Backup Game Data"}
+          </button>
+
           <button
             type="button"
             onClick={() => {

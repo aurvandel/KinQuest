@@ -74,7 +74,7 @@ export interface Slideshow {
   description?: string;
   script: string;
   submissionIds: string[];
-  createdBy: string; // Admin user ID who generated it
+  createdBy?: string | null; // Admin user ID who generated it
   createdAt: string;
   isPublished: boolean;
 }
@@ -1023,7 +1023,7 @@ export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
         description: slideshow.description,
         script: slideshow.script,
         submission_ids: slideshow.submissionIds,
-        created_by: slideshow.createdBy,
+        created_by: slideshow.createdBy === 'admin' ? null : (slideshow.createdBy || null),
         created_at: slideshow.createdAt,
         is_published: slideshow.isPublished
       }])
@@ -1086,6 +1086,21 @@ export async function getAllSlideshows(): Promise<Slideshow[]> {
     }));
   } catch (err) {
     console.warn("Supabase slideshow retrieve error:", err);
+    throw err;
+  }
+}
+
+export async function deleteSlideshow(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase!
+      .from("slideshows")
+      .delete()
+      .eq("id", id);
+
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.warn("Supabase slideshow delete error:", err);
     throw err;
   }
 }

@@ -9,6 +9,7 @@ tile-cache/
 
 # User uploads - should be mounted as a volume in production
 uploads/
+uploads copy/
 
 # Local database file - mounted as a volume in production
 db.json

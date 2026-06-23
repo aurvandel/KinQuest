@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS slideshows (
   description TEXT,
   script TEXT NOT NULL,
   submission_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
-  created_by TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   is_published BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
