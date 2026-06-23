@@ -23,9 +23,8 @@ services:
           sleep 1;
         done
         npm run start
-    # --- CHANGE 1: REMOVE PUBLIC PORTS & USE EXPOSE ---
-    expose:
-      - "${HTTP_PORT:-3000}"
+    ports:
+      - "${HTTP_PORT:-3000}:${HTTP_PORT:-3000}"
     environment:
       - NODE_ENV=production
       - SUPABASE_URL=${SUPABASE_URL:-http://kong:8000}
@@ -34,12 +33,14 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - TILE_CACHE_DIR=${TILE_CACHE_DIR:-/app/tile-cache}
-      # Set to plain HTTP mode since Nginx handles the SSL decryption layer
       - SERVER_PROTOCOL=http
       - HTTP_PORT=${HTTP_PORT:-3000}
+      - SSL_CERT_PATH=
+      - SSL_KEY_PATH=
+      - APP_URL=${APP_URL:-}
       - TILE_UPSTREAM_TIMEOUT_MS=${TILE_UPSTREAM_TIMEOUT_MS:-1000}
     volumes:
-      - ./uploads:/app/uploads
+      - ${UPLOADS_HOST_PATH:-./uploads}:/app/uploads
       - ./tile-cache:/app/tile-cache
       - /etc/ssl:/etc/ssl:ro
     depends_on:
@@ -103,21 +104,6 @@ services:
     depends_on:
       - rest
 
-  # ----------------------------------------------------
-  # CHANGE 2: THE NGINX REVERSE PROXY SHIELD
-  # ----------------------------------------------------
-  nginx_proxy:
-    image: nginx:alpine
-    container_name: nginx_proxy
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
-    depends_on:
-      - kinquest-app
 
 volumes:
   supabase-db-data:

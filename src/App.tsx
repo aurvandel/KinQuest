@@ -56,6 +56,13 @@ import {
 } from "lucide-react";
 
 export default function App() {
+  const USER_ID_KEY = "scavenger_uid";
+  const USER_PROFILE_KEY = "scavenger_user";
+  const USER_SESSION_ID_KEY = "kinquest_user_session_id";
+  const SESSION_META_KEY = "kinquest_session_meta";
+  const ADMIN_SESSION_ID_KEY = "kinquest_admin_session_id";
+  const USER_SESSION_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 hours
+
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [players, setPlayers] = useState<PlayerProfile[]>([]);
   const [items, setItems] = useState<ScavengerItem[]>([]);
@@ -83,6 +90,8 @@ export default function App() {
   const [isAdminSaving, setIsAdminSaving] = useState(false);
   const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
   const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
+  const [adminSessionCount, setAdminSessionCount] = useState<number>(0);
+  const [adminSessionIsActive, setAdminSessionIsActive] = useState<boolean>(false);
   const [copiedInviteLink, setCopiedInviteLink] = useState(false);
   const [adminImageCompressionMaxDimInput, setAdminImageCompressionMaxDimInput] = useState(800);
   const [adminImageCompressionQualityInput, setAdminImageCompressionQualityInput] = useState(0.7);
@@ -303,6 +312,160 @@ CREATE TABLE IF NOT EXISTS submissions (
     setTimeout(() => setCopiedSql(false), 2000);
   };
 
+  const clearStoredAuth = () => {
+    localStorage.removeItem(USER_ID_KEY);
+    localStorage.removeItem(USER_PROFILE_KEY);
+    localStorage.removeItem(USER_SESSION_ID_KEY);
+    localStorage.removeItem(SESSION_META_KEY);
+    localStorage.removeItem(ADMIN_SESSION_ID_KEY);
+  };
+
+  const getAdminSessionId = () => localStorage.getItem(ADMIN_SESSION_ID_KEY);
+  const getUserSessionId = () => localStorage.getItem(USER_SESSION_ID_KEY);
+
+  const writeLocalSessionMeta = (role: "user" | "admin") => {
+    const timeoutMs = role === "admin" ? 24 * 60 * 60 * 1000 : USER_SESSION_TIMEOUT_MS;
+    const now = Date.now();
+    localStorage.setItem(
+      SESSION_META_KEY,
+      JSON.stringify({
+        role,
+        lastActivityAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + timeoutMs).toISOString()
+      })
+    );
+  };
+
+  const refreshLocalSessionMeta = (role?: "user" | "admin") => {
+    const currentRole = role || (profile?.role === "admin" ? "admin" : "user");
+    writeLocalSessionMeta(currentRole);
+  };
+
+  const isLocalSessionExpired = () => {
+    const raw = localStorage.getItem(SESSION_META_KEY);
+    if (!raw) return false;
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed?.expiresAt) return false;
+      return Date.now() > new Date(parsed.expiresAt).getTime();
+    } catch {
+      return false;
+    }
+  };
+
+  const releaseAdminSession = () => {
+    const sessionId = getAdminSessionId();
+    if (!sessionId) return;
+
+    try {
+      if (navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({ sessionId })], { type: "application/json" });
+        navigator.sendBeacon("/api/auth/admin-session/logout", blob);
+      } else {
+        fetch("/api/auth/admin-session/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+          keepalive: true
+        }).catch(() => {});
+      }
+    } catch {
+      // Ignore transport issues; stale sessions are cleaned up server-side by timeout.
+    }
+  };
+
+  const releaseUserSession = () => {
+    const sessionId = getUserSessionId();
+    const userId = localStorage.getItem(USER_ID_KEY);
+    if (!sessionId || !userId) return;
+
+    try {
+      if (navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({ sessionId, userId })], { type: "application/json" });
+        navigator.sendBeacon("/api/auth/session/logout", blob);
+      } else {
+        fetch("/api/auth/session/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, userId }),
+          keepalive: true
+        }).catch(() => {});
+      }
+    } catch {
+      // Ignore transport issues; server-side expiry still applies.
+    }
+  };
+
+  const silentReconnectInFlightRef = useRef(false);
+
+  const silentlyReconnectUserSession = async (cachedProfile?: PlayerProfile | null): Promise<boolean> => {
+    if (silentReconnectInFlightRef.current) return false;
+
+    const profileFromArg = cachedProfile || profile;
+    if (!profileFromArg || profileFromArg.role === "admin") {
+      return false;
+    }
+
+    const username = profileFromArg.username?.trim();
+    if (!username) {
+      return false;
+    }
+
+    silentReconnectInFlightRef.current = true;
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          role: "user",
+          existingSessionId: getUserSessionId()
+        })
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const activeUser = await response.json();
+      localStorage.setItem(USER_ID_KEY, activeUser.id);
+      localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(activeUser));
+      if (activeUser.sessionId) {
+        localStorage.setItem(USER_SESSION_ID_KEY, activeUser.sessionId);
+      }
+      writeLocalSessionMeta("user");
+      setProfile(activeUser);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      silentReconnectInFlightRef.current = false;
+    }
+  };
+
+  const fetchAdminSessionStatus = async () => {
+    const sessionId = getAdminSessionId();
+    if (!sessionId) {
+      setAdminSessionCount(0);
+      setAdminSessionIsActive(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/auth/admin-session/status?sessionId=${encodeURIComponent(sessionId)}`);
+      if (!res.ok) {
+        setAdminSessionIsActive(false);
+        return;
+      }
+      const data = await res.json();
+      setAdminSessionCount(Number(data.activeSessions) || 0);
+      setAdminSessionIsActive(Boolean(data.currentSessionActive));
+    } catch {
+      // Ignore temporary fetch errors in debug panel.
+    }
+  };
+
   // On mount: Try getting current positioning plus reading cached self-hosted user
   useEffect(() => {
     // 0. Parse invite search parameter
@@ -341,15 +504,82 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
 
     // 2. Load game profile
-    const cachedUid = localStorage.getItem("scavenger_uid");
-    const cachedUser = localStorage.getItem("scavenger_user");
+    const cachedUid = localStorage.getItem(USER_ID_KEY);
+    const cachedUser = localStorage.getItem(USER_PROFILE_KEY);
 
     if (cachedUid && cachedUser) {
       try {
-        setProfile(JSON.parse(cachedUser));
+        const cachedProfile = JSON.parse(cachedUser) as PlayerProfile;
+
+        if (isLocalSessionExpired()) {
+          if (cachedProfile.role === "admin") {
+            clearStoredAuth();
+          } else {
+            silentlyReconnectUserSession(cachedProfile).then((reconnected) => {
+              if (!reconnected) {
+                clearStoredAuth();
+                setProfile(null);
+              }
+            });
+          }
+        } else if (cachedProfile.role === "admin") {
+          const existingSessionId = getAdminSessionId();
+          if (!existingSessionId) {
+            clearStoredAuth();
+          } else {
+            fetch("/api/auth/admin-session/refresh", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId: existingSessionId })
+            })
+              .then(async (res) => {
+                if (!res.ok) {
+                  clearStoredAuth();
+                  setProfile(null);
+                  return;
+                }
+                setProfile(cachedProfile);
+                refreshLocalSessionMeta("admin");
+              })
+              .catch(() => {
+                clearStoredAuth();
+                setProfile(null);
+              });
+          }
+        } else {
+          const existingUserSessionId = getUserSessionId();
+          if (!existingUserSessionId) {
+            clearStoredAuth();
+          } else {
+            fetch("/api/auth/session/refresh", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId: existingUserSessionId, userId: cachedProfile.id })
+            })
+              .then(async (res) => {
+                if (!res.ok) {
+                  const reconnected = await silentlyReconnectUserSession(cachedProfile);
+                  if (!reconnected) {
+                    clearStoredAuth();
+                    setProfile(null);
+                  }
+                  return;
+                }
+                setProfile(cachedProfile);
+                refreshLocalSessionMeta("user");
+              })
+              .catch(() => {
+                silentlyReconnectUserSession(cachedProfile).then((reconnected) => {
+                  if (!reconnected) {
+                    clearStoredAuth();
+                    setProfile(null);
+                  }
+                });
+              });
+          }
+        }
       } catch (e) {
-        localStorage.removeItem("scavenger_uid");
-        localStorage.removeItem("scavenger_user");
+        clearStoredAuth();
       }
     }
     setAppReady(true);
@@ -409,7 +639,13 @@ CREATE TABLE IF NOT EXISTS submissions (
       }
 
       try {
-        const res = await fetch("/api/game-state");
+        const currentUid = localStorage.getItem(USER_ID_KEY);
+        const currentSessionId = getUserSessionId();
+        const query = currentUid && currentSessionId
+          ? `?userId=${encodeURIComponent(currentUid)}&sessionId=${encodeURIComponent(currentSessionId)}`
+          : "";
+
+        const res = await fetch(`/api/game-state${query}`);
         if (res.ok) {
           const data = await res.json();
           setPlayers(data.users || []);
@@ -426,17 +662,24 @@ CREATE TABLE IF NOT EXISTS submissions (
           localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
 
           // Sync active user profile score dynamically
-          const cachedUid = localStorage.getItem("scavenger_uid");
+          const cachedUid = localStorage.getItem(USER_ID_KEY);
           if (cachedUid) {
             const serverProfile = (data.users || []).find((u: PlayerProfile) => u.id === cachedUid);
             if (serverProfile) {
               setProfile(serverProfile);
-              localStorage.setItem("scavenger_user", JSON.stringify(serverProfile));
+              localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(serverProfile));
+              refreshLocalSessionMeta(serverProfile.role === "admin" ? "admin" : "user");
             } else {
               console.warn("Local profile was not found in server state database. Resetting auth.");
               handleSignOut();
             }
           }
+        } else if (res.status === 401 && profile?.role !== "admin") {
+          const reconnected = await silentlyReconnectUserSession(profile);
+          if (!reconnected) {
+            handleSignOut();
+          }
+          return;
         } else {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -872,7 +1115,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         const data = await res.json();
         const updatedProf = data.profile;
         setProfile(updatedProf);
-        localStorage.setItem("scavenger_user", JSON.stringify(updatedProf));
+        localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(updatedProf));
+        refreshLocalSessionMeta(updatedProf.role === "admin" ? "admin" : "user");
         
         // Also update players list immediately so local updates mirror on leaderboard
         setPlayers((prev) => prev.map(p => p.id === updatedProf.id ? updatedProf : p));
@@ -1097,8 +1341,12 @@ CREATE TABLE IF NOT EXISTS submissions (
       }
 
       const activeUser = await response.json();
-      localStorage.setItem("scavenger_uid", activeUser.id);
-      localStorage.setItem("scavenger_user", JSON.stringify(activeUser));
+      localStorage.setItem(USER_ID_KEY, activeUser.id);
+      localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(activeUser));
+      if (activeUser.sessionId) {
+        localStorage.setItem(USER_SESSION_ID_KEY, activeUser.sessionId);
+      }
+      writeLocalSessionMeta(role === "admin" ? "admin" : "user");
       setProfile(activeUser);
     } catch (err: any) {
       setAuthError(err.message || "Failed to reach self-hosted api endpoint.");
@@ -1135,12 +1383,18 @@ CREATE TABLE IF NOT EXISTS submissions (
       const response = await fetch("/api/auth/admin-verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, existingSessionId: getAdminSessionId() }),
       });
 
       if (!response.ok) {
         const errPayload = await response.json();
         throw new Error(errPayload.error || "Invalid admin password");
+      }
+
+      const verifyPayload = await response.json();
+      if (verifyPayload?.sessionId) {
+        localStorage.setItem(ADMIN_SESSION_ID_KEY, verifyPayload.sessionId);
+        fetchAdminSessionStatus();
       }
 
       setIsAdminAuthOpen(false);
@@ -1161,10 +1415,118 @@ CREATE TABLE IF NOT EXISTS submissions (
   };
 
   const handleSignOut = () => {
-    localStorage.removeItem("scavenger_uid");
-    localStorage.removeItem("scavenger_user");
+    releaseUserSession();
+    if (profile?.role === "admin") {
+      releaseAdminSession();
+    }
+    clearStoredAuth();
     setProfile(null);
   };
+
+  useEffect(() => {
+    if (profile?.role !== "admin") return;
+
+    const sessionId = getAdminSessionId();
+    if (!sessionId) {
+      handleSignOut();
+      return;
+    }
+
+    const refreshServerSession = async () => {
+      try {
+        const res = await fetch("/api/auth/admin-session/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId })
+        });
+
+        if (!res.ok) {
+          const reconnected = await silentlyReconnectUserSession(profile);
+          if (!reconnected) {
+            handleSignOut();
+          }
+          return;
+        }
+
+        refreshLocalSessionMeta("admin");
+      } catch {
+        // Leave current local state intact during transient network failures.
+      }
+    };
+
+    refreshServerSession();
+    const keepAliveInterval = window.setInterval(refreshServerSession, 60 * 1000);
+    const statusInterval = window.setInterval(fetchAdminSessionStatus, 15000);
+    fetchAdminSessionStatus();
+
+    const onPageHide = () => {
+      releaseUserSession();
+      releaseAdminSession();
+    };
+
+    window.addEventListener("pagehide", onPageHide);
+
+    return () => {
+      window.clearInterval(keepAliveInterval);
+      window.clearInterval(statusInterval);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [profile?.id, profile?.role]);
+
+  useEffect(() => {
+    if (!profile) return;
+
+    const userSessionId = getUserSessionId();
+    if (!userSessionId) {
+      handleSignOut();
+      return;
+    }
+
+    const refreshUserServerSession = async () => {
+      try {
+        const res = await fetch("/api/auth/session/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: userSessionId, userId: profile.id })
+        });
+
+        if (!res.ok) {
+          handleSignOut();
+          return;
+        }
+
+        refreshLocalSessionMeta(profile.role === "admin" ? "admin" : "user");
+      } catch {
+        // Allow transient failures without forcing logout.
+      }
+    };
+
+    refreshUserServerSession();
+    const userKeepAliveInterval = window.setInterval(refreshUserServerSession, 60 * 1000);
+    return () => window.clearInterval(userKeepAliveInterval);
+  }, [profile?.id]);
+
+  useEffect(() => {
+    if (!profile) return;
+
+    const checkExpiry = () => {
+      if (isLocalSessionExpired()) {
+        if (profile.role === "admin") {
+          handleSignOut();
+        } else {
+          silentlyReconnectUserSession(profile).then((reconnected) => {
+            if (!reconnected) {
+              handleSignOut();
+            }
+          });
+        }
+      }
+    };
+
+    checkExpiry();
+    const expiryInterval = window.setInterval(checkExpiry, 60 * 1000);
+    return () => window.clearInterval(expiryInterval);
+  }, [profile?.id]);
 
   // Submit base64 photo with current coordinates to server
   const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false, submissionId?: string) => {
@@ -2197,6 +2559,9 @@ CREATE TABLE IF NOT EXISTS submissions (
             passwordChangeSuccess={adminPasswordChangeSuccess}
             passwordChangeError={adminPasswordChangeError}
             onSubmitPasswordChange={handleAdminPasswordChange}
+            adminSessionId={getAdminSessionId()}
+            adminActiveSessions={adminSessionCount}
+            adminCurrentSessionActive={adminSessionIsActive}
           />
         )}
 
