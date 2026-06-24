@@ -23,12 +23,14 @@ I have a collection of photos from a family scavenger hunt. Here are the photos 
 Please generate a detailed slideshow script that includes:
 
 1. Mission Group Structure: Keep photos grouped by mission and suggest timing (2-4 seconds per slide)
-2. Transitions: Recommend transitions for each slide and between mission groups
-3. Music Recommendations: Suggest 2-3 background music tracks that fit the full story arc
-4. Timing & Pacing: Provide total duration estimate and pacing guidance
-5. Animation Effects: Suggest subtle text overlay animations (mission title, photographer name, etc.)
-6. Color Grading: Suggest filters or adjustments for visual consistency
-7. Voiceover Suggestions: Optional short commentary between mission groups
+2. Mission Transition Cards: Add a transition card between each mission segment with mission title and mission description
+3. Transitions: Recommend transitions for each slide and between mission groups
+4. Music Recommendations: Suggest 2-3 background music tracks that fit the full story arc
+5. Timing & Pacing: Provide total duration estimate and pacing guidance
+6. Animation Effects: Suggest subtle text overlay animations (mission title, photographer name, etc.)
+7. Color Grading: Suggest filters or adjustments for visual consistency
+8. Voiceover Suggestions: Optional short commentary between mission groups
+9. Final Scoreboard Card: End with one single closing card that combines winners and full standings (all players and points), styled like the scores tab
 
 Format your response as a professional production guide. Keep it uplifting and celebratory for a family reunion event.`;
 

@@ -119,8 +119,8 @@ export default function () {
           itemId: itemIdToUse,
           imageBase64: getTestImageBase64(),
           mimeType: 'image/png',
-          lat: 34.0522 + (Math.random() - 0.5) * 0.2,
-          lng: -118.2437 + (Math.random() - 0.5) * 0.2,
+          userLat: 34.0522 + (Math.random() - 0.5) * 0.2,
+          userLng: -118.2437 + (Math.random() - 0.5) * 0.2,
         }),
         {
           headers: { 'Content-Type': 'application/json' },

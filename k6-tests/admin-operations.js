@@ -109,6 +109,7 @@ export default function () {
         lng: -118.2437 + Math.random() * 0.1,
         radius: 500 + Math.random() * 5000,
         createdBy: adminUserId,
+        enforceGeofence: Math.random() > 0.5,
       }),
       {
         headers: { 'Content-Type': 'application/json' },
@@ -155,11 +156,15 @@ export default function () {
       JSON.stringify({
         name: `GameUpdate_${randomString(4)}`,
         icon: 'Sparkles',
+        mapMode: 'original',
         defaultLat: 34.0522,
         defaultLng: -118.2437,
         defaultRadius: 1000,
         aiPromptCriteria: 'Verify the item matches the description',
         aiVerificationEnabled: true,
+        allowForceSubmit: true,
+        inviteRequired: true,
+        chatDisabledByAdmin: false,
       }),
       {
         headers: { 'Content-Type': 'application/json' },

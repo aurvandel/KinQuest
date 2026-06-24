@@ -48,7 +48,9 @@ import {
   Slideshow,
   getAppSettings,
   saveAppSettings,
-  AppSettings
+  AppSettings,
+  restoreFromBackup,
+  completeTutorial
 } from "./db-manager";
 import {
   hasActiveAdminPassword,
@@ -156,6 +158,29 @@ function sanitizeSlideshowId(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_-]/g, "");
 }
 
+function buildFinalScoreboardOverlay(
+  playerTotals: Array<{ username: string; score: number }>
+): string {
+  const winners = playerTotals.slice(0, 3);
+  const winnerLines = winners.length
+    ? winners.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
+    : ["No winners yet"];
+
+  const standingsLines = playerTotals.length
+    ? playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
+    : ["No player scores available"];
+
+  return [
+    "Scavenger Hall of Fame",
+    "",
+    "Winners",
+    ...winnerLines,
+    "",
+    "Full Standings",
+    ...standingsLines,
+  ].join("\n");
+}
+
 async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Promise<string | null> {
   const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
 
@@ -195,7 +220,7 @@ async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Prom
 
 async function renderSlideshowMp4(
   slideshowId: string,
-  slides: Array<{ imageUrl: string; overlayText?: string; durationSeconds?: number; transition?: string }>
+  slides: Array<{ imageUrl?: string; overlayText?: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }>
 ): Promise<{ outputPath: string; outputUrl: string }> {
   if (!slides.length) {
     throw new Error("No images available to render slideshow video");
@@ -214,15 +239,20 @@ async function renderSlideshowMp4(
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "kinquest-slideshow-"));
 
   try {
-    const resolvedSlides: Array<{ imagePath: string; overlayText: string; durationSeconds: number; transition: string }> = [];
+    const resolvedSlides: Array<{ imagePath: string | null; overlayText: string; durationSeconds: number; transition: string; isTitleCard: boolean }> = [];
     for (const slide of slides) {
-      const resolved = await resolveImagePathForRender(slide.imageUrl, tmpDir);
-      if (!resolved) continue;
+      let resolved: string | null = null;
+      if (slide.imageUrl) {
+        resolved = await resolveImagePathForRender(slide.imageUrl, tmpDir);
+      }
+      const isTitleCard = slide.isTitleCard === true;
+      if (!resolved && !isTitleCard) continue;
       resolvedSlides.push({
         imagePath: resolved,
         overlayText: String(slide.overlayText || "").trim(),
         durationSeconds: Math.max(2, Math.min(Number(slide.durationSeconds) || 3, 8)),
         transition: String(slide.transition || "fade").toLowerCase(),
+        isTitleCard,
       });
     }
 
@@ -237,16 +267,35 @@ async function renderSlideshowMp4(
     const ffmpegInputs: string[] = [];
     resolvedSlides.forEach((slide) => {
       const clipDurationSeconds = slide.durationSeconds + transitionSeconds;
-      ffmpegInputs.push("-loop", "1", "-t", String(clipDurationSeconds), "-i", slide.imagePath);
+      if (slide.isTitleCard) {
+        ffmpegInputs.push("-f", "lavfi", "-t", String(clipDurationSeconds), "-i", "color=c=0x111827:s=1280x720");
+      } else {
+        ffmpegInputs.push("-loop", "1", "-t", String(clipDurationSeconds), "-i", String(slide.imagePath));
+      }
     });
 
     const scalePadFilter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1";
     const videoLabelParts: string[] = [];
+    const fontCandidates = [
+      process.env.FFMPEG_FONTFILE || "",
+      "/usr/share/fonts/TTF/DejaVuSans.ttf",
+      "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    ].filter(Boolean);
+    const selectedFontFile = fontCandidates.find((candidate) => fs.existsSync(candidate));
+
+    if (!selectedFontFile) {
+      throw new Error("No usable font file found for FFmpeg drawtext. Set FFMPEG_FONTFILE or install ttf-dejavu.");
+    }
+
+    const escapedFontFile = selectedFontFile.replace(/'/g, "'\\''");
 
     resolvedSlides.forEach((slide, idx) => {
       const textFilePath = path.join(tmpDir, `overlay_${idx}.txt`);
       fs.writeFileSync(textFilePath, slide.overlayText || "", "utf8");
-      const drawText = `drawtext=textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=36:line_spacing=8:borderw=2:bordercolor=black@0.55:x=(w-text_w)/2:y=h-110`;
+      const drawText = slide.isTitleCard
+        ? `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=56:line_spacing=14:borderw=3:bordercolor=black@0.65:x=(w-text_w)/2:y=(h-text_h)/2`
+        : `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=36:line_spacing=8:borderw=2:bordercolor=black@0.55:x=(w-text_w)/2:y=h-110`;
       videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},format=rgba[v${idx}]`);
     });
 
@@ -328,27 +377,37 @@ async function renderSlideshowMp4(
 
 async function generateGeminiSlideshowPlan(
   script: string,
-  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>
+  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
+  playerTotals: Array<{ username: string; score: number }>
 ): Promise<{
   plan: {
     slides: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>;
+    endingOverlayText?: string;
   };
   aiModel: string;
   usedFallbackPlan: boolean;
 }> {
+  const defaultEndingOverlayText = buildFinalScoreboardOverlay(playerTotals);
+
   const defaultPlan = {
     slides: sourceSlides.map((slide) => ({
       submissionId: slide.submissionId,
       overlayText: slide.missionDescription || slide.missionTitle,
       durationSeconds: 3,
       transition: "fade"
-    }))
+    })),
+    endingOverlayText: defaultEndingOverlayText
   };
 
   try {
     const prompt = [
       "You are creating a machine-readable edit decision list for a family slideshow video.",
       "Use the provided script to decide timing, order, overlay text, and transitions.",
+      "Assume a non-image transition card is inserted every time the mission changes in playback order.",
+      "Each transition card shows mission title and mission description.",
+      "Do not return title-card rows; only return photo rows for provided submission IDs.",
+      "Create endingOverlayText for one single closing card that includes BOTH: (1) winners (top 3), and (2) full standings with all player totals.",
+      "Style endingOverlayText like the KinQuest scores tab: heading, winners block, then full standings list.",
       "Return only entries for the provided submission IDs.",
       "Keep total runtime between 20 and 120 seconds.",
       "Durations must be 2-8 seconds.",
@@ -360,6 +419,9 @@ async function generateGeminiSlideshowPlan(
       "",
       "AVAILABLE SLIDES:",
       ...sourceSlides.map((slide, idx) => `${idx + 1}. submissionId=${slide.submissionId} | title=${slide.missionTitle} | description=${slide.missionDescription} | username=${slide.username}`),
+      "",
+      "PLAYER TOTALS:",
+      ...playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username}: ${entry.score} pts`),
     ].join("\n");
 
     const response = await ai.models.generateContent({
@@ -382,9 +444,10 @@ async function generateGeminiSlideshowPlan(
                 },
                 required: ["submissionId", "overlayText", "durationSeconds", "transition"]
               }
-            }
+            },
+            endingOverlayText: { type: Type.STRING }
           },
-          required: ["slides"]
+          required: ["slides", "endingOverlayText"]
         }
       }
     });
@@ -406,8 +469,13 @@ async function generateGeminiSlideshowPlan(
       return { plan: defaultPlan, aiModel: "fallback-offline", usedFallbackPlan: true };
     }
 
+    const endingOverlayText = String(parsed?.endingOverlayText || "").trim();
+
     return {
-      plan: { slides: sanitizedSlides },
+      plan: {
+        slides: sanitizedSlides,
+        endingOverlayText: endingOverlayText || defaultEndingOverlayText
+      },
       aiModel: "gemini-2.0-flash",
       usedFallbackPlan: false
     };
@@ -497,7 +565,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo } = req.body;
+  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -521,7 +589,8 @@ app.post("/api/settings", (req, res) => {
     imageCompressionMaxDim: imageCompressionMaxDim !== undefined ? Number(imageCompressionMaxDim) : undefined,
     imageCompressionQuality: imageCompressionQuality !== undefined ? Number(imageCompressionQuality) : undefined,
     showTitle: showTitle !== undefined ? !!showTitle : undefined,
-    showLogo: showLogo !== undefined ? !!showLogo : undefined
+    showLogo: showLogo !== undefined ? !!showLogo : undefined,
+    chatDisabledByAdmin: chatDisabledByAdmin !== undefined ? !!chatDisabledByAdmin : undefined
   };
   saveAppSettings(updated);
   res.json({ success: true, settings: updated });
@@ -631,6 +700,38 @@ app.get("/api/admin/backup", async (req, res) => {
   } catch (err: any) {
     console.error("Backup error:", err);
     return res.status(500).json({ error: "Failed to generate backup", details: err?.message || "Unknown error" });
+  }
+});
+
+// 2.6 Restore game data from backup (admin only)
+app.post("/api/admin/restore", async (req, res) => {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  const backup = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: "userId query parameter is required" });
+  }
+
+  if (!backup || typeof backup !== "object") {
+    return res.status(400).json({ error: "Backup data is required in request body" });
+  }
+
+  try {
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can restore a backup" });
+    }
+
+    const result = await restoreFromBackup(backup);
+    return res.json({
+      success: true,
+      message: "Backup restored successfully",
+      restored: result
+    });
+  } catch (err: any) {
+    console.error("Restore error:", err);
+    return res.status(500).json({ error: "Failed to restore backup", details: err?.message || "Unknown error" });
   }
 });
 
@@ -840,9 +941,27 @@ app.post("/api/profile/update", async (req, res) => {
   }
 });
 
+// Mark tutorial as complete for user
+app.post("/api/tutorial/complete", async (req, res) => {
+  const { userId } = req.body;
+  if (!userId || typeof userId !== "string" || userId.trim().length === 0) {
+    return res.status(400).json({ error: "User ID is required" });
+  }
+
+  try {
+    const result = await completeTutorial(userId);
+    if (!result) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ success: true, profile: result });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to mark tutorial complete", details: err.message });
+  }
+});
+
 // 4. Create custom scavenge check items
 app.post("/api/challenges", async (req, res) => {
-  const { title, description, points, category, icon, lat, lng, radius, createdBy } = req.body;
+  const { title, description, points, category, icon, lat, lng, radius, createdBy, enforceGeofence } = req.body;
 
   if (!title || !description || !points) {
     return res.status(400).json({ error: "Missing required challenge title, criteria or points." });
@@ -858,7 +977,8 @@ app.post("/api/challenges", async (req, res) => {
       lat: lat ? Number(lat) : null,
       lng: lng ? Number(lng) : null,
       radius: radius ? Number(radius) : null,
-      createdBy: createdBy || undefined
+      createdBy: createdBy || undefined,
+      enforceGeofence: enforceGeofence !== false
     });
     res.json(newItem);
   } catch (err: any) {
@@ -912,7 +1032,7 @@ app.delete("/api/challenges/:id", async (req, res) => {
 // Update a specific challenge
 app.put("/api/challenges/:id", async (req, res) => {
   const { id } = req.params;
-  const { userId, title, description, points, category, icon, lat, lng, radius } = req.body;
+  const { userId, title, description, points, category, icon, lat, lng, radius, enforceGeofence } = req.body;
 
   if (!id || !userId) {
     return res.status(400).json({ error: "Missing challenge ID or user ID" });
@@ -949,6 +1069,7 @@ app.put("/api/challenges/:id", async (req, res) => {
     if (lat !== undefined) updates.lat = lat ? Number(lat) : null;
     if (lng !== undefined) updates.lng = lng ? Number(lng) : null;
     if (radius !== undefined) updates.radius = radius ? Number(radius) : null;
+    if (enforceGeofence !== undefined) updates.enforceGeofence = !!enforceGeofence;
 
     // Update in database
     const updatedItem = await updateScavengerChallenge(id, updates);
@@ -1016,7 +1137,7 @@ app.post("/api/verify-submission", async (req, res) => {
     let locationFailed = false;
     let gpsExplanation = "";
 
-    if (item.lat !== null && item.lng !== null && item.radius !== null) {
+    if (item.enforceGeofence !== false && item.lat !== null && item.lng !== null && item.radius !== null) {
       if (userLat === undefined || userLng === undefined || userLat === null || userLng === null) {
         locationFailed = true;
         gpsExplanation = "You must provide GPS location metadata to complete this geofenced challenge.";
@@ -1602,6 +1723,14 @@ app.post("/api/slideshow/generate", async (req, res) => {
 
     const submissionsList = groupedSections.join("\n");
 
+    const playerTotals = Object.values(state.users)
+      .map((u) => ({ username: String(u.username || "").trim(), score: Number(u.score) || 0 }))
+      .filter((u) => u.username.length > 0)
+      .sort((a, b) => b.score - a.score);
+    const playerTotalsText = playerTotals.length
+      ? playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username}: ${entry.score} pts`).join("\n")
+      : "No player totals available";
+
     const defaultPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
 
 I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
@@ -1609,6 +1738,7 @@ I have a collection of photos from a family scavenger hunt. Here are the photos 
 
 Please generate a detailed slideshow script that includes:
 
+0. **Mission Intro Cards**: Before each mission photo group, insert a non-image card showing that mission title and description
 1. **Mission Group Structure**: Keep photos grouped by mission while suggesting timing (2-4 seconds per slide)
 2. **Transitions**: Recommend transitions between slides and between mission groups
 3. **Music Recommendations**: Suggest 2-3 background music tracks that fit the full story arc
@@ -1629,6 +1759,8 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       ? basePrompt.replace("{{PHOTO_LIST}}", submissionsList)
       : `${basePrompt}\n\nMission-grouped photo list:\n${submissionsList}`;
 
+    const slideshowPromptWithScores = `${slideshowPrompt}\n\nCurrent player point totals:\n${playerTotalsText}\n\nRender instructions: include transition slides between each mission that show title + description, and end with ONE closing scoreboard slide that combines winners and full point totals.`;
+
     let script = "";
     let usedAiModel = "fallback-offline";
     let usedFallbackScript = false;
@@ -1640,7 +1772,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
             role: "user",
             parts: [
               {
-                text: slideshowPrompt,
+                text: slideshowPromptWithScores,
               },
             ],
           },
@@ -1669,7 +1801,8 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
         "Text overlays:",
         "- Opening title: Family Scavenger Highlights",
         "- Per slide: challenge description + photographer name",
-        "- Closing slide: Thanks for playing KinQuest",
+        "- Mission transition cards: show mission title + mission description",
+        "- One closing slide: winners and full standings with all player totals",
         "",
         "Pacing:",
         "- Keep total runtime around 30-60 seconds.",
@@ -1801,17 +1934,48 @@ app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
 
     const submissionById = new Map(Object.values(state.submissions).map((s) => [s.id, s]));
     const itemById = new Map(Object.values(state.items).map((it) => [it.id, it]));
-    const slides = slideshow.submissionIds
-      .map((subId) => {
-        const submission = submissionById.get(subId);
-        if (!submission?.imageUrl) return null;
-        const item = itemById.get(submission.itemId);
-        return {
-          imageUrl: submission.imageUrl,
-          overlayText: item?.description || item?.title || "",
-        };
-      })
-      .filter((slide): slide is { imageUrl: string; overlayText: string } => Boolean(slide));
+    const scoreEntries = Object.values(state.users)
+      .map((u) => ({ username: String(u.username || "").trim(), score: Number(u.score) || 0 }))
+      .filter((u) => u.username.length > 0)
+      .sort((a, b) => b.score - a.score);
+    const finalScoreOverlayText = buildFinalScoreboardOverlay(scoreEntries);
+
+    const slides: Array<{ imageUrl?: string; overlayText: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }> = [];
+    let previousMissionKey: string | null = null;
+
+    slideshow.submissionIds.forEach((subId) => {
+      const submission = submissionById.get(subId);
+      if (!submission?.imageUrl) return;
+
+      const item = itemById.get(submission.itemId);
+      const missionTitle = String(item?.title || "Mission").trim();
+      const missionDescription = String(item?.description || "").trim();
+      const missionKey = `${submission.itemId}::${missionTitle}::${missionDescription}`;
+
+      if (missionKey !== previousMissionKey) {
+        previousMissionKey = missionKey;
+        slides.push({
+          overlayText: `${missionTitle}\n${missionDescription}`.trim(),
+          durationSeconds: 4,
+          transition: "fade",
+          isTitleCard: true,
+        });
+      }
+
+      slides.push({
+        imageUrl: submission.imageUrl,
+        overlayText: missionDescription || missionTitle,
+      });
+    });
+
+    if (slides.length) {
+      slides.push({
+        overlayText: finalScoreOverlayText,
+        durationSeconds: 6,
+        transition: "fade",
+        isTitleCard: true,
+      });
+    }
 
     if (!slides.length) {
       return res.status(400).json({ error: "No slideshow images available for rendering" });
@@ -1906,6 +2070,11 @@ app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
       })
       .filter((entry): entry is { submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string } => Boolean(entry));
 
+    const playerTotals = Object.values(state.users)
+      .map((u) => ({ username: String(u.username || "").trim(), score: Number(u.score) || 0 }))
+      .filter((u) => u.username.length > 0)
+      .sort((a, b) => b.score - a.score);
+
     if (!sourceSlides.length) {
       return res.status(400).json({ error: "No slideshow images available for Gemini creation" });
     }
@@ -1915,21 +2084,43 @@ app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
       await saveSlideshow({ ...slideshow, script: workingScript });
     }
 
-    const planned = await generateGeminiSlideshowPlan(workingScript, sourceSlides);
+    const planned = await generateGeminiSlideshowPlan(workingScript, sourceSlides, playerTotals);
     const imageBySubmissionId = new Map(sourceSlides.map((s) => [s.submissionId, s]));
 
-    const renderSlides = planned.plan.slides
-      .map((planSlide) => {
-        const source = imageBySubmissionId.get(planSlide.submissionId);
-        if (!source) return null;
-        return {
-          imageUrl: source.imageUrl,
-          overlayText: planSlide.overlayText || source.missionDescription || source.missionTitle,
-          durationSeconds: planSlide.durationSeconds,
-          transition: planSlide.transition,
-        };
-      })
-      .filter((slide): slide is { imageUrl: string; overlayText: string; durationSeconds: number; transition: string } => Boolean(slide));
+    const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
+    let previousMissionKey: string | null = null;
+    planned.plan.slides.forEach((planSlide) => {
+      const source = imageBySubmissionId.get(planSlide.submissionId);
+      if (!source) return;
+
+      const missionKey = `${source.missionTitle}||${source.missionDescription}`;
+      if (missionKey !== previousMissionKey) {
+        previousMissionKey = missionKey;
+        renderSlides.push({
+          overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
+          durationSeconds: 4,
+          transition: "fade",
+          isTitleCard: true,
+        });
+      }
+
+      renderSlides.push({
+        imageUrl: source.imageUrl,
+        overlayText: planSlide.overlayText || source.missionDescription || source.missionTitle,
+        durationSeconds: planSlide.durationSeconds,
+        transition: planSlide.transition,
+      });
+    });
+
+    if (renderSlides.length) {
+      const endingOverlayText = String(planned.plan.endingOverlayText || "").trim() || buildFinalScoreboardOverlay(playerTotals);
+      renderSlides.push({
+        overlayText: endingOverlayText,
+        durationSeconds: 6,
+        transition: "fade",
+        isTitleCard: true,
+      });
+    }
 
     if (!renderSlides.length) {
       return res.status(400).json({ error: "Gemini did not produce a valid slideshow plan" });

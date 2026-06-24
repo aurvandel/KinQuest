@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { ScavengerItem, Submission, PlayerProfile } from "../types";
 import { DynamicIcon } from "./DynamicIcon";
-import { CameraCapture } from "./CameraCapture";
 import { EditMissionModal } from "./EditMissionModal";
 import {
   CheckCircle2,
@@ -30,7 +29,6 @@ interface MissionsListProps {
   currentUserId: string;
   players?: PlayerProfile[];
   currentUserRole: "user" | "admin";
-  onUploadSubmission: (itemId: string, base64Image: string) => Promise<void>;
   isSubmittingMap: { [itemId: string]: boolean };
   submitErrorMap: { [itemId: string]: string | null };
   rejectedSubmissionMap?: { [itemId: string]: { id: string; explanation: string; base64: string } };
@@ -42,7 +40,7 @@ interface MissionsListProps {
   onEditMission?: (itemId: string, updates: Partial<ScavengerItem>) => Promise<void>;
   onShowCreateModal?: () => void;
   onFocusMissionOnMap?: (itemId: string) => void;
-  onPendingPhotoChange?: (hasPending: boolean) => void;
+  onOpenCamera?: (itemId: string, itemTitle: string) => void;
 }
 
 export function MissionsList({
@@ -50,7 +48,6 @@ export function MissionsList({
   submissions,
   currentUserId,
   currentUserRole,
-  onUploadSubmission,
   isSubmittingMap,
   submitErrorMap,
   rejectedSubmissionMap,
@@ -62,12 +59,11 @@ export function MissionsList({
   onEditMission,
   onShowCreateModal,
   onFocusMissionOnMap,
-  onPendingPhotoChange,
+  onOpenCamera,
   players
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
-  const [tempImageMap, setTempImageMap] = useState<{ [itemId: string]: string }>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<ScavengerItem | null>(null);
@@ -119,31 +115,13 @@ export function MissionsList({
     setExpandedItemId(expandedItemId === itemId ? null : itemId);
   };
 
-  const handleImageSelected = (itemId: string, base64: string) => {
-    setTempImageMap((prev) => {
-      const next = { ...prev, [itemId]: base64 };
-      onPendingPhotoChange?.(Object.keys(next).length > 0);
-      return next;
-    });
-  };
-
-  const handleTriggerUpload = async (itemId: string) => {
-    const base64 = tempImageMap[itemId];
-    if (!base64) return;
-    await onUploadSubmission(itemId, base64);
-    setTempImageMap((prev) => {
-      const copy = { ...prev };
-      delete copy[itemId];
-      onPendingPhotoChange?.(Object.keys(copy).length > 0);
-      return copy;
-    });
-    setExpandedItemId(null);
-  };
-
   // Helper distance solver
   const getProximityText = (item: ScavengerItem) => {
     if (item.lat === null || item.lng === null || item.lat === undefined || item.lng === undefined) {
       return { text: "Anywhere Challenge (No Geofence)", inRange: true, distance: null };
+    }
+    if (item.enforceGeofence === false) {
+      return { text: "GPS marker shown, but distance is not enforced for submissions.", inRange: true, distance: null };
     }
     if (userLat === null || userLng === null) {
       return { text: "Calibrating Geolocation sensors...", inRange: false, distance: null };
@@ -216,7 +194,8 @@ export function MissionsList({
         icon: editingItem.icon,
         lat: editingItem.lat,
         lng: editingItem.lng,
-        radius: editingItem.radius
+        radius: editingItem.radius,
+        enforceGeofence: editingItem.enforceGeofence !== false
       });
       setEditingItem(null);
       setEditingId(null);
@@ -251,7 +230,6 @@ export function MissionsList({
           const { status, score: associatedSub } = getMissionStatus(item.id);
           const isExpanded = expandedItemId === item.id;
           const isSubmitting = isSubmittingMap[item.id] || false;
-          const userSelectedImage = tempImageMap[item.id] || null;
           const uploadError = submitErrorMap[item.id] || null;
 
           // GPS info Solve
@@ -311,7 +289,7 @@ export function MissionsList({
                           title="Open this mission on the map"
                         >
                           <MapPin className="h-2.5 w-2.5 text-brand-moss" />
-                          GPS Geofenced
+                          {item.enforceGeofence === false ? "GPS Marker" : "GPS Geofenced"}
                         </button>
                       )}
                     </div>
@@ -507,10 +485,12 @@ export function MissionsList({
                         </div>
                       ) : (
                         <div className="space-y-4">
-                          <CameraCapture
-                            onImageSelected={(base64) => handleImageSelected(item.id, base64)}
-                            selectedImage={userSelectedImage}
-                          />
+                          <button
+                            onClick={() => onOpenCamera?.(item.id, item.title)}
+                            className="w-full py-3 px-4 bg-gradient-to-r from-brand-moss to-brand-moss-dark hover:from-brand-moss-dark hover:to-brand-moss-dark text-white font-bold text-sm rounded-xl transition flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
+                          >
+                            <span>📸 Open Camera / Upload Photo</span>
+                          </button>
 
                           {uploadError && (
                             <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl p-3 text-xs space-y-2">
@@ -527,26 +507,6 @@ export function MissionsList({
                                   ⚠️ Force Submit Anyway
                                 </button>
                               )}
-                            </div>
-                          )}
-
-                          {userSelectedImage && (
-                            <div className="flex justify-end gap-2 pt-2">
-                              <button
-                                onClick={() => handleImageSelected(item.id, "")}
-                                type="button"
-                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold text-xs text-gray-700 transition"
-                              >
-                                Clear Selection
-                              </button>
-                              <button
-                                onClick={() => handleTriggerUpload(item.id)}
-                                type="button"
-                                className="px-5 py-2.5 bg-brand-moss hover:bg-brand-moss-dark active:scale-95 text-white font-bold text-xs rounded-lg transition flex items-center gap-1.5 shadow-sm cursor-pointer"
-                              >
-                                <Sparkles className="h-3.5 w-3.5" />
-                                Submit to AI Referee
-                              </button>
                             </div>
                           )}
                         </div>

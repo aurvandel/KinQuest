@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Camera, Upload, AlertCircle, RefreshCw, Check, Image as ImageIcon } from "lucide-react";
+import { Camera, Upload, AlertCircle, RefreshCw, Check, Image as ImageIcon, Download } from "lucide-react";
 
 interface CameraCaptureProps {
   onImageSelected: (base64Image: string) => void;
@@ -131,9 +131,24 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const base64 = canvas.toDataURL("image/jpeg", compressionSettings.quality);
         onImageSelected(base64);
+        saveCapturedPhotoToDevice(base64);
         stopCamera();
         setCameraActive(false);
       }
+    }
+  };
+
+  const saveCapturedPhotoToDevice = (base64Image: string) => {
+    try {
+      const link = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      link.href = base64Image;
+      link.download = `kinquest-capture-${timestamp}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.warn("Unable to trigger save-to-device for captured photo:", err);
     }
   };
 
@@ -267,6 +282,11 @@ export function CameraCapture({ onImageSelected, selectedImage }: CameraCaptureP
               <Upload className="h-3.5 w-3.5" />
               Upload Image File
             </button>
+          </div>
+
+          <div className="text-[11px] text-gray-500 flex items-center gap-1.5 mt-3">
+            <Download className="h-3 w-3" />
+            Photos taken with "Use Camera" are automatically saved to your device when your browser allows it.
           </div>
 
           <input

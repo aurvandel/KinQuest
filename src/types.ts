@@ -9,6 +9,7 @@ export interface ScavengerItem {
   lng?: number | null;
   radius?: number | null; // in meters
   createdBy?: string; // User ID of who created this mission
+  enforceGeofence?: boolean; // If false, allow submissions without GPS validation. Default true.
 }
 
 export interface PlayerProfile {
@@ -23,6 +24,8 @@ export interface PlayerProfile {
   mutedUntil?: string | null; // ISO timestamp for when mute expires (null = permanent)
   isBooted?: boolean; // User has been kicked from game
   bootedAt?: string; // When user was booted
+  tutorialCompleted?: boolean; // First-run onboarding finished
+  tutorialCompletedAt?: string | null; // ISO timestamp when tutorial was marked complete
   permissions?: {
     shareLocation?: boolean;
     allowNotifications?: boolean;
@@ -90,6 +93,7 @@ export interface AppSettings {
   imageCompressionQuality?: number;
   showTitle?: boolean;
   showLogo?: boolean;
+  chatDisabledByAdmin?: boolean; // If true, chat is disabled for all users
 }
 
 

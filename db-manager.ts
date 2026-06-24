@@ -14,6 +14,7 @@ export interface ScavengerItem {
   lat: number | null;
   lng: number | null;
   radius: number | null;
+  enforceGeofence?: boolean;
 }
 
 // Inject ws as global WebSocket for Supabase Realtime on Node.js 20
@@ -28,6 +29,8 @@ export interface PlayerProfile {
   completedCount: number;
   createdAt: string;
   role?: "user" | "admin";
+  tutorialCompleted?: boolean;
+  tutorialCompletedAt?: string | null;
   permissions?: {
     shareLocation?: boolean;
     allowNotifications?: boolean;
@@ -240,6 +243,8 @@ export async function getAppState(): Promise<DbStore> {
         completedCount: u.completed_count ?? 0,
         createdAt: u.created_at,
         role: u.role || undefined,
+        tutorialCompleted: u.tutorial_completed === true,
+        tutorialCompletedAt: u.tutorial_completed_at || null,
         permissions: parsedPerm
       };
     });
@@ -256,7 +261,8 @@ export async function getAppState(): Promise<DbStore> {
         lat: it.lat,
         lng: it.lng,
         radius: it.radius,
-        createdBy: it.created_by
+        createdBy: it.created_by,
+        enforceGeofence: it.enforce_geofence !== false
       };
     });
 
@@ -354,6 +360,8 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
         completedCount: u.completed_count ?? 0,
         createdAt: u.created_at,
         role: finalRole as "user" | "admin",
+        tutorialCompleted: u.tutorial_completed === true,
+        tutorialCompletedAt: u.tutorial_completed_at || null,
         permissions: parsedPerm
       };
     }
@@ -369,6 +377,8 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       completed_count: 0,
       created_at: new Date().toISOString(),
       role: assignedRole,
+      tutorial_completed: false,
+      tutorial_completed_at: null,
       permissions: JSON.stringify({
         shareLocation: true,
         allowNotifications: true,
@@ -398,6 +408,8 @@ export async function authRegisterPlayer(username: string, registerRole?: "user"
       completedCount: 0,
       createdAt: newUserRow.created_at,
       role: assignedRole,
+      tutorialCompleted: false,
+      tutorialCompletedAt: null,
       permissions: {
         shareLocation: true,
         allowNotifications: true,
@@ -441,6 +453,8 @@ export async function ensureProfileExists(userId: string, username: string): Pro
         completedCount: u.completed_count ?? 0,
         createdAt: u.created_at,
         role: (u.role || "user") as "user" | "admin",
+        tutorialCompleted: u.tutorial_completed === true,
+        tutorialCompletedAt: u.tutorial_completed_at || null,
         permissions: parsedPerm
       };
     }
@@ -454,6 +468,8 @@ export async function ensureProfileExists(userId: string, username: string): Pro
       completed_count: 0,
       created_at: new Date().toISOString(),
       role: "user",
+      tutorial_completed: false,
+      tutorial_completed_at: null,
       permissions: JSON.stringify({
         shareLocation: true,
         allowNotifications: true,
@@ -483,6 +499,8 @@ export async function ensureProfileExists(userId: string, username: string): Pro
       completedCount: 0,
       createdAt: newUserRow.created_at,
       role: "user",
+      tutorialCompleted: false,
+      tutorialCompletedAt: null,
       permissions: {
         shareLocation: true,
         allowNotifications: true,
@@ -508,7 +526,8 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
     lat: item.lat,
     lng: item.lng,
     radius: item.radius,
-    createdBy: item.createdBy
+    createdBy: item.createdBy,
+    enforceGeofence: item.enforceGeofence !== false
   };
 
   try {
@@ -522,7 +541,8 @@ export async function createScavengerChallenge(item: Omit<ScavengerItem, "id">):
       lat: newItem.lat,
       lng: newItem.lng,
       radius: newItem.radius,
-      created_by: newItem.createdBy || null
+      created_by: newItem.createdBy || null,
+      enforce_geofence: newItem.enforceGeofence !== false
     };
 
     const { error } = await supabase!.from("items").insert(row);
@@ -572,6 +592,7 @@ export async function updateScavengerChallenge(
     if (updates.lat !== undefined) updateRow.lat = updates.lat;
     if (updates.lng !== undefined) updateRow.lng = updates.lng;
     if (updates.radius !== undefined) updateRow.radius = updates.radius;
+    if (updates.enforceGeofence !== undefined) updateRow.enforce_geofence = updates.enforceGeofence;
 
     const { data, error } = await supabase!
       .from("items")
@@ -593,7 +614,8 @@ export async function updateScavengerChallenge(
       lat: data.lat,
       lng: data.lng,
       radius: data.radius,
-      createdBy: data.created_by
+      createdBy: data.created_by,
+      enforceGeofence: data.enforce_geofence !== false
     };
   } catch (err) {
     console.error("Supabase update error:", err);
@@ -1121,6 +1143,7 @@ export interface AppSettings {
   imageCompressionQuality?: number;
   showTitle?: boolean;
   showLogo?: boolean;
+  chatDisabledByAdmin?: boolean;
 }
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
@@ -1150,7 +1173,8 @@ export function getAppSettings(): AppSettings {
         imageCompressionMaxDim: Number(parsed.imageCompressionMaxDim) || 800,
         imageCompressionQuality: Number(parsed.imageCompressionQuality) || 0.7,
         showTitle: parsed.showTitle !== undefined ? !!parsed.showTitle : true,
-        showLogo: parsed.showLogo !== undefined ? !!parsed.showLogo : true
+        showLogo: parsed.showLogo !== undefined ? !!parsed.showLogo : true,
+        chatDisabledByAdmin: parsed.chatDisabledByAdmin !== undefined ? !!parsed.chatDisabledByAdmin : false
       };
     }
   } catch (err) {
@@ -1171,7 +1195,8 @@ export function getAppSettings(): AppSettings {
     imageCompressionMaxDim: 800,
     imageCompressionQuality: 0.7,
     showTitle: true,
-    showLogo: true
+    showLogo: true,
+    chatDisabledByAdmin: false
   };
 }
 
@@ -1181,6 +1206,164 @@ export function saveAppSettings(settings: AppSettings): void {
   } catch (err) {
     console.error("Failed to save app settings:", err);
   }
+}
+
+export async function restoreFromBackup(backup: any): Promise<{
+  users: number;
+  items: number;
+  submissions: number;
+  messages: number;
+  slideshows: number;
+}> {
+  // Validate backup structure
+  if (!backup || typeof backup !== "object") {
+    throw new Error("Invalid backup format");
+  }
+
+  if (!backup.version || !Array.isArray(backup.users) || !Array.isArray(backup.items)) {
+    throw new Error("Invalid backup format: missing required fields");
+  }
+
+  // Ensure Supabase is initialized
+  getDbMode();
+
+  if (!supabase) {
+    throw new Error("Database connection not initialized");
+  }
+
+  console.log("Starting restore operation...");
+
+  // Step 1: Clear existing data - delete in correct order to respect foreign keys
+  try {
+    await supabase.from("submissions").delete().neq("id", "");
+    await supabase.from("messages").delete().neq("id", "");
+    await supabase.from("slideshows").delete().neq("id", "");
+    await supabase.from("items").delete().neq("id", "");
+    await supabase.from("profiles").delete().neq("id", "");
+    console.log("Cleared existing data");
+  } catch (err: any) {
+    console.warn("Warning during data cleanup:", err?.message);
+  }
+
+  const result = {
+    users: 0,
+    items: 0,
+    submissions: 0,
+    messages: 0,
+    slideshows: 0
+  };
+
+  // Step 2: Restore users
+  if (backup.users && backup.users.length > 0) {
+    const usersToInsert = backup.users.map((u: any) => ({
+      id: u.id,
+      username: u.username,
+      display_name: u.displayName || u.display_name,
+      score: u.score ?? 0,
+      completed_count: u.completedCount ?? u.completed_count ?? 0,
+      created_at: u.createdAt || u.created_at,
+      role: u.role || "user",
+      permissions: typeof u.permissions === "object" ? JSON.stringify(u.permissions) : u.permissions
+    }));
+    const { error: userErr } = await supabase.from("profiles").insert(usersToInsert);
+    if (userErr) throw new Error(`Failed to restore users: ${userErr.message}`);
+    result.users = usersToInsert.length;
+    console.log(`Restored ${usersToInsert.length} users`);
+  }
+
+  // Step 3: Restore items
+  if (backup.items && backup.items.length > 0) {
+    const itemsToInsert = backup.items.map((item: any) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      points: item.points ?? 10,
+      category: item.category || "General",
+      icon: item.icon || "Sparkles",
+      lat: item.lat,
+      lng: item.lng,
+      radius: item.radius,
+      created_by: item.createdBy || item.created_by,
+      enforce_geofence: item.enforceGeofence !== undefined ? !!item.enforceGeofence : (item.enforce_geofence !== false)
+    }));
+    const { error: itemErr } = await supabase.from("items").insert(itemsToInsert);
+    if (itemErr) throw new Error(`Failed to restore items: ${itemErr.message}`);
+    result.items = itemsToInsert.length;
+    console.log(`Restored ${itemsToInsert.length} items`);
+  }
+
+  // Step 4: Restore submissions
+  if (backup.submissions && backup.submissions.length > 0) {
+    const submissionsToInsert = backup.submissions.map((sub: any) => ({
+      id: sub.id,
+      user_id: sub.userId || sub.user_id,
+      username: sub.username,
+      item_id: sub.itemId || sub.item_id,
+      image_url: sub.imageUrl || sub.image_url,
+      status: sub.status || "pending",
+      ai_explanation: sub.aiExplanation || sub.ai_explanation,
+      points_awarded: sub.pointsAwarded ?? sub.points_awarded ?? 0,
+      created_at: sub.createdAt || sub.created_at,
+      user_lat: sub.userLat || sub.user_lat,
+      user_lng: sub.userLng || sub.user_lng,
+      distance_meters: sub.distanceMeters || sub.distance_meters
+    }));
+    const { error: subErr } = await supabase.from("submissions").insert(submissionsToInsert);
+    if (subErr) throw new Error(`Failed to restore submissions: ${subErr.message}`);
+    result.submissions = submissionsToInsert.length;
+    console.log(`Restored ${submissionsToInsert.length} submissions`);
+  }
+
+  // Step 5: Restore messages
+  if (backup.messages && backup.messages.length > 0) {
+    const messagesToInsert = backup.messages.map((msg: any) => ({
+      id: msg.id,
+      sender_id: msg.senderId || msg.sender_id,
+      sender_name: msg.senderName || msg.sender_name,
+      receiver_id: msg.receiverId || msg.receiver_id,
+      text: msg.text,
+      created_at: msg.createdAt || msg.created_at,
+      is_deleted: msg.isDeleted || false,
+      deleted_at: msg.deletedAt || msg.deleted_at,
+      deleted_by: msg.deletedBy || msg.deleted_by,
+      is_read: msg.isRead || false
+    }));
+    const { error: msgErr } = await supabase.from("messages").insert(messagesToInsert);
+    if (msgErr) throw new Error(`Failed to restore messages: ${msgErr.message}`);
+    result.messages = messagesToInsert.length;
+    console.log(`Restored ${messagesToInsert.length} messages`);
+  }
+
+  // Step 6: Restore slideshows
+  if (backup.slideshows && backup.slideshows.length > 0) {
+    const slideshowsToInsert = backup.slideshows.map((slide: any) => ({
+      id: slide.id,
+      title: slide.title,
+      description: slide.description,
+      script: slide.script,
+      submission_ids: Array.isArray(slide.submissionIds) ? slide.submissionIds : slide.submission_ids,
+      created_by: slide.createdBy || slide.created_by,
+      created_at: slide.createdAt || slide.created_at,
+      is_published: slide.isPublished ?? false
+    }));
+    const { error: slideErr } = await supabase.from("slideshows").insert(slideshowsToInsert);
+    if (slideErr) throw new Error(`Failed to restore slideshows: ${slideErr.message}`);
+    result.slideshows = slideshowsToInsert.length;
+    console.log(`Restored ${slideshowsToInsert.length} slideshows`);
+  }
+
+  // Step 7: Restore settings if provided
+  if (backup.settings && typeof backup.settings === "object") {
+    try {
+      saveAppSettings(backup.settings);
+      console.log("Restored settings");
+    } catch (settingsErr: any) {
+      console.warn("Warning: Could not restore settings:", settingsErr?.message);
+    }
+  }
+
+  console.log("Restore operation completed successfully");
+  return result;
 }
 
 export async function updatePlayerProfile(
@@ -1231,6 +1414,8 @@ export async function updatePlayerProfile(
           completedCount: u.completed_count ?? 0,
           createdAt: u.created_at,
           role: u.role || undefined,
+          tutorialCompleted: u.tutorial_completed === true,
+          tutorialCompletedAt: u.tutorial_completed_at || null,
           permissions: parsedPerm
         };
       }
@@ -1238,6 +1423,73 @@ export async function updatePlayerProfile(
     return null;
   } catch (err) {
     console.warn("Supabase profile update error:", err);
+    throw err;
+  }
+}
+
+export async function completeTutorial(userId: string): Promise<PlayerProfile | null> {
+  try {
+    const now = new Date().toISOString();
+    const updRow = {
+      tutorial_completed: true,
+      tutorial_completed_at: now
+    };
+
+    // Try Supabase first
+    if (supabase) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(updRow)
+        .eq("id", userId)
+        .select("*");
+      
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        const u = data[0];
+        let parsedPerm = undefined;
+        if (u.permissions) {
+          if (typeof u.permissions === "string") {
+            try { parsedPerm = JSON.parse(u.permissions); } catch { parsedPerm = undefined; }
+          } else {
+            parsedPerm = u.permissions;
+          }
+        }
+        return {
+          id: u.id,
+          username: u.username,
+          displayName: u.display_name || u.displayName || undefined,
+          score: u.score ?? 0,
+          completedCount: u.completed_count ?? 0,
+          createdAt: u.created_at,
+          role: u.role || undefined,
+          tutorialCompleted: u.tutorial_completed === true,
+          tutorialCompletedAt: u.tutorial_completed_at || null,
+          permissions: parsedPerm
+        };
+      }
+    }
+    
+    // Fall back to local
+    const db = loadLocalDb();
+    if (db.users && db.users[userId]) {
+      db.users[userId].tutorialCompleted = true;
+      db.users[userId].tutorialCompletedAt = now;
+      saveLocalDb(db);
+      return db.users[userId];
+    }
+    
+    return null;
+  } catch (err) {
+    console.warn("Failed to complete tutorial:", err);
+    // Fall back to local update
+    const db = loadLocalDb();
+    if (db.users && db.users[userId]) {
+      db.users[userId].tutorialCompleted = true;
+      db.users[userId].tutorialCompletedAt = new Date().toISOString();
+      saveLocalDb(db);
+      return db.users[userId];
+    }
     throw err;
   }
 }

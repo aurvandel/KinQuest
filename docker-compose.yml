@@ -8,8 +8,8 @@ services:
       dockerfile: Dockerfile
     container_name: kinquest-app
     restart: always
-      #dns:
-      #- ${APP_DNS_SERVER_1:-}
+    dns:
+      - ${APP_DNS_SERVER_1:-}
       #dns_search:
       #- watkins.narcolepsy.ninja
       #extra_hosts:

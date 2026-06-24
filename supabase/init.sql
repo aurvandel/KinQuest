@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   is_muted BOOLEAN DEFAULT FALSE,
   muted_until TIMESTAMPTZ,
   is_booted BOOLEAN DEFAULT FALSE,
-  booted_at TIMESTAMPTZ
+  booted_at TIMESTAMPTZ,
+  tutorial_completed BOOLEAN DEFAULT FALSE,
+  tutorial_completed_at TIMESTAMPTZ
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON profiles TO anon;
@@ -58,9 +60,12 @@ CREATE TABLE IF NOT EXISTS items (
   lat DOUBLE PRECISION,
   lng DOUBLE PRECISION,
   radius DOUBLE PRECISION,
+  enforce_geofence BOOLEAN DEFAULT TRUE,
   created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE items ADD COLUMN IF NOT EXISTS enforce_geofence BOOLEAN DEFAULT TRUE;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON items TO anon;
 

@@ -32,6 +32,7 @@ export function EditMissionModal({
   const [lat, setLat] = useState(item?.lat ? String(item.lat) : "");
   const [lng, setLng] = useState(item?.lng ? String(item.lng) : "");
   const [radius, setRadius] = useState(item?.radius ? String(item.radius) : "");
+  const [enforceGeofence, setEnforceGeofence] = useState(item?.enforceGeofence !== false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -67,7 +68,8 @@ export function EditMissionModal({
         icon,
         lat: itemLat,
         lng: itemLng,
-        radius: itemRadius
+        radius: itemRadius,
+        enforceGeofence
       });
 
       setSuccess(true);
@@ -234,6 +236,19 @@ export function EditMissionModal({
                 />
               </div>
             </div>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none pt-1">
+              <input
+                type="checkbox"
+                checked={enforceGeofence}
+                onChange={(e) => setEnforceGeofence(e.target.checked)}
+                className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+              />
+              <div className="leading-none">
+                <span className="text-xs font-bold text-[#5a5a40] block">Enforce geofencing for submissions</span>
+                <span className="text-[9px] text-[#8c8c82]">Turn this off to keep coordinates for map pins while allowing submissions from anywhere.</span>
+              </div>
+            </label>
 
             <p className="text-[10px] text-[#8c8c82] leading-relaxed">
               💡 If Latitude/Longitude is specified, players must be within the defined boundary radius (in meters) to submit successfully.

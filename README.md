@@ -52,15 +52,17 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
    SUPABASE_ANON_KEY=your_anon_key
    ```
 
-3. **Start the local Supabase stack:**
+3. **Start the local stack:**
    ```bash
-   docker compose up -d
+   npm run compose:up
    ```
+   Compose automatically applies `docker-compose.override.yml`, so nginx is enabled by default.
    This starts:
    - PostgreSQL database (port 5432)
    - PostgREST API (port 8000)
    - Kong API Gateway (port 8000)
-   - Node.js app (port 3000)
+   - Node.js app behind nginx
+   - nginx reverse proxy (ports 80/443)
 
 4. **Run the development server:**
    ```bash

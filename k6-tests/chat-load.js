@@ -58,10 +58,11 @@ const messages = [
 export default function () {
   const userId = `chattester_${__VU}_${__ITER}`;
   const username = `ChatUser${__VU}`;
+  const wsTarget = WS_URL.endsWith('/ws') ? WS_URL.slice(0, -3) : WS_URL;
 
   group('WebSocket Shoutbox & Chat Load Test', () => {
     // Attempt WebSocket connection for chat
-    const wsRes = ws.connect(`${WS_URL}/ws`, {
+    const wsRes = ws.connect(wsTarget, {
       tags: { name: 'WebSocketConnection' },
     }, function (socket) {
       socket.on('open', function () {
@@ -121,7 +122,7 @@ export default function () {
               'received valid message': () => true,
               'message has content': () => data.message.text && data.message.text.length > 0,
             });
-          } else if (data && data.type === 'online-users') {
+          } else if (data && (data.type === 'online-users' || data.type === 'online_users')) {
             // Ignore online-users broadcast messages
             check(true, {
               'received valid message': () => true,

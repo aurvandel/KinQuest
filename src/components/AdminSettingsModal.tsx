@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Settings, Upload, Copy, Check, AlertCircle, Loader2, RotateCcw, QrCode, ExternalLink, HardDrive } from "lucide-react";
 import QRCode from "react-qr-code";
 import { AppSettings } from "../types";
@@ -52,6 +52,8 @@ interface AdminSettingsModalProps {
   onShowTitleChange: (value: boolean) => void;
   showLogoInput: boolean;
   onShowLogoChange: (value: boolean) => void;
+  chatDisabledByAdminInput: boolean;
+  onChatDisabledByAdminChange: (value: boolean) => void;
   storageInfo: StorageInfo | null;
   isLoading: boolean;
   saveSuccess: boolean;
@@ -59,7 +61,6 @@ interface AdminSettingsModalProps {
   onSubmit: (e: React.FormEvent) => void;
   onReset: () => void;
   onGenerateCode: () => void;
-  onOpenSlideshowGenerator?: () => void;
   currentPasswordInput?: string;
   onCurrentPasswordChange?: (value: string) => void;
   newPasswordInput?: string;
@@ -110,6 +111,8 @@ export function AdminSettingsModal({
   onShowTitleChange,
   showLogoInput,
   onShowLogoChange,
+  chatDisabledByAdminInput,
+  onChatDisabledByAdminChange,
   storageInfo,
   isLoading,
   saveSuccess,
@@ -117,7 +120,6 @@ export function AdminSettingsModal({
   onSubmit,
   onReset,
   onGenerateCode,
-  onOpenSlideshowGenerator,
   currentPasswordInput = "",
   onCurrentPasswordChange,
   newPasswordInput = "",
@@ -133,6 +135,10 @@ export function AdminSettingsModal({
 }: AdminSettingsModalProps) {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
+  const restoreFileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
@@ -183,6 +189,54 @@ export function AdminSettingsModal({
       setBackupError(err?.message || "Failed to download backup");
     } finally {
       setIsBackingUp(false);
+    }
+  };
+
+  const handleRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const userId = localStorage.getItem("scavenger_uid");
+    if (!userId) {
+      setRestoreError("Not logged in");
+      return;
+    }
+
+    setIsRestoring(true);
+    setRestoreError(null);
+    setRestoreSuccess(null);
+
+    try {
+      const fileText = await file.text();
+      const backup = JSON.parse(fileText);
+
+      const response = await fetch(`/api/admin/restore?userId=${encodeURIComponent(userId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(backup)
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || "Restore failed");
+      }
+
+      const result = await response.json();
+      const stats = result.restored;
+      const message = `Successfully restored: ${stats.users} users, ${stats.items} missions, ${stats.submissions} submissions, ${stats.messages} messages, ${stats.slideshows} slideshows`;
+      setRestoreSuccess(message);
+      
+      // Reset file input
+      if (restoreFileInputRef.current) {
+        restoreFileInputRef.current.value = "";
+      }
+
+      // Clear success message after 5 seconds
+      setTimeout(() => setRestoreSuccess(null), 5000);
+    } catch (err: any) {
+      setRestoreError(err?.message || "Failed to restore backup");
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -483,6 +537,19 @@ export function AdminSettingsModal({
                 <span className="text-[9px] text-[#8c8c82]">When enabled, users can submit even if the AI Judge rejects their photo. Shows the judge's feedback with a badge.</span>
               </div>
             </label>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none mt-3">
+              <input
+                type="checkbox"
+                checked={chatDisabledByAdminInput}
+                onChange={(e) => onChatDisabledByAdminChange(e.target.checked)}
+                className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+              />
+              <div className="leading-none">
+                <span className="text-xs font-bold text-[#5a5a40] block">Disable Chat Feature</span>
+                <span className="text-[9px] text-[#8c8c82]">When enabled, the chat feature is completely disabled for all players. Messages are not sent or received, and the chat button is hidden from the menu.</span>
+              </div>
+            </label>
           </div>
 
           {/* Invite & QR Code Section */}
@@ -671,6 +738,20 @@ export function AdminSettingsModal({
               <span>Backup failed: {backupError}</span>
             </div>
           )}
+
+          {restoreError && (
+            <div className="p-2.5 bg-red-50 text-red-700 rounded-xl text-[11px] font-medium border border-red-100 flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
+              <span>Restore failed: {restoreError}</span>
+            </div>
+          )}
+
+          {restoreSuccess && (
+            <div className="p-2.5 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-medium border border-emerald-100 flex items-center gap-1.5 animate-bounce">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>{restoreSuccess}</span>
+            </div>
+          )}
         </form>
 
         {/* Footer with buttons */}
@@ -691,18 +772,25 @@ export function AdminSettingsModal({
 
           <button
             type="button"
-            onClick={() => {
-              if (onOpenSlideshowGenerator) {
-                onOpenSlideshowGenerator();
-              }
-            }}
-            className="py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
+            onClick={() => restoreFileInputRef.current?.click()}
+            disabled={isRestoring}
+            className="py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
-            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 6h2v7H9V6zm0 9h2v2H9v-2z" />
-            </svg>
-            Generate Slideshow
+            {isRestoring ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+            {isRestoring ? "Restoring..." : "Restore from Backup"}
           </button>
+
+          <input
+            ref={restoreFileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleRestore}
+            className="hidden"
+          />
 
           <button
             type="submit"

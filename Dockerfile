@@ -25,8 +25,8 @@ COPY package*.json ./
 # Install only production dependencies to keep the image slim
 RUN npm ci --only=production
 
-# Install FFmpeg for slideshow MP4 rendering
-RUN apk add --no-cache ffmpeg
+# Install FFmpeg and bundled fonts required by drawtext overlays
+RUN apk add --no-cache ffmpeg fontconfig ttf-dejavu
 
 # Copy built artifacts from builder stage
 COPY --from=builder /app/dist ./dist

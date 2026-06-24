@@ -100,6 +100,19 @@ export default function () {
     if (!registerSuccess) errorRate.add(1);
   });
 
+  group('Tutorial Completion Flow', () => {
+    const tutorialRes = http.post(`${BASE_URL}/api/tutorial/complete`, JSON.stringify({ userId: registeredUserId }), {
+      headers: { 'Content-Type': 'application/json' },
+      tags: { name: 'TutorialComplete' },
+    });
+
+    const tutorialSuccess = check(tutorialRes, {
+      'tutorial completion status is 200 or 404': (r) => r.status === 200 || r.status === 404,
+    });
+
+    if (!tutorialSuccess) errorRate.add(1);
+  });
+
   sleep(1);
 
   group('Get Game State', () => {
@@ -135,8 +148,8 @@ export default function () {
             itemId: itemId, // Use dynamically fetched item ID
             imageBase64: getTestImageBase64(),
             mimeType: 'image/png',
-            lat: coords.lat,
-            lng: coords.lng,
+            userLat: coords.lat,
+            userLng: coords.lng,
           };
 
           const submissionRes = http.post(`${BASE_URL}/api/verify-submission`, JSON.stringify(submissionPayload), {

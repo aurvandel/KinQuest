@@ -103,8 +103,8 @@ export default function () {
               itemId,
               imageBase64: getTestImageBase64(),
               mimeType: 'image/png',
-              lat: 34.0522 + Math.random() * 0.1,
-              lng: -118.2437 + Math.random() * 0.1,
+              userLat: 34.0522 + Math.random() * 0.1,
+              userLng: -118.2437 + Math.random() * 0.1,
             };
 
             const submissionRes = http.post(`${BASE_URL}/api/verify-submission`,

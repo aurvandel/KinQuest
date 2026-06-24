@@ -13,6 +13,8 @@ import { UserSettingsModal } from "./components/UserSettingsModal";
 import { AdminSettingsModal } from "./components/AdminSettingsModal";
 import { CreateMissionModal } from "./components/CreateMissionModal";
 import { SlideshowGeneratorModal } from "./components/SlideshowGeneratorModal";
+import { TutorialModal } from "./components/TutorialModal";
+import { CameraModal } from "./components/CameraModal";
 import { ServerLogs } from "./components/ServerLogs";
 import { useMeshNetwork } from "./utils/useMeshNetwork";
 import { QueuedSubmission } from "./utils/meshSubmissionQueue";
@@ -98,6 +100,7 @@ export default function App() {
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [adminShowTitleInput, setAdminShowTitleInput] = useState(true);
   const [adminShowLogoInput, setAdminShowLogoInput] = useState(true);
+  const [adminChatDisabledByAdminInput, setAdminChatDisabledByAdminInput] = useState(false);
 
   // Admin password change states
   const [adminCurrentPasswordInput, setAdminCurrentPasswordInput] = useState("");
@@ -603,9 +606,19 @@ CREATE TABLE IF NOT EXISTS submissions (
   // Back button warning state
   const [showBackWarning, setShowBackWarning] = useState(false);
   const [hasPendingPhoto, setHasPendingPhoto] = useState(false);
+  const allowNextBackNavigationRef = useRef(false);
+  const [showTutorialModal, setShowTutorialModal] = useState(false);
+  const [tutorialDismissedThisSession, setTutorialDismissedThisSession] = useState(false);
+  const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  const [cameraModalItemId, setCameraModalItemId] = useState<string | null>(null);
+  const [cameraModalItemTitle, setCameraModalItemTitle] = useState("");
+  const [cameraSelectedImage, setCameraSelectedImage] = useState<string | null>(null);
+  const [cameraIsSubmitting, setCameraIsSubmitting] = useState(false);
+
   // Ref so popstate handler always reads current values without stale closures
   const backStateRef = useRef({
     hasPendingPhoto: false,
+    cameraModalOpen: false,
     showCreateMissionModal: false,
     adminPanelOpen: false,
     userDashboardOpen: false,
@@ -614,35 +627,28 @@ CREATE TABLE IF NOT EXISTS submissions (
   useEffect(() => {
     backStateRef.current = {
       hasPendingPhoto,
+      cameraModalOpen,
       showCreateMissionModal,
       adminPanelOpen,
       userDashboardOpen,
       slideshowGeneratorOpen,
     };
-  }, [hasPendingPhoto, showCreateMissionModal, adminPanelOpen, userDashboardOpen, slideshowGeneratorOpen]);
+  }, [hasPendingPhoto, cameraModalOpen, showCreateMissionModal, adminPanelOpen, userDashboardOpen, slideshowGeneratorOpen]);
 
   // Push sentinel state once so back button has something to intercept
   useEffect(() => {
     history.pushState({ kinquestSentinel: true }, "");
 
     const handlePopState = () => {
-      const s = backStateRef.current;
-      // Always re-push the sentinel so the next back press is also intercepted
-      history.pushState({ kinquestSentinel: true }, "");
-
-      if (s.hasPendingPhoto || s.showCreateMissionModal) {
-        // Data-loss risk — show explicit warning
-        setShowBackWarning(true);
-      } else if (s.adminPanelOpen) {
-        setAdminPanelOpen(false);
-      } else if (s.userDashboardOpen) {
-        setUserDashboardOpen(false);
-      } else if (s.slideshowGeneratorOpen) {
-        setSlideshowGeneratorOpen(false);
-        setSlideshowGeneratedScript(null);
-        setSlideshowError(null);
+      // User confirmed leaving, allow exactly one real back navigation.
+      if (allowNextBackNavigationRef.current) {
+        allowNextBackNavigationRef.current = false;
+        return;
       }
-      // If nothing is open we silently swallow the event — keeps users in the PWA
+
+      // Intercept every back action and show warning first.
+      history.pushState({ kinquestSentinel: true }, "");
+      setShowBackWarning(true);
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -660,6 +666,21 @@ CREATE TABLE IF NOT EXISTS submissions (
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []);
+
+  useEffect(() => {
+    setTutorialDismissedThisSession(false);
+  }, [profile?.id]);
+
+  // Show tutorial on first login if not completed
+  useEffect(() => {
+    if (profile && appReady && !profile.tutorialCompleted && !tutorialDismissedThisSession) {
+      setShowTutorialModal(true);
+    }
+  }, [profile?.id, appReady, profile?.tutorialCompleted, tutorialDismissedThisSession]);
+
+  useEffect(() => {
+    setHasPendingPhoto(Boolean(cameraSelectedImage));
+  }, [cameraSelectedImage]);
 
   // Offline snapshot + connectivity state
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -795,13 +816,17 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   // Download chat logs initially
   useEffect(() => {
-    if (!profile) return;
+    if (!profile || settings.chatDisabledByAdmin) {
+      setChatMessages([]);
+      setUnreadCount(0);
+      return;
+    }
     
     fetch("/api/chat-history")
       .then(res => res.json())
       .then(data => setChatMessages(data || []))
       .catch(err => console.error("Failed to load chat history:", err));
-  }, [profile]);
+  }, [profile, settings.chatDisabledByAdmin]);
 
   // Track new missions and update badge
   useEffect(() => {
@@ -838,6 +863,14 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   // Connect Real-time WebSocket overlay
   useEffect(() => {
+    if (settings.chatDisabledByAdmin) {
+      if (socket) {
+        socket.close();
+        setSocket(null);
+      }
+      return;
+    }
+
     // Check if profile ID actually changed
     const profileIdChanged = profile && profileIdRef.current !== profile.id;
     
@@ -926,7 +959,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         ws.close();
       }
     };
-  }, [profile?.id]);
+  }, [profile?.id, settings.chatDisabledByAdmin]);
 
   // Reset unread counts when clicking chat tab
   useEffect(() => {
@@ -934,6 +967,12 @@ CREATE TABLE IF NOT EXISTS submissions (
       setUnreadCount(0);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (settings.chatDisabledByAdmin && activeTab === "chat") {
+      setActiveTab("missions");
+    }
+  }, [activeTab, settings.chatDisabledByAdmin]);
 
   // Update the ref to track current active tab for WebSocket handlers
   useEffect(() => {
@@ -970,6 +1009,11 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   const handleSendMessage = (text: string, receiverId: string | null) => {
     console.log("handleSendMessage called:", { text, receiverId, hasProfile: !!profile, socketState: socket?.readyState, onLine: navigator.onLine });
+
+    if (settings.chatDisabledByAdmin) {
+      console.warn("Chat is disabled by admin setting");
+      return;
+    }
     
     if (!profile) {
       console.error("Cannot send message: profile is null");
@@ -1116,6 +1160,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminImageCompressionQualityInput(settings.imageCompressionQuality ?? 0.7);
       setAdminShowTitleInput(settings.showTitle !== false);
       setAdminShowLogoInput(settings.showLogo !== false);
+      setAdminChatDisabledByAdminInput(settings.chatDisabledByAdmin === true);
       initializedAdminFormRef.current = true;
     } else if (!adminPanelOpen) {
       // Reset the flag when panel closes so it can initialize again when reopened
@@ -1229,7 +1274,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           imageCompressionMaxDim: Number(adminImageCompressionMaxDimInput) || 800,
           imageCompressionQuality: Number(adminImageCompressionQualityInput) || 0.7,
           showTitle: adminShowTitleInput,
-          showLogo: adminShowLogoInput
+          showLogo: adminShowLogoInput,
+          chatDisabledByAdmin: adminChatDisabledByAdminInput
         })
       });
       if (res.ok) {
@@ -1292,6 +1338,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminImageCompressionQualityInput(0.7);
         setAdminShowTitleInput(true);
         setAdminShowLogoInput(true);
+        setAdminChatDisabledByAdminInput(false);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
       } else {
@@ -1591,8 +1638,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   }, [profile?.id]);
 
   // Submit base64 photo with current coordinates to server
-  const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false, submissionId?: string) => {
-    if (!profile) return;
+  const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false, submissionId?: string): Promise<boolean> => {
+    if (!profile) return false;
 
     setSubmitErrorMap((prev) => ({ ...prev, [itemId]: null }));
     setIsSubmittingMap((prev) => ({ ...prev, [itemId]: true }));
@@ -1635,7 +1682,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         const pending = getQueuedSubmissions();
         setPendingSubmissions(pending);
         setSyncStatusText(buildQueueStatusText(pending.length, syncStatus.isSyncing));
-        return;
+        return false;
       }
 
       // Online flow: send to server immediately (existing code)
@@ -1676,6 +1723,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         delete updated[itemId];
         return updated;
       });
+
+      return true;
 
     } catch (err: any) {
       console.error("Submission grading error:", err);
@@ -1718,17 +1767,19 @@ CREATE TABLE IF NOT EXISTS submissions (
           [itemId]: err instanceof Error ? err.message : "Proof check declined. Retry."
         }));
       }
+      return false;
     } finally {
       setIsSubmittingMap((prev) => ({ ...prev, [itemId]: false }));
     }
   };
 
   // Force submit a rejected submission
-  const handleForceSubmit = (itemId: string) => {
+  const handleForceSubmit = async (itemId: string): Promise<boolean> => {
     const rejected = rejectedSubmissionMap[itemId];
     if (rejected) {
-      handleUploadSubmission(itemId, rejected.base64, true, rejected.id);
+      return handleUploadSubmission(itemId, rejected.base64, true, rejected.id);
     }
+    return false;
   };
 
   // Delete live submissions
@@ -2144,6 +2195,45 @@ CREATE TABLE IF NOT EXISTS submissions (
     );
   }
 
+  const handleCompleteTutorial = async () => {
+    if (!profile) return;
+    try {
+      const res = await fetch("/api/tutorial/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: profile.id })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data.profile);
+        setShowTutorialModal(false);
+        setTutorialDismissedThisSession(false);
+        localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(data.profile));
+      } else {
+        console.error("Failed to mark tutorial complete:", res.statusText);
+      }
+    } catch (err) {
+      console.error("Error marking tutorial complete:", err);
+    }
+  };
+
+  const handleCameraModalSubmit = async () => {
+    if (!cameraSelectedImage || !cameraModalItemId) return;
+    
+    setCameraIsSubmitting(true);
+    try {
+      const wasSuccessful = await handleUploadSubmission(cameraModalItemId, cameraSelectedImage);
+      if (wasSuccessful) {
+        setCameraModalOpen(false);
+        setCameraSelectedImage(null);
+        setCameraModalItemId(null);
+        setCameraModalItemTitle("");
+      }
+    } finally {
+      setCameraIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f5f5f0] text-[#2d2d2d] font-sans flex flex-col">
       {/* Top Header navbar with score indicators */}
@@ -2501,6 +2591,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               </button>
             </>
           )}
+          {!settings.chatDisabledByAdmin && (
           <button
             onClick={() => setActiveTab("chat")}
             className={`flex-shrink-0 py-2 sm:py-2.5 px-3 sm:px-4 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold tracking-tight transition cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1.5 relative ${
@@ -2518,6 +2609,7 @@ CREATE TABLE IF NOT EXISTS submissions (
               </span>
             )}
           </button>
+          )}
         </div>
       </header>
 
@@ -2532,6 +2624,15 @@ CREATE TABLE IF NOT EXISTS submissions (
                 ✓ {connectedPeers.length} mesh peer{connectedPeers.length !== 1 ? 's' : ''} connected
               </span>
             )}
+          </div>
+        </div>
+      )}
+
+      {navigator.onLine && dbError && (
+        <div className="bg-amber-100 border-b border-amber-300 text-amber-800 px-3 sm:px-8 py-2 text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            <span>⚠️ No service detected. You may be on Wi-Fi without server connectivity.</span>
           </div>
         </div>
       )}
@@ -2601,6 +2702,8 @@ CREATE TABLE IF NOT EXISTS submissions (
             onShowTitleChange={setAdminShowTitleInput}
             showLogoInput={adminShowLogoInput}
             onShowLogoChange={setAdminShowLogoInput}
+            chatDisabledByAdminInput={adminChatDisabledByAdminInput}
+            onChatDisabledByAdminChange={setAdminChatDisabledByAdminInput}
             storageInfo={storageInfo}
             isLoading={isAdminSaving}
             saveSuccess={adminSaveSuccess}
@@ -2611,7 +2714,6 @@ CREATE TABLE IF NOT EXISTS submissions (
               const rand = `hunt-${Math.floor(1000 + Math.random() * 9000)}`;
               setAdminActiveInviteCodeInput(rand);
             }}
-            onOpenSlideshowGenerator={() => setSlideshowGeneratorOpen(true)}
             currentPasswordInput={adminCurrentPasswordInput}
             onCurrentPasswordChange={setAdminCurrentPasswordInput}
             newPasswordInput={adminNewPasswordInput}
@@ -2692,6 +2794,58 @@ CREATE TABLE IF NOT EXISTS submissions (
           />
         )}
 
+        {/* Tutorial Modal - First time users */}
+        <TutorialModal
+          isOpen={showTutorialModal}
+          onClose={() => {
+            setTutorialDismissedThisSession(true);
+            setShowTutorialModal(false);
+          }}
+          onComplete={handleCompleteTutorial}
+          gameName={settings.name}
+        />
+
+        {/* Camera/Photo Submission Modal */}
+        {profile && cameraModalItemId && (
+          <CameraModal
+            isOpen={cameraModalOpen}
+            itemTitle={cameraModalItemTitle}
+            selectedImage={cameraSelectedImage}
+            isSubmitting={cameraIsSubmitting}
+            uploadError={submitErrorMap[cameraModalItemId] || null}
+            hasForceSubmitOption={Boolean(settings.allowForceSubmit && rejectedSubmissionMap[cameraModalItemId])}
+            onImageSelected={(base64) => {
+              setCameraSelectedImage(base64 || null);
+              if (cameraModalItemId) {
+                setSubmitErrorMap((prev) => ({ ...prev, [cameraModalItemId]: null }));
+              }
+            }}
+            onClose={() => {
+              setCameraModalOpen(false);
+              setCameraSelectedImage(null);
+              if (cameraModalItemId) {
+                setSubmitErrorMap((prev) => ({ ...prev, [cameraModalItemId]: null }));
+              }
+            }}
+            onSubmit={handleCameraModalSubmit}
+            onForceSubmit={async () => {
+              if (!cameraModalItemId) return;
+              setCameraIsSubmitting(true);
+              try {
+                const wasSuccessful = await handleForceSubmit(cameraModalItemId);
+                if (wasSuccessful) {
+                  setCameraModalOpen(false);
+                  setCameraSelectedImage(null);
+                  setCameraModalItemId(null);
+                  setCameraModalItemTitle("");
+                }
+              } finally {
+                setCameraIsSubmitting(false);
+              }
+            }}
+          />
+        )}
+
         {/* Dynamic Location Indicator - HIDDEN (moved to header icon) */}
         <div className="hidden">
           <div className="flex items-center gap-1.5">
@@ -2739,7 +2893,6 @@ CREATE TABLE IF NOT EXISTS submissions (
               submissions={submissions}
               currentUserId={profile.id}
               currentUserRole={profile.role || "user"}
-              onUploadSubmission={handleUploadSubmission}
               isSubmittingMap={isSubmittingMap}
               submitErrorMap={submitErrorMap}
               rejectedSubmissionMap={rejectedSubmissionMap}
@@ -2751,7 +2904,11 @@ CREATE TABLE IF NOT EXISTS submissions (
               onEditMission={handleEditMission}
               onShowCreateModal={() => setShowCreateMissionModal(true)}
               onFocusMissionOnMap={isMapDisabled ? undefined : handleFocusMissionOnMap}
-              onPendingPhotoChange={setHasPendingPhoto}
+              onOpenCamera={(itemId, itemTitle) => {
+                setCameraModalItemId(itemId);
+                setCameraModalItemTitle(itemTitle);
+                setCameraModalOpen(true);
+              }}
               players={players}
             />
           )}
@@ -2797,13 +2954,28 @@ CREATE TABLE IF NOT EXISTS submissions (
           )}
 
           {activeTab === "slideshows" && (
-            <SlideshowViewer
-              userId={profile?.id || null}
-              userRole={profile?.role || "user"}
-              submissions={submissions}
-              items={items}
-              refreshKey={slideshowRefreshKey}
-            />
+            <div className="space-y-3">
+              {profile?.role === "admin" && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setSlideshowGeneratorOpen(true)}
+                    className="py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Film className="h-3.5 w-3.5" />
+                    Generate Slideshow
+                  </button>
+                </div>
+              )}
+
+              <SlideshowViewer
+                userId={profile?.id || null}
+                userRole={profile?.role || "user"}
+                submissions={submissions}
+                items={items}
+                refreshKey={slideshowRefreshKey}
+              />
+            </div>
           )}
 
           {activeTab === "approval" && profile?.role === "admin" && (
@@ -2835,7 +3007,7 @@ CREATE TABLE IF NOT EXISTS submissions (
             </>
           )}
 
-          {activeTab === "chat" && (
+          {activeTab === "chat" && !settings.chatDisabledByAdmin && (
             <Chat
               profile={profile}
               players={players}
@@ -2872,12 +3044,10 @@ CREATE TABLE IF NOT EXISTS submissions (
               </div>
               <div>
                 <h2 className="text-base font-bold text-[#2d2d2d] leading-tight">
-                  {hasPendingPhoto ? "Unsaved Photo" : "Unsaved Mission Draft"}
+                  Leave KinQuest?
                 </h2>
                 <p className="text-sm text-[#6b6b5a] mt-1 leading-snug">
-                  {hasPendingPhoto
-                    ? "You have a photo selected that hasn't been submitted yet. Going back will discard it."
-                    : "You have an unsaved mission draft. Going back will discard your changes."}
+                  Using the back button will leave your current screen. Continue only if you are sure you want to go back.
                 </p>
               </div>
             </div>
@@ -2891,15 +3061,12 @@ CREATE TABLE IF NOT EXISTS submissions (
               <button
                 onClick={() => {
                   setShowBackWarning(false);
-                  if (showCreateMissionModal) {
-                    setShowCreateMissionModal(false);
-                    setCreatingFromMap(false);
-                  }
-                  setHasPendingPhoto(false);
+                  allowNextBackNavigationRef.current = true;
+                  window.history.back();
                 }}
                 className="flex-1 py-2.5 px-4 rounded-xl border border-[#d2d2c8] bg-white text-[#c27d56] text-sm font-bold hover:bg-red-50 hover:border-red-200 active:scale-95 transition-all cursor-pointer"
               >
-                Discard &amp; Leave
+                Leave App
               </button>
             </div>
           </div>
