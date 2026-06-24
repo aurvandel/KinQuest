@@ -594,16 +594,37 @@ async function renderSlideshowMp4(
     const totalDurationSeconds = resolvedSlides.reduce((sum, s) => sum + s.durationSeconds, 0) + transitionSeconds;
     const fadeOutStart = Math.max(totalDurationSeconds - 1.5, 0);
 
-    const renderWidth = PI_CONSTRAINED_RENDER ? 854 : 1280;
-    const renderHeight = PI_CONSTRAINED_RENDER ? 480 : 720;
+    const renderWidth = PI_CONSTRAINED_RENDER ? 960 : 1280;
+    const renderHeight = PI_CONSTRAINED_RENDER ? 540 : 720;
     const renderFps = PI_CONSTRAINED_RENDER ? 24 : 30;
     const renderAudioBitrate = PI_CONSTRAINED_RENDER ? "96k" : "160k";
     const renderPreset = PI_CONSTRAINED_RENDER ? "ultrafast" : "veryfast";
-    const renderCrf = PI_CONSTRAINED_RENDER ? "31" : "24";
+    const renderCrf = PI_CONSTRAINED_RENDER ? "29" : "24";
     const renderThreads = PI_CONSTRAINED_RENDER ? "1" : "2";
     const titleFontSize = PI_CONSTRAINED_RENDER ? 44 : 64;
     const descriptionFontSize = PI_CONSTRAINED_RENDER ? 28 : 40;
     const overlayFontSize = PI_CONSTRAINED_RENDER ? 24 : 34;
+
+    const backgroundMusicCandidates = [
+      process.env.SLIDESHOW_BGM_FILE || "",
+      path.join(uploadsDir, "slideshow-bgm.mp3"),
+      path.join(process.cwd(), "assets", "slideshow-bgm.mp3"),
+    ].filter(Boolean);
+    const selectedBackgroundMusic = backgroundMusicCandidates.find((candidate) => fs.existsSync(candidate));
+
+    const audioInputArgs = selectedBackgroundMusic
+      ? ["-stream_loop", "-1", "-i", selectedBackgroundMusic]
+      : ["-f", "lavfi", "-t", String(totalDurationSeconds), "-i", "anullsrc=r=44100:cl=stereo"];
+    const audioMapSpecifier = `${resolvedSlides.length}:a`;
+    const audioFilter = selectedBackgroundMusic
+      ? `volume=${PI_CONSTRAINED_RENDER ? "0.18" : "0.22"},afade=t=in:st=0:d=1.2,afade=t=out:st=${fadeOutStart}:d=1.5`
+      : `afade=t=in:st=0:d=1.2,afade=t=out:st=${fadeOutStart}:d=1.5`;
+
+    if (selectedBackgroundMusic) {
+      console.log("[SlideshowRender] Using background music track:", selectedBackgroundMusic);
+    } else {
+      console.log("[SlideshowRender] No background music track found; using silence track");
+    }
 
     const ffmpegInputs: string[] = [];
     resolvedSlides.forEach((slide) => {
@@ -680,7 +701,6 @@ async function renderSlideshowMp4(
       }
     }
 
-    const audioExpr = "0.03*sin(2*PI*220*t)+0.02*sin(2*PI*329.63*t)+0.015*sin(2*PI*440*t)";
     const filterComplex = `${videoLabelParts.join(";")};[${currentLabel}]format=yuv420p[vfinal]`;
 
     // RESILIENCE: Add timeout protection for FFmpeg to prevent hung processes on Raspberry Pi
@@ -689,12 +709,10 @@ async function renderSlideshowMp4(
       const ffmpeg = spawn("ffmpeg", [
         "-y",
         ...ffmpegInputs,
-        "-f", "lavfi",
-        "-t", String(totalDurationSeconds),
-        "-i", `aevalsrc=${audioExpr}:s=44100`,
+        ...audioInputArgs,
         "-filter_complex", filterComplex,
         "-map", "[vfinal]",
-        "-map", `${resolvedSlides.length}:a`,
+        "-map", audioMapSpecifier,
         "-shortest",
         "-r", String(renderFps),
         "-c:v", "libx264",
@@ -704,7 +722,7 @@ async function renderSlideshowMp4(
         "-tune", "stillimage",
         "-c:a", "aac",
         "-b:a", renderAudioBitrate,
-        "-af", `afade=t=in:st=0:d=1.2,afade=t=out:st=${fadeOutStart}:d=1.5`,
+        "-af", audioFilter,
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         outputPath
