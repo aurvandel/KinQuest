@@ -24,6 +24,26 @@ const SLIDESHOW_MODEL_COST_ESTIMATE: Record<string, { baseUsd: number; perPhotoU
   "gemini-3.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
 };
 
+type SlideshowGenerationMode = "deterministic_local" | "gemini_cinematic" | "ai_ordered_budget";
+
+const SLIDESHOW_GENERATION_MODE_OPTIONS: Array<{ value: SlideshowGenerationMode; label: string; detail: string }> = [
+  {
+    value: "deterministic_local",
+    label: "Mode A - Deterministic Local",
+    detail: "Uses your selected photos in strict mission order with local FFmpeg rendering.",
+  },
+  {
+    value: "gemini_cinematic",
+    label: "Mode B - Gemini Cinematic",
+    detail: "Gemini generates a cinematic video directly; can fall back to Mode C if unavailable.",
+  },
+  {
+    value: "ai_ordered_budget",
+    label: "Mode C - Budget AI Ordered",
+    detail: "Cheaper AI overlays/transitions while keeping your photos in order, rendered locally.",
+  },
+];
+
 const DEFAULT_SLIDESHOW_PROMPT = `You are an expert multimedia producer specializing in creating family reunion slideshows.
 
 I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
@@ -65,6 +85,7 @@ export function SlideshowGeneratorModal({
   const [slideshowModels, setSlideshowModels] = useState<string[]>(SLIDESHOW_FALLBACK_MODELS);
   const [slideshowModelCostLookup, setSlideshowModelCostLookup] = useState<Record<string, { baseUsd: number; perPhotoUsd: number }>>(SLIDESHOW_MODEL_COST_ESTIMATE);
   const [slideshowModel, setSlideshowModel] = useState<string>(SLIDESHOW_FALLBACK_MODELS[0]);
+  const [generationMode, setGenerationMode] = useState<SlideshowGenerationMode>("deterministic_local");
   const [generationSource, setGenerationSource] = useState<string | null>(null);
   const [preGenEstimateUsd, setPreGenEstimateUsd] = useState<number | null>(null);
   const [serverCostEstimate, setServerCostEstimate] = useState<{ baseUsd: number; perPhotoUsd: number; totalUsd: number; pictureCount: number } | null>(null);
@@ -176,6 +197,7 @@ export function SlideshowGeneratorModal({
           promptTemplate,
           includeMissionNarration,
           slideshowModel,
+          generationMode,
         }),
       });
 
@@ -187,13 +209,23 @@ export function SlideshowGeneratorModal({
       const data = await response.json();
       setLocalScript(data.slideshow.script);
       const videoInfo = data?.generation?.video;
+      const requestedMode = data?.generation?.requestedMode;
       if (videoInfo?.created) {
         if (videoInfo?.mode === "basic_fallback") {
           setGenerationSource("Script generated and fallback MP4 slideshow created");
+        } else if (videoInfo?.mode === "deterministic_local") {
+          setGenerationSource("Script generated and deterministic local slideshow rendered");
+        } else if (videoInfo?.mode === "ai_ordered_budget") {
+          setGenerationSource(`Script generated and budget AI ordered slideshow rendered with ${videoInfo.aiModel || "AI"}`);
+        } else if (videoInfo?.mode === "gemini_cinematic") {
+          setGenerationSource(`Script generated and cinematic Gemini video rendered with ${videoInfo.aiModel || "Gemini"}`);
         } else if (videoInfo?.aiModel) {
           setGenerationSource(`Script generated and MP4 slideshow created with ${videoInfo.aiModel}`);
         } else {
           setGenerationSource("Script generated and MP4 slideshow created");
+        }
+        if (requestedMode === "gemini_cinematic" && videoInfo?.mode !== "gemini_cinematic") {
+          setGenerationSource((prev) => `${prev || "Video generated"} (fell back from cinematic mode)`);
         }
       } else if (data?.generation?.usedFallbackScript) {
         setGenerationSource("Script generated using offline fallback (video render unavailable)");
@@ -284,7 +316,22 @@ export function SlideshowGeneratorModal({
               </div>
 
               <div className="space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1 sm:col-span-3">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Generation Mode</label>
+                    <select
+                      value={generationMode}
+                      onChange={(e) => setGenerationMode(e.target.value as SlideshowGenerationMode)}
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    >
+                      {SLIDESHOW_GENERATION_MODE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-gray-500">
+                      {SLIDESHOW_GENERATION_MODE_OPTIONS.find((opt) => opt.value === generationMode)?.detail}
+                    </p>
+                  </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Slideshow AI Model</label>
                     <select
@@ -301,7 +348,14 @@ export function SlideshowGeneratorModal({
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Estimated Cost</label>
                     <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
                       <div className="font-semibold">{selectedSubmissionIds.size} photo(s)</div>
-                      {slideshowModelCostLookup[slideshowModel] ? (
+                      {generationMode === "deterministic_local" ? (
+                        <>
+                          <div className="font-mono text-[11px] mt-0.5 text-emerald-700">Local render path</div>
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            Gemini is used for script guidance; slideshow assembly stays local and in-order.
+                          </div>
+                        </>
+                      ) : slideshowModelCostLookup[slideshowModel] ? (
                         <>
                           <div className="font-mono text-[11px] mt-0.5">
                             ${(slideshowModelCostLookup[slideshowModel].baseUsd + (slideshowModelCostLookup[slideshowModel].perPhotoUsd * selectedSubmissionIds.size)).toFixed(4)} USD

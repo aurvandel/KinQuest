@@ -324,6 +324,22 @@ const STABLE_TEXT_SLIDESHOW_MODELS = [
   "gemini-3.5-flash",
 ] as const;
 
+const SLIDESHOW_GENERATION_MODES = [
+  "deterministic_local",
+  "gemini_cinematic",
+  "ai_ordered_budget",
+] as const;
+
+type SlideshowGenerationMode = (typeof SLIDESHOW_GENERATION_MODES)[number];
+
+const DEFAULT_SLIDESHOW_GENERATION_MODE: SlideshowGenerationMode = "deterministic_local";
+
+const GEMINI_CINEMATIC_VIDEO_MODELS = [
+  "veo-2.0-generate-001",
+] as const;
+
+const DEFAULT_GEMINI_CINEMATIC_MODEL = GEMINI_CINEMATIC_VIDEO_MODELS[0];
+
 const FALLBACK_SLIDESHOW_MODEL = STABLE_TEXT_SLIDESHOW_MODELS[0];
 
 const SLIDESHOW_MODEL_COST_ESTIMATE: Record<string, { baseUsd: number; perPhotoUsd: number }> = {
@@ -407,6 +423,22 @@ function normalizeSlideshowModel(raw: unknown): string {
     return FALLBACK_SLIDESHOW_MODEL;
   }
   return model;
+}
+
+function normalizeSlideshowGenerationMode(raw: unknown): SlideshowGenerationMode {
+  const mode = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (SLIDESHOW_GENERATION_MODES.includes(mode as SlideshowGenerationMode)) {
+    return mode as SlideshowGenerationMode;
+  }
+  return DEFAULT_SLIDESHOW_GENERATION_MODE;
+}
+
+function normalizeBudgetSlideshowModel(raw: unknown): string {
+  const normalized = normalizeSlideshowModel(raw);
+  if (normalized === "gemini-2.5-pro") {
+    return "gemini-2.5-flash-lite";
+  }
+  return normalized;
 }
 
 async function fetchAvailableGoogleSlideshowModels(): Promise<string[]> {
@@ -767,6 +799,7 @@ async function renderSlideshowMp4(
 }
 
 async function generateGeminiSlideshowPlan(
+  slideshowModel: string,
   script: string,
   sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
   playerTotals: Array<{ username: string; score: number }>
@@ -815,7 +848,7 @@ async function generateGeminiSlideshowPlan(
     ].join("\n");
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: slideshowModel,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         responseMimeType: "application/json",
@@ -866,13 +899,198 @@ async function generateGeminiSlideshowPlan(
         slides: sanitizedSlides,
         endingOverlayText: endingOverlayText || defaultEndingOverlayText
       },
-      aiModel: "gemini-3.5-flash",
+      aiModel: slideshowModel,
       usedFallbackPlan: false
     };
   } catch (err) {
     console.warn("Gemini slideshow plan generation failed, using fallback plan:", err);
     return { plan: defaultPlan, aiModel: "fallback-offline", usedFallbackPlan: true };
   }
+}
+
+async function generateOrderedBudgetSlideshowPlan(
+  slideshowModel: string,
+  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>
+): Promise<{
+  slides: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>;
+  aiModel: string;
+  usedFallbackPlan: boolean;
+}> {
+  const fallbackSlides = sourceSlides.map((slide) => ({
+    submissionId: slide.submissionId,
+    overlayText: slide.username,
+    durationSeconds: 5,
+    transition: "fade",
+  }));
+
+  try {
+    const prompt = [
+      "Create concise per-photo overlay metadata for a slideshow.",
+      "Keep the exact same order as provided. Do not add, remove, or reorder entries.",
+      "Use warm family-friendly language.",
+      "Transitions allowed: fade, wipeleft, wiperight, slideleft, slideright, circlecrop, smoothleft, smoothright.",
+      "Durations must be 3-6 seconds.",
+      "Return one output row per submissionId.",
+      "",
+      "ORDERED INPUT SLIDES:",
+      ...sourceSlides.map((slide, idx) => `${idx + 1}. submissionId=${slide.submissionId} | mission=${slide.missionTitle} | description=${slide.missionDescription} | username=${slide.username}`),
+    ].join("\n");
+
+    const response = await ai.models.generateContent({
+      model: slideshowModel,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            slides: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  submissionId: { type: Type.STRING },
+                  overlayText: { type: Type.STRING },
+                  durationSeconds: { type: Type.NUMBER },
+                  transition: { type: Type.STRING },
+                },
+                required: ["submissionId", "overlayText", "durationSeconds", "transition"],
+              },
+            },
+          },
+          required: ["slides"],
+        },
+      },
+    });
+
+    const parsed = JSON.parse((response.text || "{}").trim());
+    const aiSlides = Array.isArray(parsed?.slides) ? parsed.slides : [];
+    const byId = new Map<string, { overlayText: string; durationSeconds: number; transition: string }>();
+    aiSlides.forEach((row: any) => {
+      const submissionId = String(row?.submissionId || "").trim();
+      if (!submissionId) return;
+      byId.set(submissionId, {
+        overlayText: String(row?.overlayText || "").trim(),
+        durationSeconds: Math.max(3, Math.min(Number(row?.durationSeconds) || 5, 6)),
+        transition: String(row?.transition || "fade").trim().toLowerCase(),
+      });
+    });
+
+    const orderedSlides = sourceSlides.map((slide) => {
+      const fromAi = byId.get(slide.submissionId);
+      return {
+        submissionId: slide.submissionId,
+        overlayText: fromAi?.overlayText || slide.username,
+        durationSeconds: fromAi?.durationSeconds || 5,
+        transition: fromAi?.transition || "fade",
+      };
+    });
+
+    return {
+      slides: orderedSlides,
+      aiModel: slideshowModel,
+      usedFallbackPlan: false,
+    };
+  } catch (err: any) {
+    console.warn("Budget ordered slideshow plan failed, using local ordered defaults:", err?.message || err);
+    return {
+      slides: fallbackSlides,
+      aiModel: "fallback-offline",
+      usedFallbackPlan: true,
+    };
+  }
+}
+
+async function writeGeminiVideoToLocalSlideshow(
+  slideshowId: string,
+  video: { uri?: string; videoBytes?: string; mimeType?: string }
+): Promise<{ outputPath: string; outputUrl: string }> {
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const videosDir = path.join(uploadsDir, "slideshows");
+  await fsp.mkdir(videosDir, { recursive: true });
+
+  const cleanId = sanitizeSlideshowId(slideshowId);
+  if (!cleanId) throw new Error("Invalid slideshow id");
+
+  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
+  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
+
+  if (video.videoBytes) {
+    await fsp.writeFile(outputPath, Buffer.from(video.videoBytes, "base64"));
+    return { outputPath, outputUrl };
+  }
+
+  if (video.uri) {
+    const response = await withTimeout(fetch(video.uri), 60000, "Gemini video download");
+    if (!response.ok) {
+      throw new Error(`Gemini video download failed with status ${response.status}`);
+    }
+    const data = Buffer.from(await response.arrayBuffer());
+    await fsp.writeFile(outputPath, data);
+    return { outputPath, outputUrl };
+  }
+
+  throw new Error("Gemini video output contained neither videoBytes nor uri");
+}
+
+async function generateGeminiCinematicVideo(
+  slideshowId: string,
+  script: string,
+  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
+  playerTotals: Array<{ username: string; score: number }>
+): Promise<{ outputPath: string; outputUrl: string; aiModel: string; operationName: string | null }> {
+  const chosenModel = DEFAULT_GEMINI_CINEMATIC_MODEL;
+  const prompt = [
+    "Create a cinematic family reunion highlight video.",
+    "Narrative tone should be warm, celebratory, and story-driven.",
+    "Include a clear ending sequence that celebrates the winners and all participants.",
+    "",
+    "SCRIPT CONTEXT:",
+    script,
+    "",
+    "MISSION ORDER:",
+    ...sourceSlides.map((slide, idx) => `${idx + 1}. ${slide.missionTitle} - ${slide.username}`),
+    "",
+    "PLAYER TOTALS:",
+    ...playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username}: ${entry.score} pts`),
+  ].join("\n");
+
+  let operation: any = await ai.models.generateVideos({
+    model: chosenModel,
+    source: { prompt },
+    config: {
+      numberOfVideos: 1,
+      aspectRatio: "16:9",
+    } as any,
+  });
+
+  const maxPollAttempts = 30;
+  let attempts = 0;
+  while (!operation.done && attempts < maxPollAttempts) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    operation = await ai.operations.getVideosOperation({ operation });
+    attempts += 1;
+  }
+
+  if (!operation.done) {
+    throw new Error("Gemini cinematic video operation timed out before completion");
+  }
+
+  if (operation.error) {
+    throw new Error(`Gemini cinematic video operation failed: ${JSON.stringify(operation.error)}`);
+  }
+
+  const generatedVideo = operation.response?.generatedVideos?.[0]?.video;
+  if (!generatedVideo) {
+    throw new Error("Gemini cinematic video operation returned no video output");
+  }
+
+  const written = await writeGeminiVideoToLocalSlideshow(slideshowId, generatedVideo);
+  return {
+    ...written,
+    aiModel: chosenModel,
+    operationName: typeof operation?.name === "string" ? operation.name : null,
+  };
 }
 
 // ========== SERVER LOGGING SYSTEM ==========
@@ -2259,8 +2477,9 @@ You MUST respond strictly in valid JSON matching this schema:
 // 6.5 Generate AI slideshow script with animations and music
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
-    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, slideshowModel } = req.body;
+    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, slideshowModel, generationMode } = req.body;
     const chosenSlideshowModel = normalizeSlideshowModel(slideshowModel);
+    const chosenGenerationMode = normalizeSlideshowGenerationMode(generationMode);
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for slideshow generation" });
@@ -2535,103 +2754,175 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
     let videoGeneration: {
       created: boolean;
       videoUrl: string | null;
-      mode: "gemini_plan" | "basic_fallback";
+      mode: "deterministic_local" | "gemini_cinematic" | "ai_ordered_budget" | "basic_fallback";
       aiModel: string;
       usedFallbackPlan: boolean;
       error: string | null;
     } = {
       created: false,
       videoUrl: null,
-      mode: "basic_fallback",
-      aiModel: "fallback-offline",
-      usedFallbackPlan: true,
+      mode: chosenGenerationMode,
+      aiModel: "pending",
+      usedFallbackPlan: false,
       error: null,
     };
 
-    if (sourceSlides.length > 0) {
-      try {
-        const planned = await generateGeminiSlideshowPlan(script, sourceSlides, playerTotals);
-        const imageBySubmissionId = new Map(sourceSlides.map((slide) => [slide.submissionId, slide]));
+    const renderSlidesFromPlanRows = (
+      rows: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>
+    ) => {
+      const imageBySubmissionId = new Map(sourceSlides.map((slide) => [slide.submissionId, slide]));
+      const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
+      let previousMissionKey: string | null = null;
 
-        const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
-        let previousMissionKey: string | null = null;
+      rows.forEach((row) => {
+        const source = imageBySubmissionId.get(row.submissionId);
+        if (!source) return;
 
-        planned.plan.slides.forEach((planSlide) => {
-          const source = imageBySubmissionId.get(planSlide.submissionId);
-          if (!source) return;
-
-          const missionKey = `${source.missionTitle}||${source.missionDescription}`;
-          if (missionKey !== previousMissionKey) {
-            previousMissionKey = missionKey;
-            renderSlides.push({
-              overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
-              durationSeconds: 4,
-              transition: "fade",
-              isTitleCard: true,
-            });
-          }
-
+        const missionKey = `${source.missionTitle}||${source.missionDescription}`;
+        if (missionKey !== previousMissionKey) {
+          previousMissionKey = missionKey;
           renderSlides.push({
-            imageUrl: source.imageUrl,
-            overlayText: source.username,
-            durationSeconds: planSlide.durationSeconds,
-            transition: planSlide.transition,
+            overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
+            durationSeconds: 4,
+            transition: "fade",
+            isTitleCard: true,
           });
-        });
-
-        if (!renderSlides.length) {
-          throw new Error("Gemini slideshow plan returned no usable render slides");
         }
 
-        const endingOverlayText = String(planned.plan.endingOverlayText || "").trim() || buildFinalScoreboardOverlay(playerTotals);
         renderSlides.push({
-          overlayText: endingOverlayText,
+          imageUrl: source.imageUrl,
+          overlayText: row.overlayText || source.username,
+          durationSeconds: row.durationSeconds,
+          transition: row.transition,
+        });
+      });
+
+      if (renderSlides.length) {
+        renderSlides.push({
+          overlayText: buildFinalScoreboardOverlay(playerTotals),
           durationSeconds: 6,
           transition: "fade",
           isTitleCard: true,
         });
+      }
 
-        const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-          renderSlideshowMp4(slideshow.id, renderSlides)
-        );
-        videoGeneration = {
-          created: true,
-          videoUrl: rendered.outputUrl,
-          mode: "gemini_plan",
-          aiModel: planned.aiModel,
-          usedFallbackPlan: planned.usedFallbackPlan,
-          error: null,
-        };
-      } catch (geminiRenderErr: any) {
-        console.warn("Gemini-based slideshow render failed, attempting basic fallback render:", geminiRenderErr?.message || geminiRenderErr);
+      return renderSlides;
+    };
 
+    const tryBasicFallbackRender = async (
+      errorForLog: unknown
+    ): Promise<{
+      created: boolean;
+      videoUrl: string;
+      mode: "basic_fallback";
+      aiModel: string;
+      usedFallbackPlan: boolean;
+      error: null;
+    }> => {
+      console.warn("Slideshow mode render failed, attempting basic fallback render:", errorForLog);
+      const fallbackSlides = buildBasicRenderSlides();
+      if (!fallbackSlides.length) {
+        throw new Error("No slides available for fallback render");
+      }
+
+      const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
+        renderSlideshowMp4(slideshow.id, fallbackSlides)
+      );
+      return {
+        created: true,
+        videoUrl: rendered.outputUrl,
+        mode: "basic_fallback" as const,
+      aiModel: "fallback-offline",
+      usedFallbackPlan: true,
+      error: null,
+      };
+    };
+
+    if (sourceSlides.length > 0) {
+      if (chosenGenerationMode === "gemini_cinematic") {
+        try {
+          const cinematic = await generateGeminiCinematicVideo(slideshow.id, script, sourceSlides, playerTotals);
+          videoGeneration = {
+            created: true,
+            videoUrl: cinematic.outputUrl,
+            mode: "gemini_cinematic",
+            aiModel: cinematic.aiModel,
+            usedFallbackPlan: false,
+            error: null,
+          };
+        } catch (cinematicErr: any) {
+          console.warn("Gemini cinematic mode failed, attempting ordered budget mode:", cinematicErr?.message || cinematicErr);
+        }
+      }
+
+      if (!videoGeneration.created && (chosenGenerationMode === "ai_ordered_budget" || chosenGenerationMode === "gemini_cinematic")) {
+        try {
+          const budgetModel = normalizeBudgetSlideshowModel(chosenSlideshowModel);
+          const orderedPlan = await generateOrderedBudgetSlideshowPlan(budgetModel, sourceSlides);
+          const renderSlides = renderSlidesFromPlanRows(orderedPlan.slides);
+          if (!renderSlides.length) {
+            throw new Error("Ordered budget slideshow plan returned no render slides");
+          }
+
+          const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
+            renderSlideshowMp4(slideshow.id, renderSlides)
+          );
+          videoGeneration = {
+            created: true,
+            videoUrl: rendered.outputUrl,
+              mode: "ai_ordered_budget" as const,
+            aiModel: orderedPlan.aiModel,
+            usedFallbackPlan: orderedPlan.usedFallbackPlan,
+            error: null,
+          };
+        } catch (budgetErr: any) {
+          try {
+            videoGeneration = await tryBasicFallbackRender(budgetErr?.message || budgetErr);
+          } catch (fallbackRenderErr: any) {
+            console.error("Fallback slideshow render failed:", fallbackRenderErr);
+            videoGeneration = {
+              created: false,
+              videoUrl: null,
+              mode: "basic_fallback",
+              aiModel: "fallback-offline",
+              usedFallbackPlan: true,
+              error: fallbackRenderErr?.message || "Failed to render slideshow video",
+            };
+          }
+        }
+      }
+
+      if (!videoGeneration.created && chosenGenerationMode === "deterministic_local") {
         try {
           const fallbackSlides = buildBasicRenderSlides();
           if (!fallbackSlides.length) {
-            throw new Error("No slides available for fallback render");
+            throw new Error("No slides available for deterministic render");
           }
-
           const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
             renderSlideshowMp4(slideshow.id, fallbackSlides)
           );
           videoGeneration = {
             created: true,
             videoUrl: rendered.outputUrl,
-            mode: "basic_fallback",
-            aiModel: "fallback-offline",
-            usedFallbackPlan: true,
+              mode: "deterministic_local" as const,
+            aiModel: "local-ffmpeg",
+            usedFallbackPlan: false,
             error: null,
           };
-        } catch (fallbackRenderErr: any) {
-          console.error("Fallback slideshow render failed:", fallbackRenderErr);
-          videoGeneration = {
-            created: false,
-            videoUrl: null,
-            mode: "basic_fallback",
-            aiModel: "fallback-offline",
-            usedFallbackPlan: true,
-            error: fallbackRenderErr?.message || "Failed to render slideshow video",
-          };
+        } catch (deterministicErr: any) {
+          try {
+            videoGeneration = await tryBasicFallbackRender(deterministicErr?.message || deterministicErr);
+          } catch (fallbackRenderErr: any) {
+            console.error("Fallback slideshow render failed:", fallbackRenderErr);
+            videoGeneration = {
+              created: false,
+              videoUrl: null,
+              mode: "basic_fallback",
+              aiModel: "fallback-offline",
+              usedFallbackPlan: true,
+              error: fallbackRenderErr?.message || "Failed to render slideshow video",
+            };
+          }
         }
       }
     } else {
@@ -2648,6 +2939,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       photoCount: orderedSubmissions.length,
       generation: {
         aiModel: usedAiModel,
+        requestedMode: chosenGenerationMode,
         usedFallbackScript,
         costEstimate: chosenCostEstimate
           ? {
@@ -2859,7 +3151,8 @@ app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
       await saveSlideshow({ ...slideshow, script: workingScript });
     }
 
-    const planned = await generateGeminiSlideshowPlan(workingScript, sourceSlides, playerTotals);
+    const requestedSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel);
+    const planned = await generateGeminiSlideshowPlan(requestedSlideshowModel, workingScript, sourceSlides, playerTotals);
     const imageBySubmissionId = new Map(sourceSlides.map((s) => [s.submissionId, s]));
 
     const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
