@@ -127,10 +127,11 @@ export function TutorialModal({ isOpen, onClose, onComplete, gameName }: Tutoria
         {/* Action buttons */}
         <div className="flex gap-3 pt-2">
           <button
-            onClick={onClose}
-            className="flex-1 py-2.5 px-4 rounded-xl border border-[#d2d2c8] bg-white text-[#5a5a40] text-sm font-bold hover:bg-[#f9f9f6] active:scale-95 transition-all cursor-pointer"
+            onClick={handleComplete}
+            disabled={isCompleting}
+            className="flex-1 py-2.5 px-4 rounded-xl border border-[#d2d2c8] bg-white text-[#5a5a40] text-sm font-bold hover:bg-[#f9f9f6] active:scale-95 transition-all cursor-pointer disabled:opacity-50"
           >
-            Skip
+            {isCompleting ? "Saving..." : "Skip"}
           </button>
           <button
             onClick={handleNext}

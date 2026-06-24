@@ -276,6 +276,42 @@ function checkAvailableMemory(requiredMb: number = 256): boolean {
   return available;
 }
 
+function isLikelyRaspberryPi(): boolean {
+  if (process.env.KINQUEST_FORCE_PI_RENDER_PROFILE === "1") return true;
+  if (process.env.KINQUEST_FORCE_PI_RENDER_PROFILE === "0") return false;
+
+  const arch = os.arch();
+  const armArch = arch === "arm" || arch === "arm64";
+  if (!armArch) return false;
+
+  try {
+    const modelPath = "/proc/device-tree/model";
+    if (fs.existsSync(modelPath)) {
+      const model = fs.readFileSync(modelPath, "utf8").toLowerCase();
+      if (model.includes("raspberry pi")) return true;
+    }
+  } catch {
+    // Fall back to architecture-based detection below.
+  }
+
+  return armArch;
+}
+
+const PI_CONSTRAINED_RENDER = isLikelyRaspberryPi();
+
+function capSlidesForConstrainedRender<T>(slides: T[], maxSlides: number): T[] {
+  if (slides.length <= maxSlides) return slides;
+
+  const safeMax = Math.max(2, maxSlides);
+  const indices: number[] = [];
+  for (let i = 0; i < safeMax; i += 1) {
+    indices.push(Math.round((i * (slides.length - 1)) / (safeMax - 1)));
+  }
+
+  const uniqueSorted = Array.from(new Set(indices)).sort((a, b) => a - b);
+  return uniqueSorted.map((idx) => slides[idx]).filter((entry): entry is T => entry !== undefined);
+}
+
 const AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION: Record<"gemini-3.5-flash" | "gemini-2.0-flash", number> = {
   "gemini-3.5-flash": 0.0025,
   "gemini-2.0-flash": 0.0015,
@@ -457,6 +493,50 @@ async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Prom
   return null;
 }
 
+function wrapTextForCard(text: string, maxCharsPerLine: number, maxLines: number): string {
+  const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+
+  const words = cleaned.split(" ");
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    if (!word) continue;
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxCharsPerLine) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      lines.push(current);
+      current = "";
+      if (lines.length >= maxLines) break;
+    }
+
+    if (word.length > maxCharsPerLine) {
+      lines.push(word.slice(0, maxCharsPerLine));
+      if (lines.length >= maxLines) break;
+      current = word.slice(maxCharsPerLine);
+    } else {
+      current = word;
+    }
+  }
+
+  if (current && lines.length < maxLines) {
+    lines.push(current);
+  }
+
+  if (!lines.length) return "";
+
+  if (lines.length === maxLines && words.join(" ").length > lines.join(" ").length) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, Math.max(0, maxCharsPerLine - 3)).trimEnd()}...`;
+  }
+
+  return lines.join("\n");
+}
+
 async function renderSlideshowMp4(
   slideshowId: string,
   slides: Array<{ imageUrl?: string; overlayText?: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }>
@@ -475,11 +555,22 @@ async function renderSlideshowMp4(
   const outputPath = path.join(videosDir, `${cleanId}.mp4`);
   const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
 
+  const maxSlides = PI_CONSTRAINED_RENDER ? 45 : 90;
+  const safeSlides = capSlidesForConstrainedRender(slides, maxSlides);
+  if (safeSlides.length < slides.length) {
+    console.warn(`[SlideshowRender] Reduced slide count from ${slides.length} to ${safeSlides.length} for safer rendering`);
+  }
+
+  const requiredMemoryMb = PI_CONSTRAINED_RENDER ? 700 : 512;
+  if (!checkAvailableMemory(requiredMemoryMb)) {
+    throw new Error(`Insufficient free memory for slideshow render. Need at least ${requiredMemoryMb}MB available.`);
+  }
+
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "kinquest-slideshow-"));
 
   try {
     const resolvedSlides: Array<{ imagePath: string | null; overlayText: string; durationSeconds: number; transition: string; isTitleCard: boolean }> = [];
-    for (const slide of slides) {
+    for (const slide of safeSlides) {
       let resolved: string | null = null;
       if (slide.imageUrl) {
         resolved = await resolveImagePathForRender(slide.imageUrl, tmpDir);
@@ -489,7 +580,7 @@ async function renderSlideshowMp4(
       resolvedSlides.push({
         imagePath: resolved,
         overlayText: String(slide.overlayText || "").trim(),
-        durationSeconds: Math.max(2, Math.min(Number(slide.durationSeconds) || 3, 8)),
+        durationSeconds: Math.max(2, Math.min(Number(slide.durationSeconds) || 5, 8)),
         transition: String(slide.transition || "fade").toLowerCase(),
         isTitleCard,
       });
@@ -499,21 +590,32 @@ async function renderSlideshowMp4(
       throw new Error("Could not resolve slideshow images for rendering");
     }
 
-    const transitionSeconds = resolvedSlides.length > 1 ? 0.8 : 0;
+    const transitionSeconds = resolvedSlides.length > 1 ? (PI_CONSTRAINED_RENDER ? 0.45 : 0.8) : 0;
     const totalDurationSeconds = resolvedSlides.reduce((sum, s) => sum + s.durationSeconds, 0) + transitionSeconds;
     const fadeOutStart = Math.max(totalDurationSeconds - 1.5, 0);
+
+    const renderWidth = PI_CONSTRAINED_RENDER ? 854 : 1280;
+    const renderHeight = PI_CONSTRAINED_RENDER ? 480 : 720;
+    const renderFps = PI_CONSTRAINED_RENDER ? 24 : 30;
+    const renderAudioBitrate = PI_CONSTRAINED_RENDER ? "96k" : "160k";
+    const renderPreset = PI_CONSTRAINED_RENDER ? "ultrafast" : "veryfast";
+    const renderCrf = PI_CONSTRAINED_RENDER ? "31" : "24";
+    const renderThreads = PI_CONSTRAINED_RENDER ? "1" : "2";
+    const titleFontSize = PI_CONSTRAINED_RENDER ? 44 : 64;
+    const descriptionFontSize = PI_CONSTRAINED_RENDER ? 28 : 40;
+    const overlayFontSize = PI_CONSTRAINED_RENDER ? 24 : 34;
 
     const ffmpegInputs: string[] = [];
     resolvedSlides.forEach((slide) => {
       const clipDurationSeconds = slide.durationSeconds + transitionSeconds;
       if (slide.isTitleCard) {
-        ffmpegInputs.push("-f", "lavfi", "-t", String(clipDurationSeconds), "-i", "color=c=0x111827:s=1280x720");
+        ffmpegInputs.push("-f", "lavfi", "-t", String(clipDurationSeconds), "-i", `color=c=0x111827:s=${renderWidth}x${renderHeight}`);
       } else {
         ffmpegInputs.push("-loop", "1", "-t", String(clipDurationSeconds), "-i", String(slide.imagePath));
       }
     });
 
-    const scalePadFilter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1";
+    const scalePadFilter = `scale=${renderWidth}:${renderHeight}:force_original_aspect_ratio=decrease,pad=${renderWidth}:${renderHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
     const videoLabelParts: string[] = [];
     const fontCandidates = [
       process.env.FFMPEG_FONTFILE || "",
@@ -531,11 +633,26 @@ async function renderSlideshowMp4(
 
     resolvedSlides.forEach((slide, idx) => {
       const textFilePath = path.join(tmpDir, `overlay_${idx}.txt`);
-      fs.writeFileSync(textFilePath, slide.overlayText || "", "utf8");
-      const drawText = slide.isTitleCard
-        ? `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=56:line_spacing=14:borderw=3:bordercolor=black@0.65:x=(w-text_w)/2:y=(h-text_h)/2`
-        : `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=36:line_spacing=8:borderw=2:bordercolor=black@0.55:x=(w-text_w)/2:y=h-110`;
-      videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},format=rgba[v${idx}]`);
+
+      if (slide.isTitleCard) {
+        const [rawTitle, ...rawDescriptionParts] = String(slide.overlayText || "").split("\n");
+        const title = wrapTextForCard(rawTitle || "", 30, 2);
+        const description = wrapTextForCard(rawDescriptionParts.join(" ").trim(), 48, 4);
+
+        const titleTextFilePath = path.join(tmpDir, `overlay_${idx}_title.txt`);
+        const descriptionTextFilePath = path.join(tmpDir, `overlay_${idx}_description.txt`);
+        fs.writeFileSync(titleTextFilePath, title || "", "utf8");
+        fs.writeFileSync(descriptionTextFilePath, description || "", "utf8");
+
+        const drawTitle = `drawtext=fontfile='${escapedFontFile}':textfile='${titleTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${titleFontSize}:line_spacing=10:borderw=4:bordercolor=black@0.70:box=1:boxcolor=black@0.25:boxborderw=16:x=(w-text_w)/2:y=72`;
+        const drawDescription = `drawtext=fontfile='${escapedFontFile}':textfile='${descriptionTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${descriptionFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:box=1:boxcolor=black@0.18:boxborderw=14:x=(w-text_w)/2:y=210`;
+
+        videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawTitle},${drawDescription},format=rgba[v${idx}]`);
+      } else {
+        fs.writeFileSync(textFilePath, String(slide.overlayText || "").trim(), "utf8");
+        const drawText = `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${overlayFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:box=1:boxcolor=black@0.28:boxborderw=14:x=w-text_w-40:y=h-text_h-32`;
+        videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},format=rgba[v${idx}]`);
+      }
     });
 
     let currentLabel = "v0";
@@ -579,12 +696,17 @@ async function renderSlideshowMp4(
         "-map", "[vfinal]",
         "-map", `${resolvedSlides.length}:a`,
         "-shortest",
-        "-r", "30",
+        "-r", String(renderFps),
         "-c:v", "libx264",
+        "-preset", renderPreset,
+        "-crf", renderCrf,
+        "-threads", renderThreads,
+        "-tune", "stillimage",
         "-c:a", "aac",
-        "-b:a", "160k",
+        "-b:a", renderAudioBitrate,
         "-af", `afade=t=in:st=0:d=1.2,afade=t=out:st=${fadeOutStart}:d=1.5`,
         "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         outputPath
       ]);
 
@@ -643,8 +765,8 @@ async function generateGeminiSlideshowPlan(
   const defaultPlan = {
     slides: sourceSlides.map((slide) => ({
       submissionId: slide.submissionId,
-      overlayText: slide.missionDescription || slide.missionTitle,
-      durationSeconds: 3,
+      overlayText: slide.username,
+      durationSeconds: 5,
       transition: "fade"
     })),
     endingOverlayText: defaultEndingOverlayText
@@ -660,7 +782,6 @@ async function generateGeminiSlideshowPlan(
       "Create endingOverlayText for one single closing card that includes BOTH: (1) winners (top 3), and (2) full standings with all player totals.",
       "Style endingOverlayText like the KinQuest scores tab: heading, winners block, then full standings list.",
       "Return only entries for the provided submission IDs.",
-      "Keep total runtime between 20 and 120 seconds.",
       "Durations must be 2-8 seconds.",
       "Transitions allowed: fade, wipeleft, wiperight, slideleft, slideright, circlecrop, smoothleft, smoothright.",
       "Prefer overlay text from mission descriptions.",
@@ -746,6 +867,21 @@ interface LogEntry {
 }
 const logBuffer: LogEntry[] = [];
 
+interface CpuTimesSnapshot {
+  idle: number;
+  total: number;
+}
+
+interface TopProcessUsage {
+  pid: number;
+  command: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  rssMb: number;
+}
+
+let lastCpuSnapshot: CpuTimesSnapshot[] | null = null;
+
 // Capture console output
 const originalLog = console.log;
 const originalError = console.error;
@@ -793,6 +929,138 @@ console.info = (...args: any[]) => {
   addLogEntry("info", args);
 };
 
+function takeCpuSnapshot(): CpuTimesSnapshot[] {
+  return os.cpus().map((core) => {
+    const times = core.times;
+    const total = times.user + times.nice + times.sys + times.idle + times.irq;
+    return {
+      idle: times.idle,
+      total,
+    };
+  });
+}
+
+function computeUsagePercent(previous: CpuTimesSnapshot, current: CpuTimesSnapshot): number {
+  const totalDelta = current.total - previous.total;
+  const idleDelta = current.idle - previous.idle;
+  if (totalDelta <= 0) return 0;
+  const usage = ((totalDelta - idleDelta) / totalDelta) * 100;
+  return Number(Math.max(0, Math.min(100, usage)).toFixed(1));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getCpuUsageMetrics(): Promise<{ totalUsagePercent: number; perCoreUsagePercent: Array<{ core: number; usagePercent: number }> }> {
+  let previous = lastCpuSnapshot;
+  if (!previous) {
+    previous = takeCpuSnapshot();
+    await delay(250);
+  }
+
+  let current = takeCpuSnapshot();
+
+  // If both samples were captured too close together, wait briefly for meaningful deltas.
+  const totalDelta = current.reduce((sum, snap, idx) => sum + (snap.total - (previous?.[idx]?.total ?? 0)), 0);
+  if (totalDelta <= 0) {
+    await delay(150);
+    current = takeCpuSnapshot();
+  }
+
+  const perCoreUsagePercent = current.map((snap, idx) => ({
+    core: idx,
+    usagePercent: computeUsagePercent(previous?.[idx] ?? snap, snap),
+  }));
+
+  lastCpuSnapshot = current;
+
+  const totalUsagePercent = Number(
+    (
+      perCoreUsagePercent.reduce((sum, core) => sum + core.usagePercent, 0) /
+      Math.max(1, perCoreUsagePercent.length)
+    ).toFixed(1)
+  );
+
+  return { totalUsagePercent, perCoreUsagePercent };
+}
+
+function getTopProcesses(limit: number = 5): Promise<TopProcessUsage[]> {
+  return new Promise((resolve) => {
+    const ps = spawn("ps", ["-eo", "pid,comm,%cpu,%mem,rss", "--sort=-%cpu"]);
+    let stdout = "";
+
+    ps.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    ps.on("error", (err) => {
+      console.warn("Failed to read process usage via ps:", err);
+      resolve([]);
+    });
+
+    ps.on("close", (code) => {
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+
+      const lines = stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => !!line);
+
+      const rows = lines.slice(1, limit + 1);
+      const parsed = rows
+        .map((row) => {
+          const parts = row.split(/\s+/);
+          if (parts.length < 5) return null;
+
+          const pid = Number(parts[0]);
+          const command = parts[1];
+          const cpuPercent = Number(parts[2]);
+          const memoryPercent = Number(parts[3]);
+          const rssKb = Number(parts[4]);
+
+          if (!Number.isFinite(pid) || !command) return null;
+
+          return {
+            pid,
+            command,
+            cpuPercent: Number((Number.isFinite(cpuPercent) ? cpuPercent : 0).toFixed(1)),
+            memoryPercent: Number((Number.isFinite(memoryPercent) ? memoryPercent : 0).toFixed(1)),
+            rssMb: Number(((Number.isFinite(rssKb) ? rssKb : 0) / 1024).toFixed(1)),
+          } satisfies TopProcessUsage;
+        })
+        .filter((entry): entry is TopProcessUsage => !!entry)
+        .slice(0, limit);
+
+      resolve(parsed);
+    });
+  });
+}
+
+async function validateAdminUserFromQuery(req: express.Request, res: express.Response): Promise<boolean> {
+  const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+  if (!userId) {
+    res.status(400).json({ error: "userId query parameter is required" });
+    return false;
+  }
+
+  try {
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      res.status(403).json({ error: "Only admin users can access server diagnostics" });
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to verify admin access", details: err?.message || "unknown error" });
+    return false;
+  }
+}
+
 // 1. Database status route - now exclusively Supabase
 app.get("/api/db-status", (req, res) => {
   res.json({
@@ -801,13 +1069,43 @@ app.get("/api/db-status", (req, res) => {
 });
 
 // Server logs endpoints (admin only)
-app.get("/api/server-logs", (req, res) => {
+app.get("/api/server-logs", async (req, res) => {
+  if (!(await validateAdminUserFromQuery(req, res))) return;
   res.json({ logs: logBuffer });
 });
 
-app.delete("/api/server-logs", (req, res) => {
+app.delete("/api/server-logs", async (req, res) => {
+  if (!(await validateAdminUserFromQuery(req, res))) return;
   logBuffer.length = 0;
   res.json({ message: "Logs cleared" });
+});
+
+app.get("/api/admin/resource-monitor", async (req, res) => {
+  if (!(await validateAdminUserFromQuery(req, res))) return;
+
+  try {
+    const cpu = await getCpuUsageMetrics();
+    const totalBytes = os.totalmem();
+    const freeBytes = os.freemem();
+    const usedBytes = totalBytes - freeBytes;
+    const memoryUsagePercent = Number(((usedBytes / Math.max(1, totalBytes)) * 100).toFixed(1));
+    const topProcesses = await getTopProcesses(5);
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      cpu,
+      memory: {
+        totalBytes,
+        usedBytes,
+        freeBytes,
+        usagePercent: memoryUsagePercent,
+      },
+      topProcesses,
+    });
+  } catch (err: any) {
+    console.error("Failed to gather resource monitor data:", err);
+    res.status(500).json({ error: "Failed to retrieve resource monitor data", details: err?.message || "unknown error" });
+  }
 });
 
 // App settings endpoints
@@ -2069,7 +2367,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
           const missionSubs = groupedByMission.get(missionTitle) || [];
           return [
             `Mission: ${missionTitle}`,
-            ...missionSubs.map((sub, idx) => `  ${idx + 1}. Photo by ${sub.username} - show for 3 seconds with a gentle fade transition.`),
+            ...missionSubs.map((sub, idx) => `  ${idx + 1}. Photo by ${sub.username} - show for 5 seconds with a gentle fade transition.`),
           ];
         }),
         "",
@@ -2078,12 +2376,11 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
         "",
         "Text overlays:",
         "- Opening title: Family Scavenger Highlights",
-        "- Per slide: challenge description + photographer name",
+        "- Per slide: photographer/group name only",
         "- Mission transition cards: show mission title + mission description",
         "- One closing slide: winners and full standings with all player totals",
         "",
         "Pacing:",
-        "- Keep total runtime around 30-60 seconds.",
         "- Alternate wide shots and close-ups for variety.",
       ].join("\n");
     }
@@ -2199,8 +2496,8 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
 
         basicSlides.push({
           imageUrl: source.imageUrl,
-          overlayText: source.missionDescription || source.missionTitle,
-          durationSeconds: 3,
+          overlayText: source.username,
+          durationSeconds: 5,
           transition: "fade",
         });
       });
@@ -2258,7 +2555,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
 
           renderSlides.push({
             imageUrl: source.imageUrl,
-            overlayText: planSlide.overlayText || source.missionDescription || source.missionTitle,
+            overlayText: source.username,
             durationSeconds: planSlide.durationSeconds,
             transition: planSlide.transition,
           });
@@ -2276,7 +2573,9 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
           isTitleCard: true,
         });
 
-        const rendered = await renderSlideshowMp4(slideshow.id, renderSlides);
+        const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
+          renderSlideshowMp4(slideshow.id, renderSlides)
+        );
         videoGeneration = {
           created: true,
           videoUrl: rendered.outputUrl,
@@ -2294,7 +2593,9 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
             throw new Error("No slides available for fallback render");
           }
 
-          const rendered = await renderSlideshowMp4(slideshow.id, fallbackSlides);
+          const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
+            renderSlideshowMp4(slideshow.id, fallbackSlides)
+          );
           videoGeneration = {
             created: true,
             videoUrl: rendered.outputUrl,
@@ -2408,7 +2709,8 @@ app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
 
       slides.push({
         imageUrl: submission.imageUrl,
-        overlayText: missionDescription || missionTitle,
+        overlayText: submission.username,
+        durationSeconds: 5,
       });
     });
 
@@ -2561,7 +2863,7 @@ app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
 
       renderSlides.push({
         imageUrl: source.imageUrl,
-        overlayText: planSlide.overlayText || source.missionDescription || source.missionTitle,
+        overlayText: source.username,
         durationSeconds: planSlide.durationSeconds,
         transition: planSlide.transition,
       });
