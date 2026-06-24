@@ -61,6 +61,7 @@ function getDisplayScript(script: string): string {
 }
 
 export function SlideshowViewer({ userId, userRole, submissions, items, refreshKey }: SlideshowViewerProps) {
+  const isAdmin = userRole === "admin";
   const [slideshows, setSlideshows] = useState<Slideshow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +78,7 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
   const [savingScriptId, setSavingScriptId] = useState<string | null>(null);
   const [creatingGeminiId, setCreatingGeminiId] = useState<string | null>(null);
   const [geminiStatusMap, setGeminiStatusMap] = useState<{ [slideshowId: string]: string | null }>({});
+  const [geminiVideoEstimateConfig, setGeminiVideoEstimateConfig] = useState<{ baseUsd: number; perPhotoUsd: number } | null>(null);
 
   useEffect(() => {
     const fetchSlideshows = async () => {
@@ -124,6 +126,29 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
 
     fetchSlideshows();
   }, [refreshKey]);
+
+  useEffect(() => {
+    const loadModelCatalog = async () => {
+      try {
+        const response = await fetch("/api/ai-model-catalog");
+        if (!response.ok) return;
+        const payload = await response.json();
+        const slideshowModels = Array.isArray(payload?.slideshowModels) ? payload.slideshowModels : [];
+        const geminiVideoModel = slideshowModels.find((entry: any) => String(entry?.model || "") === "gemini-3.5-flash");
+        if (!geminiVideoModel) return;
+
+        const baseUsd = Number(geminiVideoModel.baseUsd);
+        const perPhotoUsd = Number(geminiVideoModel.perPhotoUsd);
+        if (!Number.isFinite(baseUsd) || !Number.isFinite(perPhotoUsd)) return;
+
+        setGeminiVideoEstimateConfig({ baseUsd, perPhotoUsd });
+      } catch {
+        // Keep cost estimate hidden when catalog is unavailable.
+      }
+    };
+
+    loadModelCatalog();
+  }, []);
 
   useEffect(() => {
     if (!playingId) return;
@@ -357,13 +382,24 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     }
   };
 
+  const estimateGeminiVideoCost = (slideshow: Slideshow): number | null => {
+    if (!geminiVideoEstimateConfig) return null;
+    const photoCount = slideshow.submissionIds.length;
+    const total = geminiVideoEstimateConfig.baseUsd + (geminiVideoEstimateConfig.perPhotoUsd * photoCount);
+    return Number(total.toFixed(4));
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6 max-w-4xl mx-auto">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-gray-800">Slide Shows</h2>
-            <p className="text-xs text-gray-400">Play family photo slideshows, export scripts, and download rendered MP4 videos</p>
+            <p className="text-xs text-gray-400">
+              {isAdmin
+                ? "Play family photo slideshows, export scripts, and download rendered MP4 videos"
+                : "Play family photo slideshows and download rendered MP4 videos"}
+            </p>
           </div>
         </div>
 
@@ -381,7 +417,11 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-gray-800">Slide Shows</h2>
-            <p className="text-xs text-gray-400">Play family photo slideshows, export scripts, and download rendered MP4 videos</p>
+            <p className="text-xs text-gray-400">
+              {isAdmin
+                ? "Play family photo slideshows, export scripts, and download rendered MP4 videos"
+                : "Play family photo slideshows and download rendered MP4 videos"}
+            </p>
           </div>
         </div>
 
@@ -402,7 +442,11 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-gray-800">Slide Shows</h2>
-            <p className="text-xs text-gray-400">Play family photo slideshows, export scripts, and download rendered MP4 videos</p>
+            <p className="text-xs text-gray-400">
+              {isAdmin
+                ? "Play family photo slideshows, export scripts, and download rendered MP4 videos"
+                : "Play family photo slideshows and download rendered MP4 videos"}
+            </p>
           </div>
         </div>
 
@@ -422,7 +466,11 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-gray-800">Slide Shows</h2>
-          <p className="text-xs text-gray-400">Play family photo slideshows, export scripts, and download rendered MP4 videos</p>
+          <p className="text-xs text-gray-400">
+            {isAdmin
+              ? "Play family photo slideshows, export scripts, and download rendered MP4 videos"
+              : "Play family photo slideshows and download rendered MP4 videos"}
+          </p>
         </div>
         <span className="text-xs bg-blue-100 text-blue-600 font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
           <Sparkles className="h-3 w-3" />
@@ -438,6 +486,8 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
             const currentSlide = resolvedSlides[currentIndex];
             const narratorMap = extractNarratorOverlayMap(slideshow.script || "");
             const currentNarration = currentSlide ? narratorMap[currentSlide.title] : null;
+            const geminiVideoEstimate = estimateGeminiVideoCost(slideshow);
+            const hasVideo = Boolean(videoUrlMap[slideshow.id]);
 
             return (
           <div
@@ -455,7 +505,9 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
                   <p className="text-xs text-gray-500 mt-1">{slideshow.description}</p>
                 )}
                 <p className="text-xs text-gray-400 mt-2">
-                  {slideshow.submissionIds.length} photos · {new Date(slideshow.createdAt).toLocaleDateString()}
+                  {isAdmin
+                    ? `${slideshow.submissionIds.length} photos · ${new Date(slideshow.createdAt).toLocaleDateString()}`
+                    : new Date(slideshow.createdAt).toLocaleDateString()}
                 </p>
               </div>
               <div className="text-gray-400 ml-4 shrink-0">
@@ -473,251 +525,281 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
             {/* Expanded Content */}
             {expandedId === slideshow.id && (
               <div className="border-t border-gray-100 p-4 bg-gray-50 space-y-4">
-                {resolvedSlides.length > 0 ? (
-                  <div className="space-y-3">
-                    <div className="relative bg-black rounded-xl overflow-hidden">
-                      <img
-                        src={currentSlide.imageUrl}
-                        alt={currentSlide.title}
-                        className="w-full h-64 object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white">
-                        <p className="text-sm font-semibold">{currentSlide.description || currentSlide.title}</p>
-                        <p className="text-xs opacity-90">Photo by {currentSlide.username}</p>
-                      </div>
-                      {currentNarration && (
-                        <div className="absolute top-3 left-3 right-3 rounded-lg bg-black/60 border border-white/20 p-3 text-white">
-                          <p className="text-[11px] font-bold uppercase tracking-wide text-blue-200 mb-1">Mission Narrator</p>
-                          <p className="text-xs leading-relaxed">{currentNarration}</p>
+                {isAdmin ? (
+                  resolvedSlides.length > 0 ? (
+                    <div className="space-y-3">
+                      <div className="relative bg-black rounded-xl overflow-hidden">
+                        <img
+                          src={currentSlide.imageUrl}
+                          alt={currentSlide.title}
+                          className="w-full h-64 object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white">
+                          <p className="text-sm font-semibold">{currentSlide.description || currentSlide.title}</p>
+                          <p className="text-xs opacity-90">Photo by {currentSlide.username}</p>
                         </div>
-                      )}
-                    </div>
+                        {currentNarration && (
+                          <div className="absolute top-3 left-3 right-3 rounded-lg bg-black/60 border border-white/20 p-3 text-white">
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-blue-200 mb-1">Mission Narrator</p>
+                            <p className="text-xs leading-relaxed">{currentNarration}</p>
+                          </div>
+                        )}
+                      </div>
 
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => goToPrevSlide(slideshow.id, resolvedSlides.length)}
-                        className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                        Prev
-                      </button>
-
-                      <button
-                        onClick={() => setPlayingId((prev) => prev === slideshow.id ? null : slideshow.id)}
-                        className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1"
-                      >
-                        {playingId === slideshow.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                        {playingId === slideshow.id ? "Pause" : "Play"}
-                      </button>
-
-                      <button
-                        onClick={() => setVoiceEnabledMap((prev) => ({ ...prev, [slideshow.id]: !prev[slideshow.id] }))}
-                        className={`px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 ${voiceEnabledMap[slideshow.id] ? "bg-violet-600 text-white hover:bg-violet-700" : "bg-violet-100 text-violet-700 hover:bg-violet-200"}`}
-                      >
-                        <Volume2 className="h-4 w-4" />
-                        {voiceEnabledMap[slideshow.id] ? "Voice On" : "Voice Off"}
-                      </button>
-
-                      <button
-                        onClick={() => goToNextSlide(slideshow.id, resolvedSlides.length)}
-                        className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
-                      >
-                        Next
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </div>
-
-                    <p className="text-xs text-gray-500">
-                      Slide {currentIndex + 1} of {resolvedSlides.length}
-                      {resolvedSlides.length !== slideshow.submissionIds.length && ` · ${slideshow.submissionIds.length - resolvedSlides.length} photo(s) missing from current submission dataset`}
-                    </p>
-
-                    <div className="grid grid-cols-5 gap-2">
-                      {resolvedSlides.map((slide, idx) => (
+                      <div className="flex items-center justify-between gap-2">
                         <button
-                          key={slide.id}
-                          onClick={() => setSlideIndexMap((prev) => ({ ...prev, [slideshow.id]: idx }))}
-                          className={`rounded-lg overflow-hidden border ${idx === currentIndex ? "border-blue-500" : "border-transparent"}`}
+                          onClick={() => goToPrevSlide(slideshow.id, resolvedSlides.length)}
+                          className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
                         >
-                          <img src={slide.imageUrl} alt={slide.title} className="w-full h-14 object-cover" referrerPolicy="no-referrer" />
+                          <ChevronLeft className="h-4 w-4" />
+                          Prev
                         </button>
-                      ))}
+
+                        <button
+                          onClick={() => setPlayingId((prev) => prev === slideshow.id ? null : slideshow.id)}
+                          className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1"
+                        >
+                          {playingId === slideshow.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                          {playingId === slideshow.id ? "Pause" : "Play"}
+                        </button>
+
+                        <button
+                          onClick={() => setVoiceEnabledMap((prev) => ({ ...prev, [slideshow.id]: !prev[slideshow.id] }))}
+                          className={`px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 ${voiceEnabledMap[slideshow.id] ? "bg-violet-600 text-white hover:bg-violet-700" : "bg-violet-100 text-violet-700 hover:bg-violet-200"}`}
+                        >
+                          <Volume2 className="h-4 w-4" />
+                          {voiceEnabledMap[slideshow.id] ? "Voice On" : "Voice Off"}
+                        </button>
+
+                        <button
+                          onClick={() => goToNextSlide(slideshow.id, resolvedSlides.length)}
+                          className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-gray-500">
+                        Slide {currentIndex + 1} of {resolvedSlides.length}
+                        {resolvedSlides.length !== slideshow.submissionIds.length && ` · ${slideshow.submissionIds.length - resolvedSlides.length} photo(s) missing from current submission dataset`}
+                      </p>
+
+                      <div className="grid grid-cols-5 gap-2">
+                        {resolvedSlides.map((slide, idx) => (
+                          <button
+                            key={slide.id}
+                            onClick={() => setSlideIndexMap((prev) => ({ ...prev, [slideshow.id]: idx }))}
+                            className={`rounded-lg overflow-hidden border ${idx === currentIndex ? "border-blue-500" : "border-transparent"}`}
+                          >
+                            <img src={slide.imageUrl} alt={slide.title} className="w-full h-14 object-cover" referrerPolicy="no-referrer" />
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                    No slideshow photos are currently available for this record.
-                  </div>
-                )}
-
-                {/* Script Preview */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Production Guide Script
-                  </label>
-                  <div className="bg-white rounded-xl p-3 max-h-48 overflow-y-auto border border-gray-200">
-                    {userRole === "admin" ? (
-                      <textarea
-                        value={scriptDraftMap[slideshow.id] ?? slideshow.script ?? ""}
-                        onChange={(e) => setScriptDraftMap((prev) => ({ ...prev, [slideshow.id]: e.target.value }))}
-                        rows={10}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  ) : (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                      No slideshow photos are currently available for this record.
+                    </div>
+                  )
+                ) : hasVideo ? (
+                  <>
+                    <div className="bg-black rounded-xl overflow-hidden border border-gray-800">
+                      <video
+                        src={videoUrlMap[slideshow.id]}
+                        controls
+                        preload="metadata"
+                        className="w-full h-auto max-h-[420px] bg-black"
                       />
-                    ) : (
-                      <pre className="text-xs text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">
-                        {getDisplayScript(slideshow.script || "").substring(0, 500)}
-                        {getDisplayScript(slideshow.script || "").length > 500 && "..."}
-                      </pre>
-                    )}
-                  </div>
-                </div>
-
-                {userRole === "admin" && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleSaveScript(slideshow)}
-                      disabled={savingScriptId === slideshow.id}
-                      className="flex-1 flex items-center justify-center gap-2 bg-sky-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-sky-700 disabled:bg-sky-300 disabled:cursor-not-allowed transition text-xs"
+                    </div>
+                    <a
+                      href={videoUrlMap[slideshow.id]}
+                      download
+                      className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-bold py-2.5 px-3 rounded-lg hover:bg-indigo-700 transition text-xs"
                     >
-                      {savingScriptId === slideshow.id ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Saving Script...
-                        </>
-                      ) : (
-                        "Save Script"
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleCreateGeminiVideo(slideshow)}
-                      disabled={creatingGeminiId === slideshow.id}
-                      className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
-                    >
-                      {creatingGeminiId === slideshow.id ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Gemini Creating Video...
-                        </>
-                      ) : (
-                        "Create Gemini Video"
-                      )}
-                    </button>
+                      <Download className="h-4 w-4" />
+                      Download MP4
+                    </a>
+                  </>
+                ) : (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">
+                    Video is not available yet. Please check back soon.
                   </div>
                 )}
 
-                {geminiStatusMap[slideshow.id] && (
+                {isAdmin && (
+                  <>
+                    {/* Script Preview */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                        Production Guide Script
+                      </label>
+                      <div className="bg-white rounded-xl p-3 max-h-48 overflow-y-auto border border-gray-200">
+                        <textarea
+                          value={scriptDraftMap[slideshow.id] ?? slideshow.script ?? ""}
+                          onChange={(e) => setScriptDraftMap((prev) => ({ ...prev, [slideshow.id]: e.target.value }))}
+                          rows={10}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-300"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleSaveScript(slideshow)}
+                        disabled={savingScriptId === slideshow.id}
+                        className="flex-1 flex items-center justify-center gap-2 bg-sky-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-sky-700 disabled:bg-sky-300 disabled:cursor-not-allowed transition text-xs"
+                      >
+                        {savingScriptId === slideshow.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Saving Script...
+                          </>
+                        ) : (
+                          "Save Script"
+                        )}
+                      </button>
+                      {!hasVideo && (
+                        <button
+                          onClick={() => handleCreateGeminiVideo(slideshow)}
+                          disabled={creatingGeminiId === slideshow.id}
+                          className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
+                        >
+                          {creatingGeminiId === slideshow.id ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Gemini Creating Video...
+                            </>
+                          ) : (
+                            `Create Gemini Video${geminiVideoEstimate !== null ? ` (~$${geminiVideoEstimate.toFixed(4)})` : ""}`
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {isAdmin && geminiStatusMap[slideshow.id] && (
                   <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700">
                     {geminiStatusMap[slideshow.id]}
                   </div>
                 )}
 
                 {/* Action Buttons */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleCopy(slideshow)}
-                    className="flex-1 flex items-center justify-center gap-2 bg-gray-200 text-gray-800 font-bold py-2 px-3 rounded-lg hover:bg-gray-300 transition text-xs"
-                  >
-                    {copiedId === slideshow.id ? (
-                      <>
-                        <Check className="h-4 w-4" />
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-4 w-4" />
-                        Copy
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleDownload(slideshow)}
-                    className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-blue-700 transition text-xs"
-                  >
-                    <Download className="h-4 w-4" />
-                    Download
-                  </button>
-                </div>
-
-                <div className="flex gap-2">
-                  {userRole === "admin" && (
+                {isAdmin && (
+                  <div className="flex gap-2">
                     <button
-                      onClick={() => handleRenderMp4(slideshow.id)}
-                      disabled={renderingId === slideshow.id}
-                      className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
+                      onClick={() => handleCopy(slideshow)}
+                      className="flex-1 flex items-center justify-center gap-2 bg-gray-200 text-gray-800 font-bold py-2 px-3 rounded-lg hover:bg-gray-300 transition text-xs"
                     >
-                      {renderingId === slideshow.id ? (
+                      {copiedId === slideshow.id ? (
                         <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Rendering MP4...
+                          <Check className="h-4 w-4" />
+                          Copied!
                         </>
                       ) : (
-                        "Create Basic MP4"
+                        <>
+                          <Copy className="h-4 w-4" />
+                          Copy
+                        </>
                       )}
                     </button>
-                  )}
-
-                  {videoUrlMap[slideshow.id] && (
-                    <a
-                      href={videoUrlMap[slideshow.id]}
-                      download
-                      className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-indigo-700 transition text-xs"
+                    <button
+                      onClick={() => handleDownload(slideshow)}
+                      className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-blue-700 transition text-xs"
                     >
                       <Download className="h-4 w-4" />
-                      Download MP4
-                    </a>
-                  )}
-
-                  {userRole === "admin" && (
-                    <button
-                      onClick={() => handleDeleteSlideshow(slideshow.id)}
-                      disabled={deletingId === slideshow.id}
-                      className="flex-1 flex items-center justify-center gap-2 bg-rose-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed transition text-xs"
-                    >
-                      {deletingId === slideshow.id ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Deleting...
-                        </>
-                      ) : (
-                        <>
-                          <Trash2 className="h-4 w-4" />
-                          Delete Slideshow
-                        </>
-                      )}
+                      Download
                     </button>
-                  )}
-                </div>
-
-                {renderErrorMap[slideshow.id] && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
-                    {renderErrorMap[slideshow.id]}
                   </div>
                 )}
 
-                {videoUrlMap[slideshow.id] && (
-                  <div className="bg-black rounded-xl overflow-hidden border border-gray-800">
-                    <video
-                      src={videoUrlMap[slideshow.id]}
-                      controls
-                      preload="metadata"
-                      className="w-full h-auto max-h-[420px] bg-black"
-                    />
-                  </div>
+                {isAdmin && (
+                  <>
+                    <div className="flex gap-2">
+                      {userRole === "admin" && !hasVideo && (
+                        <button
+                          onClick={() => handleRenderMp4(slideshow.id)}
+                          disabled={renderingId === slideshow.id}
+                          className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
+                        >
+                          {renderingId === slideshow.id ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Rendering MP4...
+                            </>
+                          ) : (
+                            "Create Basic MP4"
+                          )}
+                        </button>
+                      )}
+
+                      {videoUrlMap[slideshow.id] && (
+                        <a
+                          href={videoUrlMap[slideshow.id]}
+                          download
+                          className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-indigo-700 transition text-xs"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download MP4
+                        </a>
+                      )}
+
+                      {userRole === "admin" && (
+                        <button
+                          onClick={() => handleDeleteSlideshow(slideshow.id)}
+                          disabled={deletingId === slideshow.id}
+                          className="flex-1 flex items-center justify-center gap-2 bg-rose-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed transition text-xs"
+                        >
+                          {deletingId === slideshow.id ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Deleting...
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="h-4 w-4" />
+                              Delete Slideshow
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+
+                    {renderErrorMap[slideshow.id] && (
+                      <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
+                        {renderErrorMap[slideshow.id]}
+                      </div>
+                    )}
+
+                    {videoUrlMap[slideshow.id] && (
+                      <div className="bg-black rounded-xl overflow-hidden border border-gray-800">
+                        <video
+                          src={videoUrlMap[slideshow.id]}
+                          controls
+                          preload="metadata"
+                          className="w-full h-auto max-h-[420px] bg-black"
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* Full Script Button */}
-                <button
-                  onClick={() => {
-                    const element = document.createElement("pre");
-                    element.textContent = slideshow.script;
-                    element.className = "bg-white rounded-xl p-4 max-h-96 overflow-y-auto border border-gray-200 text-xs font-mono";
-                    // Create a modal to display full script
-                  }}
-                  className="w-full text-xs text-blue-600 hover:text-blue-700 font-medium py-1 hover:bg-white rounded transition"
-                >
-                  View Full Script
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => {
+                      const element = document.createElement("pre");
+                      element.textContent = slideshow.script;
+                      element.className = "bg-white rounded-xl p-4 max-h-96 overflow-y-auto border border-gray-200 text-xs font-mono";
+                      // Create a modal to display full script
+                    }}
+                    className="w-full text-xs text-blue-600 hover:text-blue-700 font-medium py-1 hover:bg-white rounded transition"
+                  >
+                    View Full Script
+                  </button>
+                )}
               </div>
             )}
           </div>

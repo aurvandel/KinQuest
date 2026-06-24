@@ -83,6 +83,7 @@ export default function App() {
   const [adminLngInput, setAdminLngInput] = useState(-111.3800);
   const [adminRadiusInput, setAdminRadiusInput] = useState(200);
   const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
+  const [adminAiJudgeModelInput, setAdminAiJudgeModelInput] = useState<"gemini-3.5-flash" | "gemini-2.0-flash">("gemini-3.5-flash");
   const [adminAiVerificationEnabledInput, setAdminAiVerificationEnabledInput] = useState(true);
   const [adminAllowForceSubmitInput, setAdminAllowForceSubmitInput] = useState(false);
   const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("watkins");
@@ -1152,6 +1153,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminLngInput(settings.defaultLng ?? -111.3800);
       setAdminRadiusInput(settings.defaultRadius ?? 200);
       setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
+      setAdminAiJudgeModelInput(settings.aiJudgeModel === "gemini-2.0-flash" ? "gemini-2.0-flash" : "gemini-3.5-flash");
       setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
       setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
       setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
@@ -1267,6 +1269,7 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLng: Number(adminLngInput) || -111.3800,
           defaultRadius: Number(adminRadiusInput) || 200,
           aiPromptCriteria: adminAiPromptCriteriaInput.trim(),
+          aiJudgeModel: adminAiJudgeModelInput,
           aiVerificationEnabled: adminAiVerificationEnabledInput,
           allowForceSubmit: adminAllowForceSubmitInput,
           activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
@@ -1310,6 +1313,7 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLng: -111.3800,
           defaultRadius: 200,
           aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+          aiJudgeModel: "gemini-3.5-flash",
           aiVerificationEnabled: true,
           allowForceSubmit: false,
           activeInviteCode: "watkins",
@@ -1330,6 +1334,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminLngInput(-111.3800);
         setAdminRadiusInput(200);
         setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
+        setAdminAiJudgeModelInput("gemini-3.5-flash");
         setAdminAiVerificationEnabledInput(true);
         setAdminAllowForceSubmitInput(false);
         setAdminActiveInviteCodeInput("watkins");
@@ -2679,6 +2684,8 @@ CREATE TABLE IF NOT EXISTS submissions (
             onRadiusChange={setAdminRadiusInput}
             aiPromptInput={adminAiPromptCriteriaInput}
             onAiPromptChange={setAdminAiPromptCriteriaInput}
+            aiJudgeModelInput={adminAiJudgeModelInput}
+            onAiJudgeModelChange={setAdminAiJudgeModelInput}
             aiVerificationEnabledInput={adminAiVerificationEnabledInput}
             onAiVerificationEnabledChange={setAdminAiVerificationEnabledInput}
             allowForceSubmitInput={adminAllowForceSubmitInput}

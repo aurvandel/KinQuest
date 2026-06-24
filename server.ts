@@ -181,6 +181,245 @@ function buildFinalScoreboardOverlay(
   ].join("\n");
 }
 
+// ========== RESILIENCE HELPERS FOR RASPBERRY PI ==========
+// These helpers prevent server crashes by adding timeouts, concurrency control, and memory safeguards
+
+/**
+ * Wrap a promise with a timeout. If the promise doesn't resolve within the timeout,
+ * reject with a timeout error.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string = "Operation timed out"): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${timeoutMessage} (${timeoutMs}ms timeout)`)), timeoutMs)
+    )
+  ]);
+}
+
+/**
+ * Call Gemini API with timeout protection. Prevents hanged requests from crashing the Pi.
+ */
+async function callGeminiWithTimeout(
+  model: string,
+  prompt: string | any,
+  timeoutMs: number = 60000,
+  config?: any
+): Promise<any> {
+  const call = prompt instanceof Object
+    ? ai.models.generateContent({ model, contents: prompt, config })
+    : ai.models.generateContent({ model, contents: [{ role: "user", parts: [{ text: prompt }] }], config });
+  
+  return withTimeout(call, timeoutMs, `Gemini ${model} request`);
+}
+
+/**
+ * Manages concurrent slideshow rendering operations.
+ * On Raspberry Pi, only 1 render should run at a time to prevent OOM.
+ */
+class SlideshowRenderQueue {
+  private queue: Array<{
+    id: string;
+    fn: () => Promise<any>;
+    resolve: (val: any) => void;
+    reject: (err: any) => void;
+  }> = [];
+  private running = 0;
+  private readonly maxConcurrent = 1; // Pi can only handle 1 render at a time
+  private readonly maxQueueLength = 10; // Prevent unbounded queue growth
+
+  async enqueue<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    if (this.queue.length >= this.maxQueueLength) {
+      throw new Error("Slideshow render queue is full. Please wait and try again.");
+    }
+
+    return new Promise((resolve, reject) => {
+      this.queue.push({ id, fn, resolve, reject });
+      this.processQueue();
+    });
+  }
+
+  private async processQueue() {
+    if (this.running >= this.maxConcurrent || this.queue.length === 0) {
+      return;
+    }
+
+    this.running++;
+    const { id, fn, resolve, reject } = this.queue.shift()!;
+
+    try {
+      console.log(`[SlideshowQueue] Processing render ${id} (queue: ${this.queue.length})`);
+      const result = await fn();
+      resolve(result);
+    } catch (err) {
+      console.error(`[SlideshowQueue] Render ${id} failed:`, err);
+      reject(err);
+    } finally {
+      this.running--;
+      this.processQueue();
+    }
+  }
+}
+
+const slideshowRenderQueue = new SlideshowRenderQueue();
+
+/**
+ * Check available memory before starting memory-intensive operations.
+ * Helps prevent OOM crashes on Raspberry Pi.
+ */
+function checkAvailableMemory(requiredMb: number = 256): boolean {
+  const freeMem = os.freemem() / (1024 * 1024); // Convert to MB
+  const available = freeMem > requiredMb;
+  if (!available) {
+    console.warn(`[Memory Check] Only ${Math.round(freeMem)}MB available, need ${requiredMb}MB`);
+  }
+  return available;
+}
+
+const AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION: Record<"gemini-3.5-flash" | "gemini-2.0-flash", number> = {
+  "gemini-3.5-flash": 0.0025,
+  "gemini-2.0-flash": 0.0015,
+};
+
+const STABLE_TEXT_SLIDESHOW_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-3.5-flash",
+] as const;
+
+const FALLBACK_SLIDESHOW_MODEL = STABLE_TEXT_SLIDESHOW_MODELS[0];
+
+const SLIDESHOW_MODEL_COST_ESTIMATE: Record<string, { baseUsd: number; perPhotoUsd: number }> = {
+  "gemini-2.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
+  "gemini-2.5-flash-lite": { baseUsd: 0.0022, perPhotoUsd: 0.00024 },
+  "gemini-2.5-pro": { baseUsd: 0.0060, perPhotoUsd: 0.00075 },
+  "gemini-3.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
+};
+
+const SLIDESHOW_MODEL_TOKEN_COST_USD_PER_MILLION: Record<string, { inputUsd: number; outputUsd: number }> = {
+  // Keep these values conservative and configurable; they can be updated as Google pricing evolves.
+  "gemini-2.5-flash": { inputUsd: 0.15, outputUsd: 0.60 },
+  "gemini-2.5-flash-lite": { inputUsd: 0.075, outputUsd: 0.30 },
+  "gemini-2.5-pro": { inputUsd: 1.25, outputUsd: 5.00 },
+  "gemini-3.5-flash": { inputUsd: 0.15, outputUsd: 0.60 },
+};
+
+function readUsageTokenCount(raw: unknown): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function summarizeGeminiUsageMetadata(parts: Array<any | null | undefined>): { promptTokens: number; completionTokens: number; totalTokens: number } | null {
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let totalTokens = 0;
+
+  parts.forEach((usage) => {
+    if (!usage) return;
+    promptTokens += readUsageTokenCount(usage.promptTokenCount);
+    completionTokens += readUsageTokenCount(usage.candidatesTokenCount);
+    totalTokens += readUsageTokenCount(usage.totalTokenCount);
+  });
+
+  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
+    return null;
+  }
+
+  if (totalTokens === 0) {
+    totalTokens = promptTokens + completionTokens;
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
+function buildGeminiUsageCostEstimate(model: string, usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null) {
+  if (!usage) return null;
+  const rates = SLIDESHOW_MODEL_TOKEN_COST_USD_PER_MILLION[model];
+  if (!rates) return null;
+
+  const inputUsd = (usage.promptTokens / 1_000_000) * rates.inputUsd;
+  const outputUsd = (usage.completionTokens / 1_000_000) * rates.outputUsd;
+  const totalUsd = inputUsd + outputUsd;
+
+  return {
+    currency: "USD",
+    basis: "token_usage_metadata",
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+    inputRateUsdPerMillion: rates.inputUsd,
+    outputRateUsdPerMillion: rates.outputUsd,
+    inputUsd: Number(inputUsd.toFixed(6)),
+    outputUsd: Number(outputUsd.toFixed(6)),
+    totalUsd: Number(totalUsd.toFixed(6)),
+  };
+}
+
+function normalizeAiJudgeModel(raw: unknown): "gemini-3.5-flash" | "gemini-2.0-flash" {
+  return raw === "gemini-2.0-flash" ? "gemini-2.0-flash" : "gemini-3.5-flash";
+}
+
+function normalizeSlideshowModel(raw: unknown): string {
+  const model = typeof raw === "string" ? raw.trim().replace(/^models\//, "") : "";
+  if (!model) return FALLBACK_SLIDESHOW_MODEL;
+  if (!STABLE_TEXT_SLIDESHOW_MODELS.includes(model as typeof STABLE_TEXT_SLIDESHOW_MODELS[number])) {
+    return FALLBACK_SLIDESHOW_MODEL;
+  }
+  return model;
+}
+
+async function fetchAvailableGoogleSlideshowModels(): Promise<string[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return [FALLBACK_SLIDESHOW_MODEL];
+  }
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn("Failed to fetch model catalog from Google, using fallback:", response.status, errText);
+      return [FALLBACK_SLIDESHOW_MODEL];
+    }
+
+    const payload = await response.json();
+    const models = Array.isArray(payload?.models) ? payload.models : [];
+    const filtered: string[] = models
+      .filter((model: any) => {
+        const rawName = String(model?.name || "");
+        const normalizedName = rawName.replace(/^models\//, "");
+        const methods = Array.isArray(model?.supportedGenerationMethods) ? model.supportedGenerationMethods : [];
+        const isStableTextModel = STABLE_TEXT_SLIDESHOW_MODELS.includes(
+          normalizedName as typeof STABLE_TEXT_SLIDESHOW_MODELS[number]
+        );
+        return isStableTextModel && methods.includes("generateContent");
+      })
+      .map((model: any) => String(model?.name || "").replace(/^models\//, ""))
+      .filter((name: string) => !!name);
+
+    const unique: string[] = [];
+    for (const name of filtered) {
+      if (!unique.includes(name)) {
+        unique.push(name);
+      }
+    }
+    if (!unique.length) {
+      return [...STABLE_TEXT_SLIDESHOW_MODELS];
+    }
+
+    unique.sort((a, b) => STABLE_TEXT_SLIDESHOW_MODELS.indexOf(a as typeof STABLE_TEXT_SLIDESHOW_MODELS[number]) - STABLE_TEXT_SLIDESHOW_MODELS.indexOf(b as typeof STABLE_TEXT_SLIDESHOW_MODELS[number]));
+    return unique;
+  } catch (err: any) {
+    console.warn("Error while fetching model catalog from Google, using fallback:", err?.message || err);
+    return [...STABLE_TEXT_SLIDESHOW_MODELS];
+  }
+}
+
 async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Promise<string | null> {
   const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
 
@@ -327,7 +566,9 @@ async function renderSlideshowMp4(
     const audioExpr = "0.03*sin(2*PI*220*t)+0.02*sin(2*PI*329.63*t)+0.015*sin(2*PI*440*t)";
     const filterComplex = `${videoLabelParts.join(";")};[${currentLabel}]format=yuv420p[vfinal]`;
 
-    await new Promise<void>((resolve, reject) => {
+    // RESILIENCE: Add timeout protection for FFmpeg to prevent hung processes on Raspberry Pi
+    const FFMPEG_TIMEOUT_MS = 300000; // 5 minutes - reasonable for even high-res on Pi
+    const ffmpegPromise = new Promise<void>((resolve, reject) => {
       const ffmpeg = spawn("ffmpeg", [
         "-y",
         ...ffmpegInputs,
@@ -367,7 +608,17 @@ async function renderSlideshowMp4(
         }
         reject(new Error(stderr.trim() || `FFmpeg exited with code ${code}`));
       });
+
+      // Set timeout to kill process if it runs too long
+      const timeout = setTimeout(() => {
+        ffmpeg.kill("SIGKILL");
+        reject(new Error(`FFmpeg rendering timeout (${FFMPEG_TIMEOUT_MS}ms). Process killed to prevent Pi lockup.`));
+      }, FFMPEG_TIMEOUT_MS);
+
+      ffmpeg.on("close", () => clearTimeout(timeout));
     });
+
+    await ffmpegPromise;
 
     return { outputPath, outputUrl };
   } finally {
@@ -425,7 +676,7 @@ async function generateGeminiSlideshowPlan(
     ].join("\n");
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.5-flash",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         responseMimeType: "application/json",
@@ -476,7 +727,7 @@ async function generateGeminiSlideshowPlan(
         slides: sanitizedSlides,
         endingOverlayText: endingOverlayText || defaultEndingOverlayText
       },
-      aiModel: "gemini-2.0-flash",
+      aiModel: "gemini-3.5-flash",
       usedFallbackPlan: false
     };
   } catch (err) {
@@ -564,8 +815,23 @@ app.get("/api/settings", (req, res) => {
   res.json(getAppSettings());
 });
 
+app.get("/api/ai-model-catalog", async (_req, res) => {
+  const slideshowModels = await fetchAvailableGoogleSlideshowModels();
+  res.json({
+    aiJudgeModels: Object.entries(AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION).map(([model, estimatedCostUsdPerSubmission]) => ({
+      model,
+      estimatedCostUsdPerSubmission,
+    })),
+    slideshowModels: slideshowModels.map((model) => ({
+      model,
+      baseUsd: SLIDESHOW_MODEL_COST_ESTIMATE[model]?.baseUsd ?? null,
+      perPhotoUsd: SLIDESHOW_MODEL_COST_ESTIMATE[model]?.perPhotoUsd ?? null,
+    })),
+  });
+});
+
 app.post("/api/settings", (req, res) => {
-  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin } = req.body;
+  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiJudgeModel, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -582,6 +848,7 @@ app.post("/api/settings", (req, res) => {
     defaultLng: defaultLng !== undefined ? Number(defaultLng) : undefined,
     defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : undefined,
     aiPromptCriteria: aiPromptCriteria !== undefined ? String(aiPromptCriteria).trim() : undefined,
+    aiJudgeModel: aiJudgeModel !== undefined ? normalizeAiJudgeModel(aiJudgeModel) : undefined,
     aiVerificationEnabled: aiVerificationEnabled !== undefined ? !!aiVerificationEnabled : undefined,
     allowForceSubmit: allowForceSubmit !== undefined ? !!allowForceSubmit : undefined,
     activeInviteCode: activeInviteCode !== undefined ? String(activeInviteCode).trim().toLowerCase() : undefined,
@@ -1201,6 +1468,7 @@ app.post("/api/verify-submission", async (req, res) => {
     };
 
     const currentSettings = getAppSettings();
+    const aiJudgeModel = normalizeAiJudgeModel(currentSettings.aiJudgeModel);
 
     // Check if AI verification is disabled - auto-approve if so
     if (currentSettings.aiVerificationEnabled === false) {
@@ -1282,7 +1550,7 @@ You MUST respond strictly in valid JSON matching this schema:
     
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: aiJudgeModel,
         contents: { parts: [imagePart, { text: promptText }] },
         config: {
           responseMimeType: "application/json",
@@ -1528,6 +1796,7 @@ app.post("/api/submissions/:subId/retry", async (req, res) => {
     }
 
     const currentSettings = getAppSettings();
+    const aiJudgeModel = normalizeAiJudgeModel(currentSettings.aiJudgeModel);
     const customPromptCriteria = currentSettings.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.";
 
     const promptText = `You are an AI Referee for a mobile Scavenger Hunt game!
@@ -1558,7 +1827,7 @@ You MUST respond strictly in valid JSON matching this schema:
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: aiJudgeModel,
         contents: { parts: [imagePart, { text: promptText }] },
         config: {
           responseMimeType: "application/json",
@@ -1674,10 +1943,20 @@ You MUST respond strictly in valid JSON matching this schema:
 // 6.5 Generate AI slideshow script with animations and music
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
-    const { submissions, createdBy, title, promptTemplate, includeMissionNarration } = req.body;
+    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, slideshowModel } = req.body;
+    const chosenSlideshowModel = normalizeSlideshowModel(slideshowModel);
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for slideshow generation" });
+    }
+
+    // RESILIENCE: Limit submissions to prevent memory exhaustion on Raspberry Pi
+    const MAX_SUBMISSIONS_FOR_SLIDESHOW = 200;
+    if (submissions.length > MAX_SUBMISSIONS_FOR_SLIDESHOW) {
+      return res.status(400).json({
+        error: `Too many submissions. Maximum ${MAX_SUBMISSIONS_FOR_SLIDESHOW} allowed, received ${submissions.length}.`,
+        hint: "Consider creating multiple slideshows or selecting fewer photos."
+      });
     }
 
     if (!createdBy) {
@@ -1764,22 +2043,21 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
     let script = "";
     let usedAiModel = "fallback-offline";
     let usedFallbackScript = false;
+    let scriptUsageMetadata: any | null = null;
+    let narrationUsageMetadata: any | null = null;
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: slideshowPromptWithScores,
-              },
-            ],
-          },
-        ],
-      });
+      // RESILIENCE: Add timeout to prevent hanged Gemini requests from crashing the Pi
+      const response = await callGeminiWithTimeout(
+        chosenSlideshowModel,
+        [{
+          role: "user",
+          parts: [{ text: slideshowPromptWithScores }]
+        }],
+        60000, // 60 second timeout
+      );
       script = response.text || "";
-      usedAiModel = "gemini-2.0-flash";
+      scriptUsageMetadata = (response as any)?.usageMetadata || null;
+      usedAiModel = chosenSlideshowModel;
     } catch (aiErr: any) {
       console.warn("Slideshow AI unavailable, using offline fallback script:", aiErr?.message || aiErr);
       usedFallbackScript = true;
@@ -1811,22 +2089,22 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
     }
 
     let narrationGeneratedByAi = false;
+    // RESILIENCE: Narrator generation disabled by default on Raspberry Pi
+    // Each additional Gemini call increases risk of Pi memory exhaustion
+    // Users can enable if they have adequate resources
     if (includeMissionNarration === true && missionOrder.length > 0) {
       let narratorOverlayMap: Record<string, string> = {};
       try {
-        const narratorResponse = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `Create short narrator overlay lines for each mission title below. Keep each line under 24 words and make it warm and story-driven for a family reunion slideshow.\n\nMission titles:\n${missionOrder.map((missionTitle, idx) => `${idx + 1}. ${missionTitle}`).join("\n")}`,
-                },
-              ],
-            },
-          ],
-          config: {
+        const narratorResponse = await callGeminiWithTimeout(
+          chosenSlideshowModel,
+          [{
+            role: "user",
+            parts: [{
+              text: `Create short narrator overlay lines for each mission title below. Keep each line under 24 words and make it warm and story-driven for a family reunion slideshow.\n\nMission titles:\n${missionOrder.map((missionTitle, idx) => `${idx + 1}. ${missionTitle}`).join("\n")}`
+            }]
+          }],
+          45000, // 45 second timeout for narrator generation
+          {
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -1845,8 +2123,10 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
               },
               required: ["overlays"],
             },
-          },
-        });
+          }
+        );
+
+        narrationUsageMetadata = (narratorResponse as any)?.usageMetadata || null;
 
         const parsed = JSON.parse((narratorResponse.text || "{}").trim());
         const overlays = Array.isArray(parsed?.overlays) ? parsed.overlays : [];
@@ -1891,6 +2171,158 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
 
     await saveSlideshow(slideshow);
 
+    const sourceSlides = orderedSubmissions
+      .map((sub) => ({
+        submissionId: sub.id,
+        imageUrl: sub.imageUrl,
+        missionTitle: sub.title || "Unknown Mission",
+        missionDescription: sub.description || sub.title || "",
+        username: sub.username || "Unknown Player",
+      }))
+      .filter((entry) => !!entry.submissionId && !!entry.imageUrl);
+
+    const buildBasicRenderSlides = () => {
+      const basicSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
+      let previousMissionKey: string | null = null;
+
+      sourceSlides.forEach((source) => {
+        const missionKey = `${source.missionTitle}||${source.missionDescription}`;
+        if (missionKey !== previousMissionKey) {
+          previousMissionKey = missionKey;
+          basicSlides.push({
+            overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
+            durationSeconds: 4,
+            transition: "fade",
+            isTitleCard: true,
+          });
+        }
+
+        basicSlides.push({
+          imageUrl: source.imageUrl,
+          overlayText: source.missionDescription || source.missionTitle,
+          durationSeconds: 3,
+          transition: "fade",
+        });
+      });
+
+      if (basicSlides.length) {
+        basicSlides.push({
+          overlayText: buildFinalScoreboardOverlay(playerTotals),
+          durationSeconds: 6,
+          transition: "fade",
+          isTitleCard: true,
+        });
+      }
+
+      return basicSlides;
+    };
+
+    let videoGeneration: {
+      created: boolean;
+      videoUrl: string | null;
+      mode: "gemini_plan" | "basic_fallback";
+      aiModel: string;
+      usedFallbackPlan: boolean;
+      error: string | null;
+    } = {
+      created: false,
+      videoUrl: null,
+      mode: "basic_fallback",
+      aiModel: "fallback-offline",
+      usedFallbackPlan: true,
+      error: null,
+    };
+
+    if (sourceSlides.length > 0) {
+      try {
+        const planned = await generateGeminiSlideshowPlan(script, sourceSlides, playerTotals);
+        const imageBySubmissionId = new Map(sourceSlides.map((slide) => [slide.submissionId, slide]));
+
+        const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
+        let previousMissionKey: string | null = null;
+
+        planned.plan.slides.forEach((planSlide) => {
+          const source = imageBySubmissionId.get(planSlide.submissionId);
+          if (!source) return;
+
+          const missionKey = `${source.missionTitle}||${source.missionDescription}`;
+          if (missionKey !== previousMissionKey) {
+            previousMissionKey = missionKey;
+            renderSlides.push({
+              overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
+              durationSeconds: 4,
+              transition: "fade",
+              isTitleCard: true,
+            });
+          }
+
+          renderSlides.push({
+            imageUrl: source.imageUrl,
+            overlayText: planSlide.overlayText || source.missionDescription || source.missionTitle,
+            durationSeconds: planSlide.durationSeconds,
+            transition: planSlide.transition,
+          });
+        });
+
+        if (!renderSlides.length) {
+          throw new Error("Gemini slideshow plan returned no usable render slides");
+        }
+
+        const endingOverlayText = String(planned.plan.endingOverlayText || "").trim() || buildFinalScoreboardOverlay(playerTotals);
+        renderSlides.push({
+          overlayText: endingOverlayText,
+          durationSeconds: 6,
+          transition: "fade",
+          isTitleCard: true,
+        });
+
+        const rendered = await renderSlideshowMp4(slideshow.id, renderSlides);
+        videoGeneration = {
+          created: true,
+          videoUrl: rendered.outputUrl,
+          mode: "gemini_plan",
+          aiModel: planned.aiModel,
+          usedFallbackPlan: planned.usedFallbackPlan,
+          error: null,
+        };
+      } catch (geminiRenderErr: any) {
+        console.warn("Gemini-based slideshow render failed, attempting basic fallback render:", geminiRenderErr?.message || geminiRenderErr);
+
+        try {
+          const fallbackSlides = buildBasicRenderSlides();
+          if (!fallbackSlides.length) {
+            throw new Error("No slides available for fallback render");
+          }
+
+          const rendered = await renderSlideshowMp4(slideshow.id, fallbackSlides);
+          videoGeneration = {
+            created: true,
+            videoUrl: rendered.outputUrl,
+            mode: "basic_fallback",
+            aiModel: "fallback-offline",
+            usedFallbackPlan: true,
+            error: null,
+          };
+        } catch (fallbackRenderErr: any) {
+          console.error("Fallback slideshow render failed:", fallbackRenderErr);
+          videoGeneration = {
+            created: false,
+            videoUrl: null,
+            mode: "basic_fallback",
+            aiModel: "fallback-offline",
+            usedFallbackPlan: true,
+            error: fallbackRenderErr?.message || "Failed to render slideshow video",
+          };
+        }
+      }
+    } else {
+      videoGeneration.error = "No valid image URLs available to render slideshow video";
+    }
+
+    const chosenCostEstimate = SLIDESHOW_MODEL_COST_ESTIMATE[chosenSlideshowModel] || null;
+  const aggregatedUsage = summarizeGeminiUsageMetadata([scriptUsageMetadata, narrationUsageMetadata]);
+  const geminiApiUsageCostEstimate = buildGeminiUsageCostEstimate(chosenSlideshowModel, aggregatedUsage);
+
     res.json({
       success: true,
       slideshow: slideshow,
@@ -1898,8 +2330,20 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       generation: {
         aiModel: usedAiModel,
         usedFallbackScript,
+        costEstimate: chosenCostEstimate
+          ? {
+              currency: "USD",
+              basis: "per_photo_estimate",
+              baseUsd: chosenCostEstimate.baseUsd,
+              perPhotoUsd: chosenCostEstimate.perPhotoUsd,
+              totalUsd: Number((chosenCostEstimate.baseUsd + (chosenCostEstimate.perPhotoUsd * orderedSubmissions.length)).toFixed(4)),
+              pictureCount: orderedSubmissions.length,
+            }
+          : null,
+        geminiApiUsageCostEstimate,
         narrationRequested: includeMissionNarration === true,
-        narrationGeneratedByAi
+        narrationGeneratedByAi,
+        video: videoGeneration
       },
       generatedAt: new Date().toISOString(),
     });
@@ -1981,7 +2425,18 @@ app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
       return res.status(400).json({ error: "No slideshow images available for rendering" });
     }
 
-    const rendered = await renderSlideshowMp4(slideshow.id, slides);
+    // RESILIENCE: Check memory before starting intensive render
+    if (!checkAvailableMemory(512)) {
+      return res.status(503).json({ 
+        error: "Insufficient server memory for rendering",
+        hint: "Please wait and try again or reduce the number of slides"
+      });
+    }
+
+    // RESILIENCE: Queue rendering operations to prevent concurrent renders from crashing the Pi
+    const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () => 
+      renderSlideshowMp4(slideshow.id, slides)
+    );
 
     return res.json({
       success: true,
@@ -2126,7 +2581,18 @@ app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
       return res.status(400).json({ error: "Gemini did not produce a valid slideshow plan" });
     }
 
-    const rendered = await renderSlideshowMp4(slideshow.id, renderSlides);
+    // RESILIENCE: Check memory before starting intensive render
+    if (!checkAvailableMemory(512)) {
+      return res.status(503).json({ 
+        error: "Insufficient server memory for rendering",
+        hint: "Please wait and try again or reduce the number of slides"
+      });
+    }
+
+    // RESILIENCE: Queue rendering operations to prevent concurrent renders from crashing the Pi
+    const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () => 
+      renderSlideshowMp4(slideshow.id, renderSlides)
+    );
 
     return res.json({
       success: true,

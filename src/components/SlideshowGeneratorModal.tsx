@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Submission, ScavengerItem } from "../types";
 import { X, Loader2, Sparkles, Download, Copy, Check } from "lucide-react";
 
@@ -15,6 +15,15 @@ interface SlideshowGeneratorModalProps {
   onSlideshowCreated?: (slideshowId: string) => void;
 }
 
+const SLIDESHOW_FALLBACK_MODELS: string[] = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3.5-flash"];
+
+const SLIDESHOW_MODEL_COST_ESTIMATE: Record<string, { baseUsd: number; perPhotoUsd: number }> = {
+  "gemini-2.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
+  "gemini-2.5-flash-lite": { baseUsd: 0.0022, perPhotoUsd: 0.00024 },
+  "gemini-2.5-pro": { baseUsd: 0.0060, perPhotoUsd: 0.00075 },
+  "gemini-3.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
+};
+
 const DEFAULT_SLIDESHOW_PROMPT = `You are an expert multimedia producer specializing in creating family reunion slideshows.
 
 I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
@@ -22,15 +31,15 @@ I have a collection of photos from a family scavenger hunt. Here are the photos 
 
 Please generate a detailed slideshow script that includes:
 
-1. Mission Group Structure: Keep photos grouped by mission and suggest timing (2-4 seconds per slide)
-2. Mission Transition Cards: Add a transition card between each mission segment with mission title and mission description
+1. Mission Group Structure: Keep photos grouped by mission and suggest timing
+2. Mission Transition Cards: Add a transition card between each mission segment with mission title and mission description. The title should appear centered in large, bold text, and the description in smaller text below. The text should not overflow the card and should be legible. Apply a custom background that fits the current mission description but doesn't distract from the text.
 3. Transitions: Recommend transitions for each slide and between mission groups
-4. Music Recommendations: Suggest 2-3 background music tracks that fit the full story arc
+4. Music Recommendations: Suggest background music tracks that fit the full story arc
 5. Timing & Pacing: Provide total duration estimate and pacing guidance
-6. Animation Effects: Suggest subtle text overlay animations (mission title, photographer name, etc.)
+6. Animation Effects: Suggest subtle text overlay animations (mission title, photographer name, etc.) Keep it very subtle and not distracting from the photos themselves.
 7. Color Grading: Suggest filters or adjustments for visual consistency
 8. Voiceover Suggestions: Optional short commentary between mission groups
-9. Final Scoreboard Card: End with one single closing card that combines winners and full standings (all players and points), styled like the scores tab
+9. Final Scoreboard Card: End with one single closing card that combines winners and full standings (all players and points), styled like the scores tab with a top 3 podium and the rest of the players listed below in descending order. Include a celebratory message for all participants.
 
 Format your response as a professional production guide. Keep it uplifting and celebratory for a family reunion event.`;
 
@@ -53,7 +62,13 @@ export function SlideshowGeneratorModal({
   const [localScript, setLocalScript] = useState<string | null>(generatedScript);
   const [promptTemplate, setPromptTemplate] = useState(DEFAULT_SLIDESHOW_PROMPT);
   const [includeMissionNarration, setIncludeMissionNarration] = useState(false);
+  const [slideshowModels, setSlideshowModels] = useState<string[]>(SLIDESHOW_FALLBACK_MODELS);
+  const [slideshowModelCostLookup, setSlideshowModelCostLookup] = useState<Record<string, { baseUsd: number; perPhotoUsd: number }>>(SLIDESHOW_MODEL_COST_ESTIMATE);
+  const [slideshowModel, setSlideshowModel] = useState<string>(SLIDESHOW_FALLBACK_MODELS[0]);
   const [generationSource, setGenerationSource] = useState<string | null>(null);
+  const [preGenEstimateUsd, setPreGenEstimateUsd] = useState<number | null>(null);
+  const [serverCostEstimate, setServerCostEstimate] = useState<{ baseUsd: number; perPhotoUsd: number; totalUsd: number; pictureCount: number } | null>(null);
+  const [serverUsageCostEstimate, setServerUsageCostEstimate] = useState<{ totalUsd: number; promptTokens: number; completionTokens: number; totalTokens: number } | null>(null);
 
   const approvedSubmissions = submissions.filter((sub) => sub.status === "approved");
   const groupedApprovedSubmissions = approvedSubmissions.reduce((acc, sub) => {
@@ -84,12 +99,65 @@ export function SlideshowGeneratorModal({
     }
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+
+    const loadModelCatalog = async () => {
+      try {
+        const response = await fetch("/api/ai-model-catalog");
+        if (!response.ok) return;
+        const payload = await response.json();
+        const catalog = Array.isArray(payload?.slideshowModels) ? payload.slideshowModels : [];
+        if (!catalog.length) return;
+
+        const models = catalog
+          .map((entry: any) => String(entry?.model || "").trim())
+          .filter((name: string) => !!name);
+        if (!models.length || cancelled) return;
+
+        const lookup: Record<string, { baseUsd: number; perPhotoUsd: number }> = { ...SLIDESHOW_MODEL_COST_ESTIMATE };
+        catalog.forEach((entry: any) => {
+          const model = String(entry?.model || "").trim();
+          const baseUsd = Number(entry?.baseUsd);
+          const perPhotoUsd = Number(entry?.perPhotoUsd);
+          if (model && Number.isFinite(baseUsd) && Number.isFinite(perPhotoUsd)) {
+            lookup[model] = { baseUsd, perPhotoUsd };
+          }
+        });
+
+        setSlideshowModels(models);
+        setSlideshowModelCostLookup(lookup);
+        setSlideshowModel((current) => (models.includes(current) ? current : models[0]));
+      } catch (err) {
+        // Keep fallback model list if catalog fetch fails.
+      }
+    };
+
+    loadModelCatalog();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   const handleGenerateSlideshow = async () => {
     if (selectedSubmissionIds.size === 0 || !adminUserId) return;
 
     setGeneratingScript(true);
     setLocalError(null);
     setGenerationSource(null);
+    setServerCostEstimate(null);
+    setServerUsageCostEstimate(null);
+    const estimate = slideshowModelCostLookup[slideshowModel];
+    if (estimate) {
+      setPreGenEstimateUsd(
+        Number((estimate.baseUsd + estimate.perPhotoUsd * selectedSubmissionIds.size).toFixed(4))
+      );
+    } else {
+      setPreGenEstimateUsd(null);
+    }
     try {
       const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
       const response = await fetch("/api/slideshow/generate", {
@@ -107,6 +175,7 @@ export function SlideshowGeneratorModal({
           title: `Family Slideshow - ${new Date().toLocaleDateString()}`,
           promptTemplate,
           includeMissionNarration,
+          slideshowModel,
         }),
       });
 
@@ -117,12 +186,27 @@ export function SlideshowGeneratorModal({
 
       const data = await response.json();
       setLocalScript(data.slideshow.script);
-      if (data?.generation?.usedFallbackScript) {
-        setGenerationSource("Offline fallback script used (Gemini unavailable)");
+      const videoInfo = data?.generation?.video;
+      if (videoInfo?.created) {
+        if (videoInfo?.mode === "basic_fallback") {
+          setGenerationSource("Script generated and fallback MP4 slideshow created");
+        } else if (videoInfo?.aiModel) {
+          setGenerationSource(`Script generated and MP4 slideshow created with ${videoInfo.aiModel}`);
+        } else {
+          setGenerationSource("Script generated and MP4 slideshow created");
+        }
+      } else if (data?.generation?.usedFallbackScript) {
+        setGenerationSource("Script generated using offline fallback (video render unavailable)");
       } else if (data?.generation?.aiModel) {
-        setGenerationSource(`Generated with ${data.generation.aiModel}`);
+        setGenerationSource(`Script generated with ${data.generation.aiModel} (video render unavailable)`);
       } else {
-        setGenerationSource("Generated successfully");
+        setGenerationSource("Script generated (video render unavailable)");
+      }
+      if (data?.generation?.costEstimate) {
+        setServerCostEstimate(data.generation.costEstimate);
+      }
+      if (data?.generation?.geminiApiUsageCostEstimate) {
+        setServerUsageCostEstimate(data.generation.geminiApiUsageCostEstimate);
       }
       if (onScriptGenerated) {
         onScriptGenerated(data.slideshow.script);
@@ -200,6 +284,41 @@ export function SlideshowGeneratorModal({
               </div>
 
               <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Slideshow AI Model</label>
+                    <select
+                      value={slideshowModel}
+                      onChange={(e) => setSlideshowModel(e.target.value)}
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    >
+                      {slideshowModels.map((model) => (
+                        <option key={model} value={model}>{model}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Estimated Cost</label>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                      <div className="font-semibold">{selectedSubmissionIds.size} photo(s)</div>
+                      {slideshowModelCostLookup[slideshowModel] ? (
+                        <>
+                          <div className="font-mono text-[11px] mt-0.5">
+                            ${(slideshowModelCostLookup[slideshowModel].baseUsd + (slideshowModelCostLookup[slideshowModel].perPhotoUsd * selectedSubmissionIds.size)).toFixed(4)} USD
+                          </div>
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            Base ${slideshowModelCostLookup[slideshowModel].baseUsd.toFixed(4)} + ${slideshowModelCostLookup[slideshowModel].perPhotoUsd.toFixed(5)} per photo
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-[11px] mt-0.5 text-gray-500">
+                          Estimate unavailable for this model
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Gemini Prompt Template</label>
                   <button
@@ -288,12 +407,12 @@ export function SlideshowGeneratorModal({
                     {generatingScript ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Generating Slideshow...
+                        Generating Script + Slideshow...
                       </>
                     ) : (
                       <>
                         <Sparkles className="h-4 w-4" />
-                        Generate Slideshow Script ({selectedSubmissionIds.size} photos)
+                        Generate Script + Slideshow ({selectedSubmissionIds.size} photos)
                       </>
                     )}
                   </button>
@@ -321,6 +440,39 @@ export function SlideshowGeneratorModal({
                     {generationSource}
                   </p>
                 )}
+              {(preGenEstimateUsd !== null || serverCostEstimate) && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-700 space-y-1.5">
+                  <p className="font-bold uppercase tracking-wider text-gray-500 text-[10px]">Cost Breakdown</p>
+                  {preGenEstimateUsd !== null && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Pre-generation estimate</span>
+                      <span className="font-mono font-semibold">${preGenEstimateUsd.toFixed(4)} USD</span>
+                    </div>
+                  )}
+                  {serverCostEstimate && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Server-returned estimate</span>
+                      <span className="font-mono font-semibold text-purple-700">${serverCostEstimate.totalUsd.toFixed(4)} USD</span>
+                    </div>
+                  )}
+                  {serverCostEstimate && (
+                    <div className="text-[10px] text-gray-400 pt-0.5">
+                      Base ${serverCostEstimate.baseUsd.toFixed(4)} + ${serverCostEstimate.perPhotoUsd.toFixed(5)}/photo &times; {serverCostEstimate.pictureCount} photos
+                    </div>
+                  )}
+                  {serverUsageCostEstimate && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">Gemini API usage estimate</span>
+                        <span className="font-mono font-semibold text-emerald-700">${serverUsageCostEstimate.totalUsd.toFixed(6)} USD</span>
+                      </div>
+                      <div className="text-[10px] text-gray-400">
+                        {serverUsageCostEstimate.promptTokens} prompt + {serverUsageCostEstimate.completionTokens} completion = {serverUsageCostEstimate.totalTokens} total tokens
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               </div>
 
               {/* Script Display */}
@@ -362,6 +514,9 @@ export function SlideshowGeneratorModal({
                 onClick={() => {
                   setLocalScript(null);
                   setSelectedSubmissionIds(new Set());
+                  setPreGenEstimateUsd(null);
+                  setServerCostEstimate(null);
+                  setServerUsageCostEstimate(null);
                   setGenerationSource(null);
                 }}
                 className="w-full text-gray-700 font-medium py-2 hover:bg-gray-100 rounded-lg transition"

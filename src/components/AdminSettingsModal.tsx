@@ -34,6 +34,8 @@ interface AdminSettingsModalProps {
   onRadiusChange: (value: number) => void;
   aiPromptInput: string;
   onAiPromptChange: (value: string) => void;
+  aiJudgeModelInput: "gemini-3.5-flash" | "gemini-2.0-flash";
+  onAiJudgeModelChange: (value: "gemini-3.5-flash" | "gemini-2.0-flash") => void;
   aiVerificationEnabledInput: boolean;
   onAiVerificationEnabledChange: (value: boolean) => void;
   allowForceSubmitInput: boolean;
@@ -93,6 +95,8 @@ export function AdminSettingsModal({
   onRadiusChange,
   aiPromptInput,
   onAiPromptChange,
+  aiJudgeModelInput,
+  onAiJudgeModelChange,
   aiVerificationEnabledInput,
   onAiVerificationEnabledChange,
   allowForceSubmitInput,
@@ -136,6 +140,10 @@ export function AdminSettingsModal({
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const aiJudgeCostByModel: Record<"gemini-3.5-flash" | "gemini-2.0-flash", number> = {
+    "gemini-3.5-flash": 0.0025,
+    "gemini-2.0-flash": 0.0015,
+  };
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
@@ -495,6 +503,29 @@ export function AdminSettingsModal({
           {/* AI Judge Section */}
           <div className="space-y-2 pt-2 border-t border-[#e5e5dd]">
             <h3 className="text-xs font-bold text-[#5a5a40] uppercase tracking-wider">🤖 AI Judge Configuration</h3>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
+                AI Judge Model
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-start">
+                <select
+                  value={aiJudgeModelInput}
+                  onChange={(e) => onAiJudgeModelChange(e.target.value as "gemini-3.5-flash" | "gemini-2.0-flash")}
+                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2.5 outline-none font-mono text-[#2d2d2d] focus:ring-1 focus:ring-[#5a5a40]"
+                >
+                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
+                  <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                </select>
+                <div className="rounded-xl border border-[#dcdcd4] bg-[#f5f5f0]/60 px-3 py-2 text-[10px] text-[#5a5a40]">
+                  <div className="font-bold uppercase tracking-wider">Est. Cost / Submission</div>
+                  <div className="font-mono text-xs mt-0.5">${aiJudgeCostByModel[aiJudgeModelInput].toFixed(4)} USD</div>
+                </div>
+              </div>
+              <p className="text-[9px] text-[#8c8c82]">
+                Estimated cost assumes one image verification call with prompt + structured response.
+              </p>
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
                 AI Judge Prompt Criteria

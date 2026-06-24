@@ -1135,6 +1135,7 @@ export interface AppSettings {
   defaultLng?: number;
   defaultRadius?: number;
   aiPromptCriteria?: string;
+  aiJudgeModel?: "gemini-3.5-flash" | "gemini-2.0-flash";
   activeInviteCode?: string;
   inviteRequired?: boolean;
   aiVerificationEnabled?: boolean;
@@ -1158,6 +1159,11 @@ export function getAppSettings(): AppSettings {
         rawMapMode === "satellite_labels" || rawMapMode === "missions_only" || rawMapMode === "disabled"
           ? rawMapMode
           : "original";
+      const rawAiJudgeModel = parsed.aiJudgeModel;
+      const parsedAiJudgeModel =
+        rawAiJudgeModel === "gemini-2.0-flash" || rawAiJudgeModel === "gemini-3.5-flash"
+          ? rawAiJudgeModel
+          : "gemini-3.5-flash";
       return {
         name: parsed.name || "KinQuest",
         icon: parsed.icon || "/kinquest_logo.png",
@@ -1166,6 +1172,7 @@ export function getAppSettings(): AppSettings {
         defaultLng: Number(parsed.defaultLng) || -111.3800,
         defaultRadius: Number(parsed.defaultRadius) || 200,
         aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+        aiJudgeModel: parsedAiJudgeModel,
         activeInviteCode: parsed.activeInviteCode || "watkins",
         inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true,
         aiVerificationEnabled: parsed.aiVerificationEnabled !== undefined ? !!parsed.aiVerificationEnabled : true,
@@ -1188,6 +1195,7 @@ export function getAppSettings(): AppSettings {
     defaultLng: -111.3800,
     defaultRadius: 2500,
     aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+    aiJudgeModel: "gemini-3.5-flash",
     activeInviteCode: "watkins",
     inviteRequired: true,
     aiVerificationEnabled: true,
