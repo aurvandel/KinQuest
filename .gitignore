@@ -6,7 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
-uploads/
 data/
 tile-cache/
 nginx/certs/wildcard_.narcolepsy.ninja.crt
