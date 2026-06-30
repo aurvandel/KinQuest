@@ -8,8 +8,8 @@ services:
       dockerfile: Dockerfile
     container_name: kinquest-app
     restart: always
-    dns:
-      - ${APP_DNS_SERVER_1:-}
+    #dns:
+      #- ${APP_DNS_SERVER_1:-}
       #dns_search:
       #- watkins.narcolepsy.ninja
       #extra_hosts:
@@ -30,6 +30,18 @@ services:
       - SUPABASE_URL=${SUPABASE_URL:-http://kong:8000}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OLLAMA_SERVER_URL=${OLLAMA_SERVER_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_REQUEST_TIMEOUT_MS=${OLLAMA_REQUEST_TIMEOUT_MS:-15000}
+      - OLLAMA_SCRIPT_MODE=${OLLAMA_SCRIPT_MODE:-offload_if_presenton}
+      - PRESENTON_SERVER_URL=${PRESENTON_SERVER_URL:-}
+      - PRESENTON_API_KEY=${PRESENTON_API_KEY:-}
+      - PRESENTON_USERNAME=${PRESENTON_USERNAME:-}
+      - PRESENTON_PASSWORD=${PRESENTON_PASSWORD:-}
+      - PRESENTON_AUTH_MODE=${PRESENTON_AUTH_MODE:-auto}
+      - PRESENTON_LOGIN_PATH=${PRESENTON_LOGIN_PATH:-/api/v1/auth/jwt/login}
+      - PRESENTON_GENERATE_PATH=${PRESENTON_GENERATE_PATH:-/api/v1/ppt/presentation/generate}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/uploads}
       - TILE_CACHE_DIR=${TILE_CACHE_DIR:-/app/tile-cache}

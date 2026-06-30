@@ -6,6 +6,7 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 
 - **Scavenger Hunt Missions**: Create photo and GPS-based challenges with point rewards
 - **AI Judge System**: Google Gemini AI verifies photo submissions in real-time with personalized feedback
+- **AI Slideshow Pipeline**: Ollama generates slideshow scripts, with Presenton + MP4 rendering for final video output
 - **Geofencing**: GPS-based challenges with configurable radius constraints
 - **Live Leaderboard**: Real-time scoring and family member rankings
 - **Interactive Map**: View all challenges with geolocation, simulate positions, and track proximity
@@ -26,7 +27,7 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 - **Frontend**: React 18, TypeScript, Tailwind CSS
 - **Backend**: Node.js Express, WebSocket (ws)
 - **Database**: Supabase (PostgreSQL)
-- **AI**: Google Gemini API for photo verification
+- **AI**: Google Gemini API for photo verification, Ollama for slideshow scripting
 - **Build Tools**: Vite, esbuild
 - **Containerization**: Docker & Docker Compose
 
@@ -35,6 +36,7 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 - Node.js 16+
 - Docker & Docker Compose (for local Supabase)
 - Google Gemini API key
+- Ollama server (can be remote)
 - (Optional) Supabase project for production deployment
 
 ## Installation & Setup
@@ -47,6 +49,11 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 2. **Configure environment variables** in `.env.local`:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
+   OLLAMA_SERVER_URL=http://your-ollama-server:11434
+   OLLAMA_MODEL=llama3.1
+   OLLAMA_API_KEY=your_optional_ollama_api_key
+   PRESENTON_SERVER_URL=http://your-presenton-server
+   PRESENTON_API_KEY=your_optional_presenton_api_key
    ADMIN_PASSWORD=your_secure_admin_password
    SUPABASE_URL=http://localhost:8000  # for local dev
    SUPABASE_ANON_KEY=your_anon_key
@@ -113,6 +120,11 @@ The app automatically detects database availability and falls back to local JSON
 - Photos submitted by family members are evaluated by Gemini
 - AI provides personalized feedback and bonus points for family spirit
 - Status tracking: pending → approved/rejected
+
+### Slideshow Generation
+- Ollama generates the slideshow production script
+- KinQuest attempts Presenton MP4 generation first (when configured)
+- If Presenton is unavailable, KinQuest falls back to local FFmpeg MP4 rendering
 
 ### Geolocation System
 - Real GPS tracking with fallback to simulated coordinates

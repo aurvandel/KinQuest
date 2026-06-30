@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Settings, Upload, Copy, Check, AlertCircle, Loader2, RotateCcw, QrCode, ExternalLink, HardDrive } from "lucide-react";
 import QRCode from "react-qr-code";
 import { AppSettings } from "../types";
@@ -14,6 +14,27 @@ interface StorageInfo {
   imageCompressionMaxDim: number;
   imageCompressionQuality: number;
   imagesRemainingCapacity: number;
+}
+
+interface AiServiceProbe {
+  configured: boolean;
+  reachable: boolean;
+  endpoint: string | null;
+  statusCode: number | null;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+interface AiHealthResponse {
+  overallOk: boolean;
+  services: {
+    ollama: AiServiceProbe;
+    presenton: AiServiceProbe;
+  };
+  configured?: {
+    ollamaModel?: string;
+  };
+  timestamp: string;
 }
 
 interface AdminSettingsModalProps {
@@ -147,6 +168,38 @@ export function AdminSettingsModal({
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
+  const [aiHealth, setAiHealth] = useState<AiHealthResponse | null>(null);
+  const [aiHealthLoading, setAiHealthLoading] = useState(false);
+  const [aiHealthError, setAiHealthError] = useState<string | null>(null);
+
+  const loadAiHealth = async () => {
+    const userId = localStorage.getItem("scavenger_uid");
+    if (!userId) {
+      setAiHealthError("Not logged in");
+      return;
+    }
+
+    setAiHealthLoading(true);
+    setAiHealthError(null);
+    try {
+      const response = await fetch(`/api/admin/ai-health?userId=${encodeURIComponent(userId)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || data?.details || "Failed to fetch AI health");
+      }
+      setAiHealth(data as AiHealthResponse);
+    } catch (err: any) {
+      setAiHealthError(err?.message || "Failed to fetch AI health");
+      setAiHealth(null);
+    } finally {
+      setAiHealthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    loadAiHealth();
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -246,6 +299,30 @@ export function AdminSettingsModal({
     } finally {
       setIsRestoring(false);
     }
+  };
+
+  const getProbeTone = (probe: AiServiceProbe, optionalWhenMissing: boolean) => {
+    if (!probe.configured && optionalWhenMissing) return "yellow" as const;
+    if (probe.reachable) return "green" as const;
+    return "red" as const;
+  };
+
+  const toneClasses: Record<"green" | "yellow" | "red", { badge: string; dot: string; text: string }> = {
+    green: {
+      badge: "border-emerald-200 bg-emerald-50",
+      dot: "bg-emerald-500",
+      text: "text-emerald-700",
+    },
+    yellow: {
+      badge: "border-amber-200 bg-amber-50",
+      dot: "bg-amber-500",
+      text: "text-amber-700",
+    },
+    red: {
+      badge: "border-red-200 bg-red-50",
+      dot: "bg-red-500",
+      text: "text-red-700",
+    },
   };
 
   return (
@@ -503,6 +580,76 @@ export function AdminSettingsModal({
           {/* AI Judge Section */}
           <div className="space-y-2 pt-2 border-t border-[#e5e5dd]">
             <h3 className="text-xs font-bold text-[#5a5a40] uppercase tracking-wider">🤖 AI Judge Configuration</h3>
+
+            <div className="space-y-2 p-3 rounded-2xl border border-[#dcdcd4] bg-[#f8f8f3]">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider">AI Service Health</p>
+                  <p className="text-[9px] text-[#8c8c82]">Connectivity from this server container to Ollama and Presenton.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadAiHealth}
+                  disabled={aiHealthLoading}
+                  className="px-2.5 py-1.5 rounded-lg border border-[#dcdcd4] bg-white text-[10px] font-bold text-[#5a5a40] hover:bg-[#f1f1ea] transition disabled:opacity-50"
+                >
+                  {aiHealthLoading ? "Checking..." : "Refresh"}
+                </button>
+              </div>
+
+              {aiHealthError && (
+                <div className="p-2 bg-red-50 text-red-700 rounded-lg text-[9px] font-medium border border-red-100 flex items-center gap-1.5">
+                  <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
+                  <span>{aiHealthError}</span>
+                </div>
+              )}
+
+              {aiHealth && (
+                <>
+                  <div className={`rounded-lg border px-2.5 py-2 text-[10px] font-semibold ${aiHealth.overallOk ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+                    Overall Status: {aiHealth.overallOk ? "Healthy" : "Degraded"}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { key: "ollama", label: "Ollama", probe: aiHealth.services.ollama, optionalWhenMissing: false },
+                      { key: "presenton", label: "Presenton", probe: aiHealth.services.presenton, optionalWhenMissing: true },
+                    ].map((service) => {
+                      const tone = getProbeTone(service.probe, service.optionalWhenMissing);
+                      const classes = toneClasses[tone];
+
+                      let statusText = service.probe.reachable ? "reachable" : "unreachable";
+                      if (!service.probe.configured && service.optionalWhenMissing) {
+                        statusText = "not configured (optional)";
+                      }
+
+                      return (
+                        <div key={service.key} className={`rounded-lg border px-2.5 py-2 ${classes.badge}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${classes.text}`}>{service.label}</span>
+                            <span className="flex items-center gap-1">
+                              <span className={`inline-block h-2.5 w-2.5 rounded-full ${classes.dot}`} />
+                              <span className={`text-[9px] font-semibold ${classes.text}`}>{statusText}</span>
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[9px] text-[#5a5a40] space-y-0.5">
+                            <div>Status Code: {service.probe.statusCode ?? "-"}</div>
+                            <div>Latency: {service.probe.latencyMs !== null ? `${service.probe.latencyMs}ms` : "-"}</div>
+                            <div className="truncate">Endpoint: {service.probe.endpoint || "-"}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="text-[9px] text-[#8c8c82]">
+                    Checked at {new Date(aiHealth.timestamp).toLocaleTimeString()}
+                    {aiHealth.configured?.ollamaModel ? ` • Ollama model: ${aiHealth.configured.ollamaModel}` : ""}
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
                 AI Judge Model

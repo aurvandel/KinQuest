@@ -141,6 +141,15 @@ export default function App() {
   const [slideshowGeneratedScript, setSlideshowGeneratedScript] = useState<string | null>(null);
   const [slideshowError, setSlideshowError] = useState<string | null>(null);
   const [slideshowRefreshKey, setSlideshowRefreshKey] = useState(0);
+  const [slideshowAiHealth, setSlideshowAiHealth] = useState<{
+    overallOk: boolean;
+    services: {
+      ollama: { configured: boolean; reachable: boolean };
+      presenton: { configured: boolean; reachable: boolean };
+    };
+  } | null>(null);
+  const [slideshowAiHealthLoading, setSlideshowAiHealthLoading] = useState(false);
+  const [slideshowAiHealthError, setSlideshowAiHealthError] = useState<string | null>(null);
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
   const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
@@ -266,6 +275,44 @@ export default function App() {
   const [isAdminAuthLoading, setIsAdminAuthLoading] = useState(false);
   const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
   const [pendingAdminName, setPendingAdminName] = useState<string | null>(null);
+
+  const fetchSlideshowAiHealth = async () => {
+    if (profile?.role !== "admin" || !profile?.id) return;
+
+    setSlideshowAiHealthLoading(true);
+    setSlideshowAiHealthError(null);
+    try {
+      const response = await fetch(`/api/admin/ai-health?userId=${encodeURIComponent(profile.id)}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || data?.details || "Failed to load AI health");
+      }
+      setSlideshowAiHealth({
+        overallOk: Boolean(data?.overallOk),
+        services: {
+          ollama: {
+            configured: Boolean(data?.services?.ollama?.configured),
+            reachable: Boolean(data?.services?.ollama?.reachable),
+          },
+          presenton: {
+            configured: Boolean(data?.services?.presenton?.configured),
+            reachable: Boolean(data?.services?.presenton?.reachable),
+          },
+        },
+      });
+    } catch (err: any) {
+      setSlideshowAiHealthError(err?.message || "Failed to load AI health");
+      setSlideshowAiHealth(null);
+    } finally {
+      setSlideshowAiHealthLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "slideshows" && profile?.role === "admin") {
+      fetchSlideshowAiHealth();
+    }
+  }, [activeTab, profile?.role, profile?.id]);
 
   // App uses Supabase exclusively for data persistence
   const [sqlVisible, setSqlVisible] = useState(false);
@@ -2963,7 +3010,63 @@ CREATE TABLE IF NOT EXISTS submissions (
           {activeTab === "slideshows" && (
             <div className="space-y-3">
               {profile?.role === "admin" && (
-                <div className="flex justify-end">
+                <div className="flex justify-end items-center gap-2">
+                  <div
+                    className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                      slideshowAiHealthLoading
+                        ? "bg-slate-100 border-slate-200 text-slate-600"
+                        : slideshowAiHealthError
+                          ? "bg-red-50 border-red-200 text-red-700"
+                          : slideshowAiHealth?.services?.ollama?.reachable && !slideshowAiHealth?.services?.presenton?.configured
+                            ? "bg-amber-50 border-amber-200 text-amber-700"
+                            : slideshowAiHealth?.overallOk
+                              ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                              : "bg-red-50 border-red-200 text-red-700"
+                    }`}
+                    title={
+                      slideshowAiHealthLoading
+                        ? "Checking AI connectivity..."
+                        : slideshowAiHealthError
+                          ? `AI health check failed: ${slideshowAiHealthError}`
+                          : slideshowAiHealth?.overallOk
+                            ? "AI health looks good"
+                            : "AI services are degraded"
+                    }
+                  >
+                    <span
+                      className={`inline-block w-2 h-2 rounded-full ${
+                        slideshowAiHealthLoading
+                          ? "bg-slate-500 animate-pulse"
+                          : slideshowAiHealthError
+                            ? "bg-red-500"
+                            : slideshowAiHealth?.services?.ollama?.reachable && !slideshowAiHealth?.services?.presenton?.configured
+                              ? "bg-amber-500"
+                              : slideshowAiHealth?.overallOk
+                                ? "bg-emerald-500"
+                                : "bg-red-500"
+                      }`}
+                    />
+                    {slideshowAiHealthLoading
+                      ? "AI Checking"
+                      : slideshowAiHealthError
+                        ? "AI Error"
+                        : slideshowAiHealth?.services?.ollama?.reachable && !slideshowAiHealth?.services?.presenton?.configured
+                          ? "AI Partial"
+                          : slideshowAiHealth?.overallOk
+                            ? "AI Healthy"
+                            : "AI Degraded"}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={fetchSlideshowAiHealth}
+                    disabled={slideshowAiHealthLoading}
+                    className="py-2 px-3 rounded-xl text-[11px] font-semibold text-[#5a5a40] bg-white border border-[#dcdcd4] hover:bg-[#f5f5f0] transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                    title="Refresh AI connectivity"
+                  >
+                    {slideshowAiHealthLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setSlideshowGeneratorOpen(true)}

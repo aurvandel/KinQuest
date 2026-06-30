@@ -76,9 +76,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
   const [voiceEnabledMap, setVoiceEnabledMap] = useState<{ [slideshowId: string]: boolean }>({});
   const [scriptDraftMap, setScriptDraftMap] = useState<{ [slideshowId: string]: string }>({});
   const [savingScriptId, setSavingScriptId] = useState<string | null>(null);
-  const [creatingGeminiId, setCreatingGeminiId] = useState<string | null>(null);
-  const [geminiStatusMap, setGeminiStatusMap] = useState<{ [slideshowId: string]: string | null }>({});
-  const [geminiVideoEstimateConfig, setGeminiVideoEstimateConfig] = useState<{ baseUsd: number; perPhotoUsd: number } | null>(null);
 
   useEffect(() => {
     const fetchSlideshows = async () => {
@@ -127,28 +124,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     fetchSlideshows();
   }, [refreshKey]);
 
-  useEffect(() => {
-    const loadModelCatalog = async () => {
-      try {
-        const response = await fetch("/api/ai-model-catalog");
-        if (!response.ok) return;
-        const payload = await response.json();
-        const slideshowModels = Array.isArray(payload?.slideshowModels) ? payload.slideshowModels : [];
-        const geminiVideoModel = slideshowModels.find((entry: any) => String(entry?.model || "") === "gemini-3.5-flash");
-        if (!geminiVideoModel) return;
-
-        const baseUsd = Number(geminiVideoModel.baseUsd);
-        const perPhotoUsd = Number(geminiVideoModel.perPhotoUsd);
-        if (!Number.isFinite(baseUsd) || !Number.isFinite(perPhotoUsd)) return;
-
-        setGeminiVideoEstimateConfig({ baseUsd, perPhotoUsd });
-      } catch {
-        // Keep cost estimate hidden when catalog is unavailable.
-      }
-    };
-
-    loadModelCatalog();
-  }, []);
 
   useEffect(() => {
     if (!playingId) return;
@@ -312,42 +287,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     }
   };
 
-  const handleCreateGeminiVideo = async (slideshow: Slideshow) => {
-    if (!userId || userRole !== "admin") return;
-
-    const script = scriptDraftMap[slideshow.id] ?? slideshow.script;
-    setCreatingGeminiId(slideshow.id);
-    setRenderErrorMap((prev) => ({ ...prev, [slideshow.id]: null }));
-    setGeminiStatusMap((prev) => ({ ...prev, [slideshow.id]: null }));
-
-    try {
-      const response = await fetch(`/api/slideshows/${slideshow.id}/gemini-create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, script }),
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.details || data?.error || "Failed to create Gemini slideshow video");
-      }
-
-      if (data?.videoUrl) {
-        setVideoUrlMap((prev) => ({ ...prev, [slideshow.id]: data.videoUrl }));
-      }
-
-      const aiModel = data?.generation?.aiModel || "unknown-model";
-      const fallbackSuffix = data?.generation?.usedFallbackPlan ? " (fallback plan)" : "";
-      setGeminiStatusMap((prev) => ({ ...prev, [slideshow.id]: `Video generated with ${aiModel}${fallbackSuffix}` }));
-
-      setSlideshows((prev) => prev.map((s) => (s.id === slideshow.id ? { ...s, script } : s)));
-    } catch (err: any) {
-      setRenderErrorMap((prev) => ({ ...prev, [slideshow.id]: err?.message || "Failed to create Gemini slideshow video" }));
-    } finally {
-      setCreatingGeminiId(null);
-    }
-  };
-
   const handleDeleteSlideshow = async (slideshowId: string) => {
     if (!userId || userRole !== "admin") return;
     const confirmed = window.confirm("Delete this slideshow and its generated MP4 file? This will not delete any mission or submission data.");
@@ -380,13 +319,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     } finally {
       setDeletingId(null);
     }
-  };
-
-  const estimateGeminiVideoCost = (slideshow: Slideshow): number | null => {
-    if (!geminiVideoEstimateConfig) return null;
-    const photoCount = slideshow.submissionIds.length;
-    const total = geminiVideoEstimateConfig.baseUsd + (geminiVideoEstimateConfig.perPhotoUsd * photoCount);
-    return Number(total.toFixed(4));
   };
 
   if (isLoading) {
@@ -486,7 +418,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
             const currentSlide = resolvedSlides[currentIndex];
             const narratorMap = extractNarratorOverlayMap(slideshow.script || "");
             const currentNarration = currentSlide ? narratorMap[currentSlide.title] : null;
-            const geminiVideoEstimate = estimateGeminiVideoCost(slideshow);
             const hasVideo = Boolean(videoUrlMap[slideshow.id]);
 
             return (
@@ -660,30 +591,8 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
                           "Save Script"
                         )}
                       </button>
-                      {!hasVideo && (
-                        <button
-                          onClick={() => handleCreateGeminiVideo(slideshow)}
-                          disabled={creatingGeminiId === slideshow.id}
-                          className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
-                        >
-                          {creatingGeminiId === slideshow.id ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Gemini Creating Video...
-                            </>
-                          ) : (
-                            `Create Gemini Video${geminiVideoEstimate !== null ? ` (~$${geminiVideoEstimate.toFixed(4)})` : ""}`
-                          )}
-                        </button>
-                      )}
                     </div>
                   </>
-                )}
-
-                {isAdmin && geminiStatusMap[slideshow.id] && (
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700">
-                    {geminiStatusMap[slideshow.id]}
-                  </div>
                 )}
 
                 {/* Action Buttons */}

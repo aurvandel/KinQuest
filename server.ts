@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import http from "http";
 import https from "https";
+import { createHash } from "crypto";
 import fs from "fs";
 import { promises as fsp } from "fs";
 import os from "os";
@@ -72,6 +73,20 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const OLLAMA_SERVER_URL = (process.env.OLLAMA_SERVER_URL || "http://localhost:11434").trim();
+const OLLAMA_MODEL = (process.env.OLLAMA_MODEL || "llama3.1").trim();
+const OLLAMA_API_KEY = (process.env.OLLAMA_API_KEY || "").trim();
+const OLLAMA_REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.OLLAMA_REQUEST_TIMEOUT_MS || 15000) || 15000);
+const OLLAMA_SCRIPT_MODE = (process.env.OLLAMA_SCRIPT_MODE || "offload_if_presenton").trim().toLowerCase();
+const PRESENTON_SERVER_URL = (process.env.PRESENTON_SERVER_URL || "").trim();
+const PRESENTON_API_KEY = (process.env.PRESENTON_API_KEY || "").trim();
+const PRESENTON_USERNAME = (process.env.PRESENTON_USERNAME || "").trim();
+const PRESENTON_PASSWORD = (process.env.PRESENTON_PASSWORD || "").trim();
+const PRESENTON_AUTH_MODE = (process.env.PRESENTON_AUTH_MODE || "auto").trim().toLowerCase();
+const PRESENTON_LOGIN_PATH = (process.env.PRESENTON_LOGIN_PATH || "/api/v1/auth/jwt/login").trim();
+const PRESENTON_GENERATE_PATH = (process.env.PRESENTON_GENERATE_PATH || "/api/v1/ppt/presentation/generate").trim();
+
+let presentonJwtTokenCache: { token: string; issuedAtMs: number } | null = null;
 
 // Increase body size limit to support base64 snapshots of photographs
 app.use(express.json({ limit: "15mb" }));
@@ -86,6 +101,348 @@ const ai = new GoogleGenAI({
     }
   }
 });
+
+function normalizeServerUrl(raw: string): string {
+  return raw.replace(/\/+$/, "");
+}
+
+function normalizeApiPath(raw: string, fallback: string): string {
+  const value = (raw || "").trim();
+  if (!value) return fallback;
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
+function buildAuthHeaders(auth: { apiKey?: string; username?: string; password?: string }): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const apiKey = (auth.apiKey || "").trim();
+  const username = (auth.username || "").trim();
+  const password = auth.password || "";
+
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+    headers["X-API-Key"] = apiKey;
+    return headers;
+  }
+
+  if (username) {
+    const token = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+    headers.Authorization = `Basic ${token}`;
+  }
+
+  return headers;
+}
+
+function buildPresentonAuthHeaders(): Record<string, string> {
+  const config = buildPresentonAuthConfig();
+  if (config.username) {
+    return buildAuthHeaders({ username: config.username, password: config.password });
+  }
+  if (config.apiKey) {
+    return buildAuthHeaders({ apiKey: config.apiKey });
+  }
+  return {};
+}
+
+function buildPresentonAuthConfig(): { apiKey?: string; username?: string; password?: string } {
+  const mode = PRESENTON_AUTH_MODE;
+  const apiKeyConfig = PRESENTON_API_KEY ? { apiKey: PRESENTON_API_KEY } : {};
+  const basicConfig = PRESENTON_USERNAME
+    ? { username: PRESENTON_USERNAME, password: PRESENTON_PASSWORD }
+    : {};
+
+  if (mode === "basic") return basicConfig;
+  if (mode === "api_key" || mode === "apikey" || mode === "bearer") return apiKeyConfig;
+  if (mode === "jwt" || mode === "local") return {};
+  if (mode === "none") return {};
+
+  // Auto mode prefers local login flow when username/password are configured.
+  if (PRESENTON_USERNAME) return {};
+  return apiKeyConfig;
+}
+
+async function getPresentonJwtBearerToken(baseUrl: string): Promise<string> {
+  const now = Date.now();
+  // Keep token fresh enough without decoding JWT expiry.
+  if (presentonJwtTokenCache && now - presentonJwtTokenCache.issuedAtMs < 45 * 60 * 1000) {
+    return presentonJwtTokenCache.token;
+  }
+
+  if (!PRESENTON_USERNAME || !PRESENTON_PASSWORD) {
+    throw new Error("Presenton JWT auth requires PRESENTON_USERNAME and PRESENTON_PASSWORD");
+  }
+
+  const loginPath = normalizeApiPath(PRESENTON_LOGIN_PATH, "/api/v1/auth/jwt/login");
+  const form = new URLSearchParams();
+  form.set("username", PRESENTON_USERNAME);
+  form.set("password", PRESENTON_PASSWORD);
+
+  const response = await withTimeout(
+    fetch(`${baseUrl}${loginPath}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    }),
+    15000,
+    "Presenton JWT login"
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Presenton JWT login failed (${response.status}) at ${loginPath}: ${body}`);
+  }
+
+  const payload: any = await response.json();
+  const accessToken = String(payload?.access_token || "").trim();
+  if (!accessToken) {
+    throw new Error("Presenton JWT login returned no access_token");
+  }
+
+  presentonJwtTokenCache = {
+    token: accessToken,
+    issuedAtMs: now,
+  };
+
+  return accessToken;
+}
+
+async function buildPresentonRequestHeaders(baseUrl: string): Promise<Record<string, string>> {
+  const mode = PRESENTON_AUTH_MODE;
+
+  if (mode === "none") {
+    return {};
+  }
+
+  if (mode === "jwt" || mode === "local") {
+    const token = await getPresentonJwtBearerToken(baseUrl);
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  if (mode === "basic") {
+    return buildAuthHeaders({ username: PRESENTON_USERNAME, password: PRESENTON_PASSWORD });
+  }
+
+  if (mode === "api_key" || mode === "apikey" || mode === "bearer") {
+    return buildAuthHeaders({ apiKey: PRESENTON_API_KEY });
+  }
+
+  // auto
+  if (PRESENTON_USERNAME && PRESENTON_PASSWORD) {
+    try {
+      const token = await getPresentonJwtBearerToken(baseUrl);
+      return { Authorization: `Bearer ${token}` };
+    } catch (jwtErr: any) {
+      console.warn("Presenton auto auth JWT login failed, trying Basic auth:", jwtErr?.message || jwtErr);
+      return buildAuthHeaders({ username: PRESENTON_USERNAME, password: PRESENTON_PASSWORD });
+    }
+  }
+
+  if (PRESENTON_API_KEY) {
+    return buildAuthHeaders({ apiKey: PRESENTON_API_KEY });
+  }
+
+  return {};
+}
+
+async function callOllamaText(prompt: string): Promise<{ text: string; model: string }> {
+  const baseUrl = normalizeServerUrl(OLLAMA_SERVER_URL);
+  if (!baseUrl) {
+    throw new Error("OLLAMA_SERVER_URL is not configured");
+  }
+
+  const model = OLLAMA_MODEL || "llama3.1";
+  const response = await withTimeout(
+    fetch(`${baseUrl}/api/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders({ apiKey: OLLAMA_API_KEY }),
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+      }),
+    }),
+    OLLAMA_REQUEST_TIMEOUT_MS,
+    "Ollama generation"
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Ollama request failed (${response.status}): ${body}`);
+  }
+
+  const payload: any = await response.json();
+  const text = typeof payload?.response === "string" ? payload.response.trim() : "";
+  if (!text) {
+    throw new Error("Ollama returned an empty response");
+  }
+
+  return {
+    text,
+    model: typeof payload?.model === "string" && payload.model.trim().length > 0 ? payload.model.trim() : model,
+  };
+}
+
+async function writeRemoteVideoToSlideshow(slideshowId: string, videoUrl: string): Promise<{ outputPath: string; outputUrl: string }> {
+  const cleanId = sanitizeSlideshowId(slideshowId);
+  if (!cleanId) throw new Error("Invalid slideshow id");
+
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const videosDir = path.join(uploadsDir, "slideshows");
+  await fsp.mkdir(videosDir, { recursive: true });
+
+  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
+  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
+
+  const response = await withTimeout(fetch(videoUrl), 90000, "Presenton video download");
+  if (!response.ok) {
+    throw new Error(`Presenton video download failed with status ${response.status}`);
+  }
+
+  const data = Buffer.from(await response.arrayBuffer());
+  await fsp.writeFile(outputPath, data);
+
+  return { outputPath, outputUrl };
+}
+
+async function writeVideoBytesToSlideshow(slideshowId: string, base64Bytes: string): Promise<{ outputPath: string; outputUrl: string }> {
+  const cleanId = sanitizeSlideshowId(slideshowId);
+  if (!cleanId) throw new Error("Invalid slideshow id");
+
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const videosDir = path.join(uploadsDir, "slideshows");
+  await fsp.mkdir(videosDir, { recursive: true });
+
+  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
+  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
+  await fsp.writeFile(outputPath, Buffer.from(base64Bytes, "base64"));
+
+  return { outputPath, outputUrl };
+}
+
+async function callPresentonSlideshow(
+  slideshowId: string,
+  script: string,
+  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
+  playerTotals: Array<{ username: string; score: number }>
+): Promise<{ videoUrl: string | null; slidesPlan: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }> | null }> {
+  const baseUrl = normalizeServerUrl(PRESENTON_SERVER_URL);
+  if (!baseUrl) {
+    return { videoUrl: null, slidesPlan: null };
+  }
+
+  const generatePath = normalizeApiPath(PRESENTON_GENERATE_PATH, "/api/v1/ppt/presentation/generate");
+  const looksLikeLocalGenerateApi = /\/api\/(v1\/ppt\/presentation|v3\/presentation)\/generate(?:\/async)?$/.test(generatePath);
+  const presentonBody = looksLikeLocalGenerateApi
+    ? {
+        // Local self-hosted API shape from Presenton docs.
+        content: script,
+        n_slides: Math.max(3, Math.min(sourceSlides.length + 2, 20)),
+        language: "English",
+        template: "general",
+        standard_template: "general",
+        export_as: "pptx",
+      }
+    : {
+        // Legacy/custom integration shape for deployments exposing a direct slideshow endpoint.
+        slideshowId,
+        script,
+        outputFormat: "mp4",
+        aiProvider: "ollama",
+        aiModel: OLLAMA_MODEL,
+        slides: sourceSlides,
+        scoreboard: playerTotals,
+      };
+
+  const presentonAuthHeaders = await buildPresentonRequestHeaders(baseUrl);
+
+  const sendPresentonRequest = async (headers: Record<string, string>) =>
+    withTimeout(
+      fetch(`${baseUrl}${generatePath}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body: JSON.stringify(presentonBody),
+      }),
+      120000,
+      "Presenton slideshow generation"
+    );
+
+  let response = await sendPresentonRequest(presentonAuthHeaders);
+
+  if (!response.ok && response.status === 401 && PRESENTON_AUTH_MODE === "auto" && Object.keys(presentonAuthHeaders).length > 0) {
+    // Some local setups are explicitly unauthenticated; retry once without auth.
+    response = await sendPresentonRequest({});
+  }
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Presenton request failed (${response.status}) at ${generatePath} [authMode=${PRESENTON_AUTH_MODE}]: ${body}`);
+  }
+
+  const payload: any = await response.json();
+
+  const presentationPath = typeof payload?.path === "string" ? payload.path.trim() : "";
+  if (presentationPath) {
+    const absolutePath = presentationPath.startsWith("http")
+      ? presentationPath
+      : `${baseUrl}${presentationPath.startsWith("/") ? "" : "/"}${presentationPath}`;
+
+    if (/\.mp4(\?|$)/i.test(absolutePath)) {
+      const written = await writeRemoteVideoToSlideshow(slideshowId, absolutePath);
+      return { videoUrl: written.outputUrl, slidesPlan: null };
+    }
+
+    // Standard local API returns pptx/pdf paths; KinQuest then falls back to local MP4 rendering.
+    return { videoUrl: null, slidesPlan: null };
+  }
+
+  const directVideoUrl =
+    (typeof payload?.videoUrl === "string" && payload.videoUrl) ||
+    (typeof payload?.result?.videoUrl === "string" && payload.result.videoUrl) ||
+    null;
+  if (directVideoUrl) {
+    const written = await writeRemoteVideoToSlideshow(slideshowId, directVideoUrl);
+    return { videoUrl: written.outputUrl, slidesPlan: null };
+  }
+
+  const base64Video =
+    (typeof payload?.videoBytesBase64 === "string" && payload.videoBytesBase64) ||
+    (typeof payload?.videoBytes === "string" && payload.videoBytes) ||
+    (typeof payload?.result?.videoBytesBase64 === "string" && payload.result.videoBytesBase64) ||
+    null;
+  if (base64Video) {
+    const written = await writeVideoBytesToSlideshow(slideshowId, base64Video);
+    return { videoUrl: written.outputUrl, slidesPlan: null };
+  }
+
+  const rawSlides = Array.isArray(payload?.slidesPlan)
+    ? payload.slidesPlan
+    : Array.isArray(payload?.result?.slidesPlan)
+      ? payload.result.slidesPlan
+      : Array.isArray(payload?.slides)
+        ? payload.slides
+        : [];
+
+  const slidesPlan = rawSlides
+    .map((row: any) => ({
+      submissionId: String(row?.submissionId || "").trim(),
+      overlayText: String(row?.overlayText || "").trim(),
+      durationSeconds: Math.max(2, Math.min(Number(row?.durationSeconds) || 5, 8)),
+      transition: String(row?.transition || "fade").trim().toLowerCase(),
+    }))
+    .filter((row: any) => row.submissionId.length > 0);
+
+  return {
+    videoUrl: null,
+    slidesPlan: slidesPlan.length ? slidesPlan : null,
+  };
+}
 
 // Run live Supabase diagnostics and onboarding queries
 initializeDatabase().catch((err) => {
@@ -161,24 +518,52 @@ function sanitizeSlideshowId(raw: string): string {
 function buildFinalScoreboardOverlay(
   playerTotals: Array<{ username: string; score: number }>
 ): string {
-  const winners = playerTotals.slice(0, 3);
-  const winnerLines = winners.length
-    ? winners.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
-    : ["No winners yet"];
-
-  const standingsLines = playerTotals.length
-    ? playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
-    : ["No player scores available"];
+  const scoringPlayers = playerTotals.filter((entry) => Number(entry.score) > 0);
+  const standingsLines = scoringPlayers.length
+    ? scoringPlayers.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
+    : ["No player scores yet"];
 
   return [
-    "Scavenger Hall of Fame",
-    "",
-    "Winners",
-    ...winnerLines,
-    "",
-    "Full Standings",
+    "Final Standings",
     ...standingsLines,
   ].join("\n");
+}
+
+function wrapMultilineTextForCard(text: string, maxCharsPerLine: number, maxLines: number): string {
+  const normalized = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!normalized) return "";
+
+  const rawLines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const wrappedLines: string[] = [];
+
+  for (const rawLine of rawLines) {
+    if (wrappedLines.length >= maxLines) break;
+
+    const remainingLineBudget = maxLines - wrappedLines.length;
+    const wrapped = wrapTextForCard(rawLine, maxCharsPerLine, remainingLineBudget);
+    if (!wrapped) continue;
+
+    const parts = wrapped.split("\n").filter((part) => part.trim().length > 0);
+    for (const part of parts) {
+      if (wrappedLines.length >= maxLines) break;
+      wrappedLines.push(part);
+    }
+  }
+
+  if (!wrappedLines.length) return "";
+
+  if (rawLines.length > wrappedLines.length) {
+    const last = wrappedLines[wrappedLines.length - 1] || "";
+    wrappedLines[wrappedLines.length - 1] = `${last.slice(0, Math.max(0, maxCharsPerLine - 3)).trimEnd()}...`;
+  }
+
+  return wrappedLines.join("\n");
 }
 
 // ========== RESILIENCE HELPERS FOR RASPBERRY PI ==========
@@ -195,22 +580,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: 
       setTimeout(() => reject(new Error(`${timeoutMessage} (${timeoutMs}ms timeout)`)), timeoutMs)
     )
   ]);
-}
-
-/**
- * Call Gemini API with timeout protection. Prevents hanged requests from crashing the Pi.
- */
-async function callGeminiWithTimeout(
-  model: string,
-  prompt: string | any,
-  timeoutMs: number = 60000,
-  config?: any
-): Promise<any> {
-  const call = prompt instanceof Object
-    ? ai.models.generateContent({ model, contents: prompt, config })
-    : ai.models.generateContent({ model, contents: [{ role: "user", parts: [{ text: prompt }] }], config });
-  
-  return withTimeout(call, timeoutMs, `Gemini ${model} request`);
 }
 
 /**
@@ -317,175 +686,18 @@ const AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION: Record<"gemini-3.5-flash" | "gemin
   "gemini-2.0-flash": 0.0015,
 };
 
-const STABLE_TEXT_SLIDESHOW_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-3.5-flash",
-] as const;
-
-const SLIDESHOW_GENERATION_MODES = [
-  "deterministic_local",
-  "gemini_cinematic",
-  "ai_ordered_budget",
-] as const;
-
-type SlideshowGenerationMode = (typeof SLIDESHOW_GENERATION_MODES)[number];
-
-const DEFAULT_SLIDESHOW_GENERATION_MODE: SlideshowGenerationMode = "deterministic_local";
-
-const GEMINI_CINEMATIC_VIDEO_MODELS = [
-  "veo-2.0-generate-001",
-] as const;
-
-const DEFAULT_GEMINI_CINEMATIC_MODEL = GEMINI_CINEMATIC_VIDEO_MODELS[0];
-
-const FALLBACK_SLIDESHOW_MODEL = STABLE_TEXT_SLIDESHOW_MODELS[0];
-
-const SLIDESHOW_MODEL_COST_ESTIMATE: Record<string, { baseUsd: number; perPhotoUsd: number }> = {
-  "gemini-2.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
-  "gemini-2.5-flash-lite": { baseUsd: 0.0022, perPhotoUsd: 0.00024 },
-  "gemini-2.5-pro": { baseUsd: 0.0060, perPhotoUsd: 0.00075 },
-  "gemini-3.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
-};
-
-const SLIDESHOW_MODEL_TOKEN_COST_USD_PER_MILLION: Record<string, { inputUsd: number; outputUsd: number }> = {
-  // Keep these values conservative and configurable; they can be updated as Google pricing evolves.
-  "gemini-2.5-flash": { inputUsd: 0.15, outputUsd: 0.60 },
-  "gemini-2.5-flash-lite": { inputUsd: 0.075, outputUsd: 0.30 },
-  "gemini-2.5-pro": { inputUsd: 1.25, outputUsd: 5.00 },
-  "gemini-3.5-flash": { inputUsd: 0.15, outputUsd: 0.60 },
-};
-
-function readUsageTokenCount(raw: unknown): number {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-function summarizeGeminiUsageMetadata(parts: Array<any | null | undefined>): { promptTokens: number; completionTokens: number; totalTokens: number } | null {
-  let promptTokens = 0;
-  let completionTokens = 0;
-  let totalTokens = 0;
-
-  parts.forEach((usage) => {
-    if (!usage) return;
-    promptTokens += readUsageTokenCount(usage.promptTokenCount);
-    completionTokens += readUsageTokenCount(usage.candidatesTokenCount);
-    totalTokens += readUsageTokenCount(usage.totalTokenCount);
-  });
-
-  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
-    return null;
-  }
-
-  if (totalTokens === 0) {
-    totalTokens = promptTokens + completionTokens;
-  }
-
-  return {
-    promptTokens,
-    completionTokens,
-    totalTokens,
-  };
-}
-
-function buildGeminiUsageCostEstimate(model: string, usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null) {
-  if (!usage) return null;
-  const rates = SLIDESHOW_MODEL_TOKEN_COST_USD_PER_MILLION[model];
-  if (!rates) return null;
-
-  const inputUsd = (usage.promptTokens / 1_000_000) * rates.inputUsd;
-  const outputUsd = (usage.completionTokens / 1_000_000) * rates.outputUsd;
-  const totalUsd = inputUsd + outputUsd;
-
-  return {
-    currency: "USD",
-    basis: "token_usage_metadata",
-    promptTokens: usage.promptTokens,
-    completionTokens: usage.completionTokens,
-    totalTokens: usage.totalTokens,
-    inputRateUsdPerMillion: rates.inputUsd,
-    outputRateUsdPerMillion: rates.outputUsd,
-    inputUsd: Number(inputUsd.toFixed(6)),
-    outputUsd: Number(outputUsd.toFixed(6)),
-    totalUsd: Number(totalUsd.toFixed(6)),
-  };
-}
-
 function normalizeAiJudgeModel(raw: unknown): "gemini-3.5-flash" | "gemini-2.0-flash" {
   return raw === "gemini-2.0-flash" ? "gemini-2.0-flash" : "gemini-3.5-flash";
 }
 
 function normalizeSlideshowModel(raw: unknown): string {
-  const model = typeof raw === "string" ? raw.trim().replace(/^models\//, "") : "";
-  if (!model) return FALLBACK_SLIDESHOW_MODEL;
-  if (!STABLE_TEXT_SLIDESHOW_MODELS.includes(model as typeof STABLE_TEXT_SLIDESHOW_MODELS[number])) {
-    return FALLBACK_SLIDESHOW_MODEL;
-  }
+  const model = typeof raw === "string" ? raw.trim() : "";
+  if (!model) return OLLAMA_MODEL || "llama3.1";
   return model;
 }
 
-function normalizeSlideshowGenerationMode(raw: unknown): SlideshowGenerationMode {
-  const mode = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-  if (SLIDESHOW_GENERATION_MODES.includes(mode as SlideshowGenerationMode)) {
-    return mode as SlideshowGenerationMode;
-  }
-  return DEFAULT_SLIDESHOW_GENERATION_MODE;
-}
-
-function normalizeBudgetSlideshowModel(raw: unknown): string {
-  const normalized = normalizeSlideshowModel(raw);
-  if (normalized === "gemini-2.5-pro") {
-    return "gemini-2.5-flash-lite";
-  }
-  return normalized;
-}
-
-async function fetchAvailableGoogleSlideshowModels(): Promise<string[]> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return [FALLBACK_SLIDESHOW_MODEL];
-  }
-
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
-    if (!response.ok) {
-      const errText = await response.text();
-      console.warn("Failed to fetch model catalog from Google, using fallback:", response.status, errText);
-      return [FALLBACK_SLIDESHOW_MODEL];
-    }
-
-    const payload = await response.json();
-    const models = Array.isArray(payload?.models) ? payload.models : [];
-    const filtered: string[] = models
-      .filter((model: any) => {
-        const rawName = String(model?.name || "");
-        const normalizedName = rawName.replace(/^models\//, "");
-        const methods = Array.isArray(model?.supportedGenerationMethods) ? model.supportedGenerationMethods : [];
-        const isStableTextModel = STABLE_TEXT_SLIDESHOW_MODELS.includes(
-          normalizedName as typeof STABLE_TEXT_SLIDESHOW_MODELS[number]
-        );
-        return isStableTextModel && methods.includes("generateContent");
-      })
-      .map((model: any) => String(model?.name || "").replace(/^models\//, ""))
-      .filter((name: string) => !!name);
-
-    const unique: string[] = [];
-    for (const name of filtered) {
-      if (!unique.includes(name)) {
-        unique.push(name);
-      }
-    }
-    if (!unique.length) {
-      return [...STABLE_TEXT_SLIDESHOW_MODELS];
-    }
-
-    unique.sort((a, b) => STABLE_TEXT_SLIDESHOW_MODELS.indexOf(a as typeof STABLE_TEXT_SLIDESHOW_MODELS[number]) - STABLE_TEXT_SLIDESHOW_MODELS.indexOf(b as typeof STABLE_TEXT_SLIDESHOW_MODELS[number]));
-    return unique;
-  } catch (err: any) {
-    console.warn("Error while fetching model catalog from Google, using fallback:", err?.message || err);
-    return [...STABLE_TEXT_SLIDESHOW_MODELS];
-  }
+async function fetchAvailableSlideshowModels(): Promise<string[]> {
+  return [OLLAMA_MODEL || "llama3.1"];
 }
 
 async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Promise<string | null> {
@@ -569,6 +781,14 @@ function wrapTextForCard(text: string, maxCharsPerLine: number, maxLines: number
   return lines.join("\n");
 }
 
+function normalizeOverlayTextForFfmpeg(raw: unknown): string {
+  return String(raw || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    .trim();
+}
+
 async function renderSlideshowMp4(
   slideshowId: string,
   slides: Array<{ imageUrl?: string; overlayText?: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }>
@@ -611,7 +831,7 @@ async function renderSlideshowMp4(
       if (!resolved && !isTitleCard) continue;
       resolvedSlides.push({
         imagePath: resolved,
-        overlayText: String(slide.overlayText || "").trim(),
+        overlayText: normalizeOverlayTextForFfmpeg(slide.overlayText),
         durationSeconds: Math.max(2, Math.min(Number(slide.durationSeconds) || 5, 8)),
         transition: String(slide.transition || "fade").toLowerCase(),
         isTitleCard,
@@ -688,21 +908,21 @@ async function renderSlideshowMp4(
       const textFilePath = path.join(tmpDir, `overlay_${idx}.txt`);
 
       if (slide.isTitleCard) {
-        const [rawTitle, ...rawDescriptionParts] = String(slide.overlayText || "").split("\n");
+        const [rawTitle, ...rawDescriptionParts] = normalizeOverlayTextForFfmpeg(slide.overlayText).split("\n");
         const title = wrapTextForCard(rawTitle || "", 30, 2);
-        const description = wrapTextForCard(rawDescriptionParts.join(" ").trim(), 48, 4);
+        const description = wrapMultilineTextForCard(rawDescriptionParts.join("\n").trim(), 48, 6);
 
         const titleTextFilePath = path.join(tmpDir, `overlay_${idx}_title.txt`);
         const descriptionTextFilePath = path.join(tmpDir, `overlay_${idx}_description.txt`);
         fs.writeFileSync(titleTextFilePath, title || "", "utf8");
         fs.writeFileSync(descriptionTextFilePath, description || "", "utf8");
 
-        const drawTitle = `drawtext=fontfile='${escapedFontFile}':textfile='${titleTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${titleFontSize}:line_spacing=10:borderw=4:bordercolor=black@0.70:box=1:boxcolor=black@0.25:boxborderw=16:x=(w-text_w)/2:y=72`;
-        const drawDescription = `drawtext=fontfile='${escapedFontFile}':textfile='${descriptionTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${descriptionFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:box=1:boxcolor=black@0.18:boxborderw=14:x=(w-text_w)/2:y=210`;
+        const drawTitle = `drawtext=fontfile='${escapedFontFile}':textfile='${titleTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${titleFontSize}:line_spacing=10:borderw=4:bordercolor=black@0.70:shadowcolor=black@0.45:shadowx=2:shadowy=2:x=(w-text_w)/2:y=72`;
+        const drawDescription = `drawtext=fontfile='${escapedFontFile}':textfile='${descriptionTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${descriptionFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:shadowcolor=black@0.40:shadowx=2:shadowy=2:x=(w-text_w)/2:y=210`;
 
         videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawTitle},${drawDescription},format=rgba[v${idx}]`);
       } else {
-        fs.writeFileSync(textFilePath, String(slide.overlayText || "").trim(), "utf8");
+        fs.writeFileSync(textFilePath, normalizeOverlayTextForFfmpeg(slide.overlayText), "utf8");
         const drawText = `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${overlayFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:box=1:boxcolor=black@0.28:boxborderw=14:x=w-text_w-40:y=h-text_h-32`;
         videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},format=rgba[v${idx}]`);
       }
@@ -796,301 +1016,6 @@ async function renderSlideshowMp4(
   } finally {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   }
-}
-
-async function generateGeminiSlideshowPlan(
-  slideshowModel: string,
-  script: string,
-  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
-  playerTotals: Array<{ username: string; score: number }>
-): Promise<{
-  plan: {
-    slides: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>;
-    endingOverlayText?: string;
-  };
-  aiModel: string;
-  usedFallbackPlan: boolean;
-}> {
-  const defaultEndingOverlayText = buildFinalScoreboardOverlay(playerTotals);
-
-  const defaultPlan = {
-    slides: sourceSlides.map((slide) => ({
-      submissionId: slide.submissionId,
-      overlayText: slide.username,
-      durationSeconds: 5,
-      transition: "fade"
-    })),
-    endingOverlayText: defaultEndingOverlayText
-  };
-
-  try {
-    const prompt = [
-      "You are creating a machine-readable edit decision list for a family slideshow video.",
-      "Use the provided script to decide timing, order, overlay text, and transitions.",
-      "Assume a non-image transition card is inserted every time the mission changes in playback order.",
-      "Each transition card shows mission title and mission description.",
-      "Do not return title-card rows; only return photo rows for provided submission IDs.",
-      "Create endingOverlayText for one single closing card that includes BOTH: (1) winners (top 3), and (2) full standings with all player totals.",
-      "Style endingOverlayText like the KinQuest scores tab: heading, winners block, then full standings list.",
-      "Return only entries for the provided submission IDs.",
-      "Durations must be 2-8 seconds.",
-      "Transitions allowed: fade, wipeleft, wiperight, slideleft, slideright, circlecrop, smoothleft, smoothright.",
-      "Prefer overlay text from mission descriptions.",
-      "",
-      "SCRIPT:",
-      script,
-      "",
-      "AVAILABLE SLIDES:",
-      ...sourceSlides.map((slide, idx) => `${idx + 1}. submissionId=${slide.submissionId} | title=${slide.missionTitle} | description=${slide.missionDescription} | username=${slide.username}`),
-      "",
-      "PLAYER TOTALS:",
-      ...playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username}: ${entry.score} pts`),
-    ].join("\n");
-
-    const response = await ai.models.generateContent({
-      model: slideshowModel,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            slides: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  submissionId: { type: Type.STRING },
-                  overlayText: { type: Type.STRING },
-                  durationSeconds: { type: Type.NUMBER },
-                  transition: { type: Type.STRING }
-                },
-                required: ["submissionId", "overlayText", "durationSeconds", "transition"]
-              }
-            },
-            endingOverlayText: { type: Type.STRING }
-          },
-          required: ["slides", "endingOverlayText"]
-        }
-      }
-    });
-
-    const parsed = JSON.parse((response.text || "{}").trim());
-    const slides = Array.isArray(parsed?.slides) ? parsed.slides : [];
-    const allowedIds = new Set(sourceSlides.map((s) => s.submissionId));
-
-    const sanitizedSlides = slides
-      .map((entry: any) => ({
-        submissionId: String(entry?.submissionId || "").trim(),
-        overlayText: String(entry?.overlayText || "").trim(),
-        durationSeconds: Math.max(2, Math.min(Number(entry?.durationSeconds) || 3, 8)),
-        transition: String(entry?.transition || "fade").trim().toLowerCase(),
-      }))
-      .filter((entry: any) => entry.submissionId && allowedIds.has(entry.submissionId));
-
-    if (!sanitizedSlides.length) {
-      return { plan: defaultPlan, aiModel: "fallback-offline", usedFallbackPlan: true };
-    }
-
-    const endingOverlayText = String(parsed?.endingOverlayText || "").trim();
-
-    return {
-      plan: {
-        slides: sanitizedSlides,
-        endingOverlayText: endingOverlayText || defaultEndingOverlayText
-      },
-      aiModel: slideshowModel,
-      usedFallbackPlan: false
-    };
-  } catch (err) {
-    console.warn("Gemini slideshow plan generation failed, using fallback plan:", err);
-    return { plan: defaultPlan, aiModel: "fallback-offline", usedFallbackPlan: true };
-  }
-}
-
-async function generateOrderedBudgetSlideshowPlan(
-  slideshowModel: string,
-  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>
-): Promise<{
-  slides: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>;
-  aiModel: string;
-  usedFallbackPlan: boolean;
-}> {
-  const fallbackSlides = sourceSlides.map((slide) => ({
-    submissionId: slide.submissionId,
-    overlayText: slide.username,
-    durationSeconds: 5,
-    transition: "fade",
-  }));
-
-  try {
-    const prompt = [
-      "Create concise per-photo overlay metadata for a slideshow.",
-      "Keep the exact same order as provided. Do not add, remove, or reorder entries.",
-      "Use warm family-friendly language.",
-      "Transitions allowed: fade, wipeleft, wiperight, slideleft, slideright, circlecrop, smoothleft, smoothright.",
-      "Durations must be 3-6 seconds.",
-      "Return one output row per submissionId.",
-      "",
-      "ORDERED INPUT SLIDES:",
-      ...sourceSlides.map((slide, idx) => `${idx + 1}. submissionId=${slide.submissionId} | mission=${slide.missionTitle} | description=${slide.missionDescription} | username=${slide.username}`),
-    ].join("\n");
-
-    const response = await ai.models.generateContent({
-      model: slideshowModel,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            slides: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  submissionId: { type: Type.STRING },
-                  overlayText: { type: Type.STRING },
-                  durationSeconds: { type: Type.NUMBER },
-                  transition: { type: Type.STRING },
-                },
-                required: ["submissionId", "overlayText", "durationSeconds", "transition"],
-              },
-            },
-          },
-          required: ["slides"],
-        },
-      },
-    });
-
-    const parsed = JSON.parse((response.text || "{}").trim());
-    const aiSlides = Array.isArray(parsed?.slides) ? parsed.slides : [];
-    const byId = new Map<string, { overlayText: string; durationSeconds: number; transition: string }>();
-    aiSlides.forEach((row: any) => {
-      const submissionId = String(row?.submissionId || "").trim();
-      if (!submissionId) return;
-      byId.set(submissionId, {
-        overlayText: String(row?.overlayText || "").trim(),
-        durationSeconds: Math.max(3, Math.min(Number(row?.durationSeconds) || 5, 6)),
-        transition: String(row?.transition || "fade").trim().toLowerCase(),
-      });
-    });
-
-    const orderedSlides = sourceSlides.map((slide) => {
-      const fromAi = byId.get(slide.submissionId);
-      return {
-        submissionId: slide.submissionId,
-        overlayText: fromAi?.overlayText || slide.username,
-        durationSeconds: fromAi?.durationSeconds || 5,
-        transition: fromAi?.transition || "fade",
-      };
-    });
-
-    return {
-      slides: orderedSlides,
-      aiModel: slideshowModel,
-      usedFallbackPlan: false,
-    };
-  } catch (err: any) {
-    console.warn("Budget ordered slideshow plan failed, using local ordered defaults:", err?.message || err);
-    return {
-      slides: fallbackSlides,
-      aiModel: "fallback-offline",
-      usedFallbackPlan: true,
-    };
-  }
-}
-
-async function writeGeminiVideoToLocalSlideshow(
-  slideshowId: string,
-  video: { uri?: string; videoBytes?: string; mimeType?: string }
-): Promise<{ outputPath: string; outputUrl: string }> {
-  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
-  const videosDir = path.join(uploadsDir, "slideshows");
-  await fsp.mkdir(videosDir, { recursive: true });
-
-  const cleanId = sanitizeSlideshowId(slideshowId);
-  if (!cleanId) throw new Error("Invalid slideshow id");
-
-  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
-  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
-
-  if (video.videoBytes) {
-    await fsp.writeFile(outputPath, Buffer.from(video.videoBytes, "base64"));
-    return { outputPath, outputUrl };
-  }
-
-  if (video.uri) {
-    const response = await withTimeout(fetch(video.uri), 60000, "Gemini video download");
-    if (!response.ok) {
-      throw new Error(`Gemini video download failed with status ${response.status}`);
-    }
-    const data = Buffer.from(await response.arrayBuffer());
-    await fsp.writeFile(outputPath, data);
-    return { outputPath, outputUrl };
-  }
-
-  throw new Error("Gemini video output contained neither videoBytes nor uri");
-}
-
-async function generateGeminiCinematicVideo(
-  slideshowId: string,
-  script: string,
-  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
-  playerTotals: Array<{ username: string; score: number }>
-): Promise<{ outputPath: string; outputUrl: string; aiModel: string; operationName: string | null }> {
-  const chosenModel = DEFAULT_GEMINI_CINEMATIC_MODEL;
-  const prompt = [
-    "Create a cinematic family reunion highlight video.",
-    "Narrative tone should be warm, celebratory, and story-driven.",
-    "Include a clear ending sequence that celebrates the winners and all participants.",
-    "",
-    "SCRIPT CONTEXT:",
-    script,
-    "",
-    "MISSION ORDER:",
-    ...sourceSlides.map((slide, idx) => `${idx + 1}. ${slide.missionTitle} - ${slide.username}`),
-    "",
-    "PLAYER TOTALS:",
-    ...playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username}: ${entry.score} pts`),
-  ].join("\n");
-
-  let operation: any = await ai.models.generateVideos({
-    model: chosenModel,
-    source: { prompt },
-    config: {
-      numberOfVideos: 1,
-      aspectRatio: "16:9",
-    } as any,
-  });
-
-  const maxPollAttempts = 30;
-  let attempts = 0;
-  while (!operation.done && attempts < maxPollAttempts) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    operation = await ai.operations.getVideosOperation({ operation });
-    attempts += 1;
-  }
-
-  if (!operation.done) {
-    throw new Error("Gemini cinematic video operation timed out before completion");
-  }
-
-  if (operation.error) {
-    throw new Error(`Gemini cinematic video operation failed: ${JSON.stringify(operation.error)}`);
-  }
-
-  const generatedVideo = operation.response?.generatedVideos?.[0]?.video;
-  if (!generatedVideo) {
-    throw new Error("Gemini cinematic video operation returned no video output");
-  }
-
-  const written = await writeGeminiVideoToLocalSlideshow(slideshowId, generatedVideo);
-  return {
-    ...written,
-    aiModel: chosenModel,
-    operationName: typeof operation?.name === "string" ? operation.name : null,
-  };
 }
 
 // ========== SERVER LOGGING SYSTEM ==========
@@ -1276,6 +1201,63 @@ function getTopProcesses(limit: number = 5): Promise<TopProcessUsage[]> {
   });
 }
 
+async function probeServiceConnectivity(
+  baseUrl: string,
+  paths: string[],
+  auth: { apiKey?: string; username?: string; password?: string }
+): Promise<{ configured: boolean; reachable: boolean; endpoint: string | null; statusCode: number | null; latencyMs: number | null; error: string | null }> {
+  const normalizedBase = normalizeServerUrl(baseUrl || "");
+  if (!normalizedBase) {
+    return {
+      configured: false,
+      reachable: false,
+      endpoint: null,
+      statusCode: null,
+      latencyMs: null,
+      error: "not_configured",
+    };
+  }
+
+  let lastError: string | null = null;
+  for (const pathSuffix of paths) {
+    const endpoint = `${normalizedBase}${pathSuffix}`;
+    const started = Date.now();
+    try {
+      const response = await withTimeout(
+        fetch(endpoint, {
+          method: "GET",
+          headers: {
+            ...buildAuthHeaders(auth),
+          },
+        }),
+        5000,
+        `Health check ${endpoint}`
+      );
+
+      const latencyMs = Date.now() - started;
+      return {
+        configured: true,
+        reachable: true,
+        endpoint,
+        statusCode: response.status,
+        latencyMs,
+        error: null,
+      };
+    } catch (err: any) {
+      lastError = err?.message || "request_failed";
+    }
+  }
+
+  return {
+    configured: true,
+    reachable: false,
+    endpoint: null,
+    statusCode: null,
+    latencyMs: null,
+    error: lastError,
+  };
+}
+
 async function validateAdminUserFromQuery(req: express.Request, res: express.Response): Promise<boolean> {
   const userId = typeof req.query.userId === "string" ? req.query.userId : null;
   if (!userId) {
@@ -1344,13 +1326,45 @@ app.get("/api/admin/resource-monitor", async (req, res) => {
   }
 });
 
+app.get("/api/admin/ai-health", async (req, res) => {
+  if (!(await validateAdminUserFromQuery(req, res))) return;
+
+  try {
+    const [ollama, presenton] = await Promise.all([
+      probeServiceConnectivity(OLLAMA_SERVER_URL, ["/api/tags", "/"], { apiKey: OLLAMA_API_KEY }),
+      probeServiceConnectivity(PRESENTON_SERVER_URL, ["/health", "/api/health", "/"], {
+        ...buildPresentonAuthConfig(),
+      }),
+    ]);
+
+    const overallOk = ollama.reachable && (!presenton.configured || presenton.reachable);
+    res.status(overallOk ? 200 : 503).json({
+      overallOk,
+      services: {
+        ollama,
+        presenton,
+      },
+      configured: {
+        ollamaModel: OLLAMA_MODEL,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      overallOk: false,
+      error: err?.message || "Failed to run AI health checks",
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 // App settings endpoints
 app.get("/api/settings", (req, res) => {
   res.json(getAppSettings());
 });
 
 app.get("/api/ai-model-catalog", async (_req, res) => {
-  const slideshowModels = await fetchAvailableGoogleSlideshowModels();
+  const slideshowModels = await fetchAvailableSlideshowModels();
   res.json({
     aiJudgeModels: Object.entries(AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION).map(([model, estimatedCostUsdPerSubmission]) => ({
       model,
@@ -1358,9 +1372,16 @@ app.get("/api/ai-model-catalog", async (_req, res) => {
     })),
     slideshowModels: slideshowModels.map((model) => ({
       model,
-      baseUsd: SLIDESHOW_MODEL_COST_ESTIMATE[model]?.baseUsd ?? null,
-      perPhotoUsd: SLIDESHOW_MODEL_COST_ESTIMATE[model]?.perPhotoUsd ?? null,
+      baseUsd: null,
+      perPhotoUsd: null,
+      provider: "ollama",
+      serverUrl: normalizeServerUrl(OLLAMA_SERVER_URL),
     })),
+    slideshowProvider: {
+      provider: "ollama_presenton",
+      ollamaServerUrl: normalizeServerUrl(OLLAMA_SERVER_URL),
+      presentonServerUrl: normalizeServerUrl(PRESENTON_SERVER_URL),
+    },
   });
 });
 
@@ -2475,11 +2496,121 @@ You MUST respond strictly in valid JSON matching this schema:
 });
 
 // 6.5 Generate AI slideshow script with animations and music
+app.post("/api/slideshow/generate-mission-slides", async (req, res) => {
+  try {
+    const { submissions, createdBy } = req.body || {};
+
+    if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
+      return res.status(400).json({ error: "No submissions provided for mission slide generation" });
+    }
+
+    if (!createdBy) {
+      return res.status(400).json({ error: "Admin user ID is required" });
+    }
+
+    const state = await getAppState();
+    const creatorProfile = state.users[createdBy];
+    if (!creatorProfile || creatorProfile.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can generate mission slides" });
+    }
+
+    const groupedByMission = new Map<string, Array<{ title: string; description?: string }>>();
+    const missionOrder: string[] = [];
+
+    for (const rawSub of submissions) {
+      const normalized = {
+        title: String(rawSub?.title || "Unknown Mission"),
+        description: rawSub?.description ? String(rawSub.description) : "",
+      };
+
+      if (!groupedByMission.has(normalized.title)) {
+        groupedByMission.set(normalized.title, []);
+        missionOrder.push(normalized.title);
+      }
+      groupedByMission.get(normalized.title)!.push(normalized);
+    }
+
+    const missionCards = missionOrder.map((missionTitle) => {
+      const missionSubs = groupedByMission.get(missionTitle) || [];
+      const firstDescription = String(missionSubs.find((s) => (s.description || "").trim().length > 0)?.description || "").trim();
+      return {
+        missionTitle,
+        missionDescription: firstDescription || "Mission spotlight",
+      };
+    });
+
+    const missionSlidesScript = [
+      "Mission transition cards to generate:",
+      ...missionCards.map((mission, idx) => `${idx + 1}. ${mission.missionTitle} - ${mission.missionDescription}`),
+      "",
+      "Photo flow:",
+      ...missionOrder.flatMap((missionTitle, idx) => {
+        const subs = groupedByMission.get(missionTitle) || [];
+        return [`Mission ${idx + 1}: ${missionTitle} (${subs.length} photos)`];
+      }),
+    ].join("\n");
+
+    return res.json({
+      success: true,
+      missionSlidesScript,
+      missionCards,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("Mission slide generation error:", err);
+    return res.status(500).json({
+      error: "Failed to generate mission slides",
+      details: err.message || "Unknown error",
+    });
+  }
+});
+
+app.post("/api/slideshow/generate-leaderboard-slide", async (req, res) => {
+  try {
+    const { createdBy } = req.body || {};
+    if (!createdBy) {
+      return res.status(400).json({ error: "Admin user ID is required" });
+    }
+
+    const state = await getAppState();
+    const creatorProfile = state.users[createdBy];
+    if (!creatorProfile || creatorProfile.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can generate leaderboard slides" });
+    }
+
+    const playerTotals = Object.values(state.users)
+      .map((u) => ({ username: String(u.username || "").trim(), score: Number(u.score) || 0 }))
+      .filter((u) => u.username.length > 0)
+      .sort((a, b) => b.score - a.score);
+
+    const nonZeroStandings = playerTotals.filter((entry) => entry.score > 0);
+    const leaderboardSlideScript = [
+      "Final leaderboard slide:",
+      "Title: Final Standings",
+      ...(nonZeroStandings.length
+        ? nonZeroStandings.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
+        : ["No player scores yet"]),
+    ].join("\n");
+
+    return res.json({
+      success: true,
+      leaderboardSlideScript,
+      standings: nonZeroStandings,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("Leaderboard slide generation error:", err);
+    return res.status(500).json({
+      error: "Failed to generate leaderboard slide",
+      details: err.message || "Unknown error",
+    });
+  }
+});
+
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
-    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, slideshowModel, generationMode } = req.body;
-    const chosenSlideshowModel = normalizeSlideshowModel(slideshowModel);
-    const chosenGenerationMode = normalizeSlideshowGenerationMode(generationMode);
+    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, missionSlidesScript, leaderboardSlideScript } = req.body;
+    const chosenSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel);
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for slideshow generation" });
@@ -2526,8 +2657,14 @@ app.post("/api/slideshow/generate", async (req, res) => {
 
     const groupedSections: string[] = [];
     const orderedSubmissions: Array<{ id: string; imageUrl: string; title: string; description?: string; username: string }> = [];
+    const missionCards: Array<{ missionTitle: string; missionDescription: string }> = [];
     missionOrder.forEach((missionTitle, missionIdx) => {
       const missionSubs = groupedByMission.get(missionTitle) || [];
+      const firstDescription = String(missionSubs.find((s) => (s.description || "").trim().length > 0)?.description || "").trim();
+      missionCards.push({
+        missionTitle,
+        missionDescription: firstDescription || "Mission spotlight",
+      });
       groupedSections.push(`Mission ${missionIdx + 1}: ${missionTitle}`);
       missionSubs.forEach((sub, subIdx) => {
         groupedSections.push(`  - Photo ${subIdx + 1}: captured by ${sub.username}${sub.description ? ` | mission description: ${sub.description}` : ""}`);
@@ -2563,7 +2700,11 @@ Please generate a detailed slideshow script that includes:
 
 Format your response as a professional production guide that a video editor or slideshow software operator could follow.
 
-Make it uplifting and celebratory, suitable for a family reunion event!`;
+Make it uplifting and celebratory, suitable for a family reunion event.
+
+Important output requirements:
+- This script will be used to generate an MP4 slideshow.
+- Include clear guidance for title cards, per-photo overlays, and pacing.`;
 
     // Admin can edit prompt before generation. If token omitted, append grouped list safely.
     const basePrompt = typeof promptTemplate === "string" && promptTemplate.trim().length > 0
@@ -2573,95 +2714,148 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       ? basePrompt.replace("{{PHOTO_LIST}}", submissionsList)
       : `${basePrompt}\n\nMission-grouped photo list:\n${submissionsList}`;
 
-    const slideshowPromptWithScores = `${slideshowPrompt}\n\nCurrent player point totals:\n${playerTotalsText}\n\nRender instructions: include transition slides between each mission that show title + description, and end with ONE closing scoreboard slide that combines winners and full point totals.`;
+    const slideshowPromptWithScores = `${slideshowPrompt}\n\nCurrent player point totals:\n${playerTotalsText}\n\nRender instructions: include transition slides between each mission that show title + description, and end with ONE closing scoreboard slide that lists only players with points (omit users at 0 points). Put each scoring player on a separate line.`;
+
+    const buildMissionSlidesScript = () => {
+      return [
+        "Mission transition cards to generate:",
+        ...missionCards.map((mission, idx) => `${idx + 1}. ${mission.missionTitle} - ${mission.missionDescription}`),
+        "",
+        "Photo flow:",
+        ...missionOrder.flatMap((missionTitle, idx) => {
+          const subs = groupedByMission.get(missionTitle) || [];
+          return [`Mission ${idx + 1}: ${missionTitle} (${subs.length} photos)`];
+        }),
+      ].join("\n");
+    };
+
+    const buildLeaderboardSlideScript = () => {
+      const nonZeroStandings = playerTotals.filter((entry) => entry.score > 0);
+      return [
+        "Final leaderboard slide:",
+        "Title: Final Standings",
+        ...(nonZeroStandings.length
+          ? nonZeroStandings.map((entry, idx) => `${idx + 1}. ${entry.username} - ${entry.score} pts`)
+          : ["No player scores yet"]),
+      ].join("\n");
+    };
 
     let script = "";
-    let usedAiModel = "fallback-offline";
+    let usedAiModel = "presenton-mission-grouped";
     let usedFallbackScript = false;
-    let scriptUsageMetadata: any | null = null;
-    let narrationUsageMetadata: any | null = null;
+    const providedMissionSlidesScript = typeof missionSlidesScript === "string" ? missionSlidesScript.trim() : "";
+    const providedLeaderboardSlideScript = typeof leaderboardSlideScript === "string" ? leaderboardSlideScript.trim() : "";
+
+    const buildGroupedSlideshowCacheKey = () => {
+      const normalizedMissions = missionCards.map((mission) => ({
+        missionTitle: mission.missionTitle.trim(),
+        missionDescription: mission.missionDescription.trim(),
+      }));
+      const normalizedStandings = playerTotals
+        .filter((entry) => entry.score > 0)
+        .map((entry) => ({ username: entry.username.trim(), score: entry.score }));
+      const normalizedSubmissionOrder = orderedSubmissions
+        .map((sub) => String(sub.id || "").trim())
+        .filter((id) => id.length > 0);
+
+      const payload = {
+        version: "mission_grouped_v2",
+        missions: normalizedMissions,
+        standings: normalizedStandings,
+        submissionOrder: normalizedSubmissionOrder,
+        providedMissionSlidesScript,
+        providedLeaderboardSlideScript,
+      };
+
+      return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
+    };
+
+    const cacheKey = buildGroupedSlideshowCacheKey();
+    const cacheTag = `[cache:mission-grouped:${cacheKey}]`;
+
     try {
-      // RESILIENCE: Add timeout to prevent hanged Gemini requests from crashing the Pi
-      const response = await callGeminiWithTimeout(
-        chosenSlideshowModel,
-        [{
-          role: "user",
-          parts: [{ text: slideshowPromptWithScores }]
-        }],
-        60000, // 60 second timeout
-      );
-      script = response.text || "";
-      scriptUsageMetadata = (response as any)?.usageMetadata || null;
-      usedAiModel = chosenSlideshowModel;
-    } catch (aiErr: any) {
-      console.warn("Slideshow AI unavailable, using offline fallback script:", aiErr?.message || aiErr);
+      const allSlideshows = await getAllSlideshows();
+      const cachedSlideshow = allSlideshows.find((row) => String(row.description || "").includes(cacheTag));
+
+      if (cachedSlideshow) {
+        const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+        const cleanId = sanitizeSlideshowId(cachedSlideshow.id);
+        const cachedVideoPath = cleanId ? path.join(uploadsDir, "slideshows", `${cleanId}.mp4`) : "";
+        let cachedVideoUrl: string | null = null;
+
+        if (cachedVideoPath) {
+          try {
+            await fsp.access(cachedVideoPath, fs.constants.R_OK);
+            cachedVideoUrl = `/api/slideshows/video/${cleanId}.mp4`;
+          } catch {
+            cachedVideoUrl = null;
+          }
+        }
+
+        return res.json({
+          success: true,
+          slideshow: cachedSlideshow,
+          photoCount: orderedSubmissions.length,
+          generation: {
+            aiModel: "presenton-cache-hit",
+            requestedMode: "mp4_only",
+            usedFallbackScript: false,
+            costEstimate: null,
+            geminiApiUsageCostEstimate: null,
+            slideshowModel: chosenSlideshowModel,
+            slideshowProvider: "ollama_presenton",
+            narrationRequested: false,
+            narrationGeneratedByAi: false,
+            cacheHit: true,
+            video: {
+              created: !!cachedVideoUrl,
+              videoUrl: cachedVideoUrl,
+              mode: "local_ffmpeg",
+              aiModel: "presenton-cache-hit",
+              usedFallbackPlan: !cachedVideoUrl,
+              error: cachedVideoUrl ? null : "Cached slideshow exists but MP4 is not available",
+            }
+          },
+          generatedAt: new Date().toISOString(),
+        });
+      }
+    } catch (cacheErr: any) {
+      console.warn("Slideshow cache lookup failed, continuing with generation:", cacheErr?.message || cacheErr);
+    }
+
+    const presentonConfigured = normalizeServerUrl(PRESENTON_SERVER_URL).length > 0;
+    const skipOllamaScriptGeneration =
+      OLLAMA_SCRIPT_MODE === "disabled" ||
+      (OLLAMA_SCRIPT_MODE === "offload_if_presenton" && presentonConfigured);
+
+    script = [
+      "KinQuest Mission Group Slideshow Plan",
+      "",
+      providedMissionSlidesScript || buildMissionSlidesScript(),
+      "",
+      providedLeaderboardSlideScript || buildLeaderboardSlideScript(),
+      "",
+      "Keep photos grouped by mission with a mission card before each group and one final leaderboard slide at the end.",
+    ].join("\n");
+    if (!presentonConfigured) {
       usedFallbackScript = true;
-      script = [
-        "KinQuest Offline Slideshow Guide",
-        "",
-        "Suggested mission-group flow:",
-        ...missionOrder.flatMap((missionTitle) => {
-          const missionSubs = groupedByMission.get(missionTitle) || [];
-          return [
-            `Mission: ${missionTitle}`,
-            ...missionSubs.map((sub, idx) => `  ${idx + 1}. Photo by ${sub.username} - show for 5 seconds with a gentle fade transition.`),
-          ];
-        }),
-        "",
-        "Music suggestion:",
-        "- Use one upbeat acoustic family-friendly track around 95-110 BPM.",
-        "",
-        "Text overlays:",
-        "- Opening title: Family Scavenger Highlights",
-        "- Per slide: photographer/group name only",
-        "- Mission transition cards: show mission title + mission description",
-        "- One closing slide: winners and full standings with all player totals",
-        "",
-        "Pacing:",
-        "- Alternate wide shots and close-ups for variety.",
-      ].join("\n");
+      usedAiModel = "local-mission-grouped";
     }
 
     let narrationGeneratedByAi = false;
-    // RESILIENCE: Narrator generation disabled by default on Raspberry Pi
-    // Each additional Gemini call increases risk of Pi memory exhaustion
-    // Users can enable if they have adequate resources
-    if (includeMissionNarration === true && missionOrder.length > 0) {
+    if (includeMissionNarration === true && missionOrder.length > 0 && !skipOllamaScriptGeneration) {
       let narratorOverlayMap: Record<string, string> = {};
       try {
-        const narratorResponse = await callGeminiWithTimeout(
-          chosenSlideshowModel,
-          [{
-            role: "user",
-            parts: [{
-              text: `Create short narrator overlay lines for each mission title below. Keep each line under 24 words and make it warm and story-driven for a family reunion slideshow.\n\nMission titles:\n${missionOrder.map((missionTitle, idx) => `${idx + 1}. ${missionTitle}`).join("\n")}`
-            }]
-          }],
-          45000, // 45 second timeout for narrator generation
-          {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                overlays: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      missionTitle: { type: Type.STRING },
-                      narration: { type: Type.STRING },
-                    },
-                    required: ["missionTitle", "narration"],
-                  },
-                },
-              },
-              required: ["overlays"],
-            },
-          }
-        );
+        const narrationPrompt = [
+          "Create short narrator overlay lines for each mission title below.",
+          "Keep each line under 24 words.",
+          "Return strict JSON with shape: { \"overlays\": [{ \"missionTitle\": string, \"narration\": string }] }",
+          "",
+          "Mission titles:",
+          ...missionOrder.map((missionTitle, idx) => `${idx + 1}. ${missionTitle}`),
+        ].join("\n");
 
-        narrationUsageMetadata = (narratorResponse as any)?.usageMetadata || null;
-
+        const narratorResponse = await callOllamaText(narrationPrompt);
         const parsed = JSON.parse((narratorResponse.text || "{}").trim());
         const overlays = Array.isArray(parsed?.overlays) ? parsed.overlays : [];
         overlays.forEach((entry: any) => {
@@ -2696,6 +2890,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
     const slideshow: Slideshow = {
       id: slideshowId,
       title: title || `Family Slideshow - ${new Date().toLocaleDateString()}`,
+      description: `${cacheTag} Presenton mission-group slideshow`,
       script: script,
       submissionIds: orderedSubmissions.map((s) => s.id),
       createdBy: createdBy,
@@ -2715,15 +2910,15 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       }))
       .filter((entry) => !!entry.submissionId && !!entry.imageUrl);
 
-    const buildBasicRenderSlides = () => {
-      const basicSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
+    const buildGroupedFallbackSlides = () => {
+      const slides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
       let previousMissionKey: string | null = null;
 
       sourceSlides.forEach((source) => {
         const missionKey = `${source.missionTitle}||${source.missionDescription}`;
         if (missionKey !== previousMissionKey) {
           previousMissionKey = missionKey;
-          basicSlides.push({
+          slides.push({
             overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
             durationSeconds: 4,
             transition: "fade",
@@ -2731,7 +2926,7 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
           });
         }
 
-        basicSlides.push({
+        slides.push({
           imageUrl: source.imageUrl,
           overlayText: source.username,
           durationSeconds: 5,
@@ -2739,8 +2934,8 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
         });
       });
 
-      if (basicSlides.length) {
-        basicSlides.push({
+      if (slides.length) {
+        slides.push({
           overlayText: buildFinalScoreboardOverlay(playerTotals),
           durationSeconds: 6,
           transition: "fade",
@@ -2748,21 +2943,21 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
         });
       }
 
-      return basicSlides;
+      return slides;
     };
 
     let videoGeneration: {
       created: boolean;
       videoUrl: string | null;
-      mode: "deterministic_local" | "gemini_cinematic" | "ai_ordered_budget" | "basic_fallback";
+      mode: "presenton_remote" | "presenton_plan_local_render" | "local_ffmpeg";
       aiModel: string;
       usedFallbackPlan: boolean;
       error: string | null;
     } = {
       created: false,
       videoUrl: null,
-      mode: chosenGenerationMode,
-      aiModel: "pending",
+      mode: "local_ffmpeg",
+      aiModel: usedAiModel,
       usedFallbackPlan: false,
       error: null,
     };
@@ -2809,94 +3004,47 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       return renderSlides;
     };
 
-    const tryBasicFallbackRender = async (
-      errorForLog: unknown
-    ): Promise<{
-      created: boolean;
-      videoUrl: string;
-      mode: "basic_fallback";
-      aiModel: string;
-      usedFallbackPlan: boolean;
-      error: null;
-    }> => {
-      console.warn("Slideshow mode render failed, attempting basic fallback render:", errorForLog);
-      const fallbackSlides = buildBasicRenderSlides();
-      if (!fallbackSlides.length) {
-        throw new Error("No slides available for fallback render");
-      }
-
-      const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-        renderSlideshowMp4(slideshow.id, fallbackSlides)
-      );
-      return {
-        created: true,
-        videoUrl: rendered.outputUrl,
-        mode: "basic_fallback" as const,
-      aiModel: "fallback-offline",
-      usedFallbackPlan: true,
-      error: null,
-      };
-    };
-
     if (sourceSlides.length > 0) {
-      if (chosenGenerationMode === "gemini_cinematic") {
-        try {
-          const cinematic = await generateGeminiCinematicVideo(slideshow.id, script, sourceSlides, playerTotals);
+      try {
+        const presentonResult = await callPresentonSlideshow(slideshow.id, script, sourceSlides, playerTotals);
+
+        if (presentonResult.videoUrl) {
           videoGeneration = {
             created: true,
-            videoUrl: cinematic.outputUrl,
-            mode: "gemini_cinematic",
-            aiModel: cinematic.aiModel,
+            videoUrl: presentonResult.videoUrl,
+            mode: "presenton_remote",
+            aiModel: usedAiModel,
             usedFallbackPlan: false,
             error: null,
           };
-        } catch (cinematicErr: any) {
-          console.warn("Gemini cinematic mode failed, attempting ordered budget mode:", cinematicErr?.message || cinematicErr);
-        }
-      }
-
-      if (!videoGeneration.created && (chosenGenerationMode === "ai_ordered_budget" || chosenGenerationMode === "gemini_cinematic")) {
-        try {
-          const budgetModel = normalizeBudgetSlideshowModel(chosenSlideshowModel);
-          const orderedPlan = await generateOrderedBudgetSlideshowPlan(budgetModel, sourceSlides);
-          const renderSlides = renderSlidesFromPlanRows(orderedPlan.slides);
+        } else if (presentonResult.slidesPlan?.length) {
+          const renderSlides = renderSlidesFromPlanRows(presentonResult.slidesPlan);
           if (!renderSlides.length) {
-            throw new Error("Ordered budget slideshow plan returned no render slides");
+            throw new Error("Presenton returned an empty slideshow plan");
           }
 
           const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
             renderSlideshowMp4(slideshow.id, renderSlides)
           );
+
           videoGeneration = {
             created: true,
             videoUrl: rendered.outputUrl,
-              mode: "ai_ordered_budget" as const,
-            aiModel: orderedPlan.aiModel,
-            usedFallbackPlan: orderedPlan.usedFallbackPlan,
+            mode: "presenton_plan_local_render",
+            aiModel: usedAiModel,
+            usedFallbackPlan: false,
             error: null,
           };
-        } catch (budgetErr: any) {
-          try {
-            videoGeneration = await tryBasicFallbackRender(budgetErr?.message || budgetErr);
-          } catch (fallbackRenderErr: any) {
-            console.error("Fallback slideshow render failed:", fallbackRenderErr);
-            videoGeneration = {
-              created: false,
-              videoUrl: null,
-              mode: "basic_fallback",
-              aiModel: "fallback-offline",
-              usedFallbackPlan: true,
-              error: fallbackRenderErr?.message || "Failed to render slideshow video",
-            };
-          }
         }
+      } catch (presentonErr: any) {
+        console.warn("Presenton generation failed, falling back to local MP4 render:", presentonErr?.message || presentonErr);
       }
 
-      if (!videoGeneration.created && chosenGenerationMode === "deterministic_local") {
+      if (!videoGeneration.created) {
         try {
-          const fallbackSlides = buildBasicRenderSlides();
+          const fallbackSlides = buildGroupedFallbackSlides();
           if (!fallbackSlides.length) {
-            throw new Error("No slides available for deterministic render");
+            throw new Error("No slides available for local MP4 render");
           }
           const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
             renderSlideshowMp4(slideshow.id, fallbackSlides)
@@ -2904,34 +3052,26 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
           videoGeneration = {
             created: true,
             videoUrl: rendered.outputUrl,
-              mode: "deterministic_local" as const,
-            aiModel: "local-ffmpeg",
-            usedFallbackPlan: false,
+            mode: "local_ffmpeg",
+            aiModel: usedAiModel,
+            usedFallbackPlan: true,
             error: null,
           };
-        } catch (deterministicErr: any) {
-          try {
-            videoGeneration = await tryBasicFallbackRender(deterministicErr?.message || deterministicErr);
-          } catch (fallbackRenderErr: any) {
-            console.error("Fallback slideshow render failed:", fallbackRenderErr);
-            videoGeneration = {
-              created: false,
-              videoUrl: null,
-              mode: "basic_fallback",
-              aiModel: "fallback-offline",
-              usedFallbackPlan: true,
-              error: fallbackRenderErr?.message || "Failed to render slideshow video",
-            };
-          }
+        } catch (localRenderErr: any) {
+          console.error("Local slideshow render failed:", localRenderErr);
+          videoGeneration = {
+            created: false,
+            videoUrl: null,
+            mode: "local_ffmpeg",
+            aiModel: usedAiModel,
+            usedFallbackPlan: true,
+            error: localRenderErr?.message || "Failed to render slideshow video",
+          };
         }
       }
     } else {
       videoGeneration.error = "No valid image URLs available to render slideshow video";
     }
-
-    const chosenCostEstimate = SLIDESHOW_MODEL_COST_ESTIMATE[chosenSlideshowModel] || null;
-  const aggregatedUsage = summarizeGeminiUsageMetadata([scriptUsageMetadata, narrationUsageMetadata]);
-  const geminiApiUsageCostEstimate = buildGeminiUsageCostEstimate(chosenSlideshowModel, aggregatedUsage);
 
     res.json({
       success: true,
@@ -2939,19 +3079,12 @@ Make it uplifting and celebratory, suitable for a family reunion event!`;
       photoCount: orderedSubmissions.length,
       generation: {
         aiModel: usedAiModel,
-        requestedMode: chosenGenerationMode,
+        requestedMode: "mp4_only",
         usedFallbackScript,
-        costEstimate: chosenCostEstimate
-          ? {
-              currency: "USD",
-              basis: "per_photo_estimate",
-              baseUsd: chosenCostEstimate.baseUsd,
-              perPhotoUsd: chosenCostEstimate.perPhotoUsd,
-              totalUsd: Number((chosenCostEstimate.baseUsd + (chosenCostEstimate.perPhotoUsd * orderedSubmissions.length)).toFixed(4)),
-              pictureCount: orderedSubmissions.length,
-            }
-          : null,
-        geminiApiUsageCostEstimate,
+        costEstimate: null,
+        geminiApiUsageCostEstimate: null,
+        slideshowModel: chosenSlideshowModel,
+        slideshowProvider: "ollama_presenton",
         narrationRequested: includeMissionNarration === true,
         narrationGeneratedByAi,
         video: videoGeneration
@@ -3101,128 +3234,10 @@ app.patch("/api/slideshows/:id", async (req, res) => {
 });
 
 app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { userId, script } = req.body || {};
-
-    if (!userId) {
-      return res.status(400).json({ error: "User ID is required" });
-    }
-
-    const state = await getAppState();
-    const requestingUser = state.users[userId];
-    if (!requestingUser || requestingUser.role !== "admin") {
-      return res.status(403).json({ error: "Only admin users can create Gemini slideshows" });
-    }
-
-    const slideshow = await getSlideshow(id);
-    if (!slideshow) {
-      return res.status(404).json({ error: "Slideshow not found" });
-    }
-
-    const submissionById = new Map(Object.values(state.submissions).map((s) => [s.id, s]));
-    const itemById = new Map(Object.values(state.items).map((it) => [it.id, it]));
-    const sourceSlides = slideshow.submissionIds
-      .map((subId) => {
-        const submission = submissionById.get(subId);
-        if (!submission?.imageUrl) return null;
-        const item = itemById.get(submission.itemId);
-        return {
-          submissionId: submission.id,
-          imageUrl: submission.imageUrl,
-          missionTitle: item?.title || "Unknown Mission",
-          missionDescription: item?.description || item?.title || "",
-          username: submission.username,
-        };
-      })
-      .filter((entry): entry is { submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string } => Boolean(entry));
-
-    const playerTotals = Object.values(state.users)
-      .map((u) => ({ username: String(u.username || "").trim(), score: Number(u.score) || 0 }))
-      .filter((u) => u.username.length > 0)
-      .sort((a, b) => b.score - a.score);
-
-    if (!sourceSlides.length) {
-      return res.status(400).json({ error: "No slideshow images available for Gemini creation" });
-    }
-
-    const workingScript = typeof script === "string" && script.trim().length > 0 ? script : slideshow.script;
-    if (workingScript !== slideshow.script) {
-      await saveSlideshow({ ...slideshow, script: workingScript });
-    }
-
-    const requestedSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel);
-    const planned = await generateGeminiSlideshowPlan(requestedSlideshowModel, workingScript, sourceSlides, playerTotals);
-    const imageBySubmissionId = new Map(sourceSlides.map((s) => [s.submissionId, s]));
-
-    const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
-    let previousMissionKey: string | null = null;
-    planned.plan.slides.forEach((planSlide) => {
-      const source = imageBySubmissionId.get(planSlide.submissionId);
-      if (!source) return;
-
-      const missionKey = `${source.missionTitle}||${source.missionDescription}`;
-      if (missionKey !== previousMissionKey) {
-        previousMissionKey = missionKey;
-        renderSlides.push({
-          overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
-          durationSeconds: 4,
-          transition: "fade",
-          isTitleCard: true,
-        });
-      }
-
-      renderSlides.push({
-        imageUrl: source.imageUrl,
-        overlayText: source.username,
-        durationSeconds: planSlide.durationSeconds,
-        transition: planSlide.transition,
-      });
-    });
-
-    if (renderSlides.length) {
-      const endingOverlayText = String(planned.plan.endingOverlayText || "").trim() || buildFinalScoreboardOverlay(playerTotals);
-      renderSlides.push({
-        overlayText: endingOverlayText,
-        durationSeconds: 6,
-        transition: "fade",
-        isTitleCard: true,
-      });
-    }
-
-    if (!renderSlides.length) {
-      return res.status(400).json({ error: "Gemini did not produce a valid slideshow plan" });
-    }
-
-    // RESILIENCE: Check memory before starting intensive render
-    if (!checkAvailableMemory(512)) {
-      return res.status(503).json({ 
-        error: "Insufficient server memory for rendering",
-        hint: "Please wait and try again or reduce the number of slides"
-      });
-    }
-
-    // RESILIENCE: Queue rendering operations to prevent concurrent renders from crashing the Pi
-    const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () => 
-      renderSlideshowMp4(slideshow.id, renderSlides)
-    );
-
-    return res.json({
-      success: true,
-      slideshowId: slideshow.id,
-      videoUrl: rendered.outputUrl,
-      imageCount: renderSlides.length,
-      generation: {
-        aiModel: planned.aiModel,
-        usedFallbackPlan: planned.usedFallbackPlan,
-      }
-    });
-  } catch (err: any) {
-    console.error("Gemini slideshow creation error:", err);
-    const message = err?.message || "Failed to create Gemini slideshow";
-    const status = message.includes("FFmpeg is not installed") ? 503 : 500;
-    return res.status(status).json({ error: "Failed to create Gemini slideshow", details: message });
-  }
+  return res.status(410).json({
+    error: "Gemini slideshow endpoint has been retired",
+    details: "Use /api/slideshow/generate for Ollama + Presenton MP4 generation, or /api/slideshows/:id/render-mp4 for local MP4 rendering."
+  });
 });
 
 app.get("/api/slideshows/video/:filename", (req, res) => {

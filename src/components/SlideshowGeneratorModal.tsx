@@ -15,35 +15,6 @@ interface SlideshowGeneratorModalProps {
   onSlideshowCreated?: (slideshowId: string) => void;
 }
 
-const SLIDESHOW_FALLBACK_MODELS: string[] = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3.5-flash"];
-
-const SLIDESHOW_MODEL_COST_ESTIMATE: Record<string, { baseUsd: number; perPhotoUsd: number }> = {
-  "gemini-2.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
-  "gemini-2.5-flash-lite": { baseUsd: 0.0022, perPhotoUsd: 0.00024 },
-  "gemini-2.5-pro": { baseUsd: 0.0060, perPhotoUsd: 0.00075 },
-  "gemini-3.5-flash": { baseUsd: 0.0030, perPhotoUsd: 0.00035 },
-};
-
-type SlideshowGenerationMode = "deterministic_local" | "gemini_cinematic" | "ai_ordered_budget";
-
-const SLIDESHOW_GENERATION_MODE_OPTIONS: Array<{ value: SlideshowGenerationMode; label: string; detail: string }> = [
-  {
-    value: "deterministic_local",
-    label: "Mode A - Deterministic Local",
-    detail: "Uses your selected photos in strict mission order with local FFmpeg rendering.",
-  },
-  {
-    value: "gemini_cinematic",
-    label: "Mode B - Gemini Cinematic",
-    detail: "Gemini generates a cinematic video directly; can fall back to Mode C if unavailable.",
-  },
-  {
-    value: "ai_ordered_budget",
-    label: "Mode C - Budget AI Ordered",
-    detail: "Cheaper AI overlays/transitions while keeping your photos in order, rendered locally.",
-  },
-];
-
 const DEFAULT_SLIDESHOW_PROMPT = `You are an expert multimedia producer specializing in creating family reunion slideshows.
 
 I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
@@ -76,20 +47,18 @@ export function SlideshowGeneratorModal({
   onSlideshowCreated
 }: SlideshowGeneratorModalProps) {
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set());
-  const [generatingScript, setGeneratingScript] = useState(false);
+  const [generatingMissionSlides, setGeneratingMissionSlides] = useState(false);
+  const [generatingLeaderboardSlide, setGeneratingLeaderboardSlide] = useState(false);
+  const [composingSlideshow, setComposingSlideshow] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localScript, setLocalScript] = useState<string | null>(generatedScript);
+  const [missionSlidesScript, setMissionSlidesScript] = useState<string | null>(null);
+  const [leaderboardSlideScript, setLeaderboardSlideScript] = useState<string | null>(null);
   const [promptTemplate, setPromptTemplate] = useState(DEFAULT_SLIDESHOW_PROMPT);
   const [includeMissionNarration, setIncludeMissionNarration] = useState(false);
-  const [slideshowModels, setSlideshowModels] = useState<string[]>(SLIDESHOW_FALLBACK_MODELS);
-  const [slideshowModelCostLookup, setSlideshowModelCostLookup] = useState<Record<string, { baseUsd: number; perPhotoUsd: number }>>(SLIDESHOW_MODEL_COST_ESTIMATE);
-  const [slideshowModel, setSlideshowModel] = useState<string>(SLIDESHOW_FALLBACK_MODELS[0]);
-  const [generationMode, setGenerationMode] = useState<SlideshowGenerationMode>("deterministic_local");
+  const [slideshowModel, setSlideshowModel] = useState<string>("llama3.1");
   const [generationSource, setGenerationSource] = useState<string | null>(null);
-  const [preGenEstimateUsd, setPreGenEstimateUsd] = useState<number | null>(null);
-  const [serverCostEstimate, setServerCostEstimate] = useState<{ baseUsd: number; perPhotoUsd: number; totalUsd: number; pictureCount: number } | null>(null);
-  const [serverUsageCostEstimate, setServerUsageCostEstimate] = useState<{ totalUsd: number; promptTokens: number; completionTokens: number; totalTokens: number } | null>(null);
 
   const approvedSubmissions = submissions.filter((sub) => sub.status === "approved");
   const groupedApprovedSubmissions = approvedSubmissions.reduce((acc, sub) => {
@@ -131,28 +100,13 @@ export function SlideshowGeneratorModal({
         if (!response.ok) return;
         const payload = await response.json();
         const catalog = Array.isArray(payload?.slideshowModels) ? payload.slideshowModels : [];
-        if (!catalog.length) return;
-
-        const models = catalog
-          .map((entry: any) => String(entry?.model || "").trim())
-          .filter((name: string) => !!name);
-        if (!models.length || cancelled) return;
-
-        const lookup: Record<string, { baseUsd: number; perPhotoUsd: number }> = { ...SLIDESHOW_MODEL_COST_ESTIMATE };
-        catalog.forEach((entry: any) => {
-          const model = String(entry?.model || "").trim();
-          const baseUsd = Number(entry?.baseUsd);
-          const perPhotoUsd = Number(entry?.perPhotoUsd);
-          if (model && Number.isFinite(baseUsd) && Number.isFinite(perPhotoUsd)) {
-            lookup[model] = { baseUsd, perPhotoUsd };
-          }
-        });
-
-        setSlideshowModels(models);
-        setSlideshowModelCostLookup(lookup);
-        setSlideshowModel((current) => (models.includes(current) ? current : models[0]));
+        const firstModel = String(catalog?.[0]?.model || "").trim();
+        if (cancelled) return;
+        if (firstModel) {
+          setSlideshowModel(firstModel);
+        }
       } catch (err) {
-        // Keep fallback model list if catalog fetch fails.
+        // Keep local default if catalog fetch fails.
       }
     };
 
@@ -163,83 +117,122 @@ export function SlideshowGeneratorModal({
     };
   }, [isOpen]);
 
-  const handleGenerateSlideshow = async () => {
+  const getSelectedSubmissionPayload = () => {
+    const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
+    return selectedSubs.map((sub) => ({
+      id: sub.id,
+      imageUrl: sub.imageUrl,
+      title: items.find((it) => it.id === sub.itemId)?.title || "Unknown",
+      description: items.find((it) => it.id === sub.itemId)?.description || "",
+      username: sub.username,
+    }));
+  };
+
+  const handleGenerateMissionSlides = async () => {
     if (selectedSubmissionIds.size === 0 || !adminUserId) return;
 
-    setGeneratingScript(true);
+    setGeneratingMissionSlides(true);
     setLocalError(null);
-    setGenerationSource(null);
-    setServerCostEstimate(null);
-    setServerUsageCostEstimate(null);
-    const estimate = slideshowModelCostLookup[slideshowModel];
-    if (estimate) {
-      setPreGenEstimateUsd(
-        Number((estimate.baseUsd + estimate.perPhotoUsd * selectedSubmissionIds.size).toFixed(4))
-      );
-    } else {
-      setPreGenEstimateUsd(null);
-    }
     try {
-      const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
-      const response = await fetch("/api/slideshow/generate", {
+      const response = await fetch("/api/slideshow/generate-mission-slides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          submissions: selectedSubs.map((sub) => ({
-            id: sub.id,
-            imageUrl: sub.imageUrl,
-            title: items.find((it) => it.id === sub.itemId)?.title || "Unknown",
-            description: items.find((it) => it.id === sub.itemId)?.description || "",
-            username: sub.username,
-          })),
+          submissions: getSelectedSubmissionPayload(),
           createdBy: adminUserId,
-          title: `Family Slideshow - ${new Date().toLocaleDateString()}`,
-          promptTemplate,
-          includeMissionNarration,
-          slideshowModel,
-          generationMode,
         }),
       });
 
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.details || errData.error || "Failed to generate slideshow");
+        throw new Error(errData.details || errData.error || "Failed to generate mission slides");
+      }
+
+      const data = await response.json();
+      setMissionSlidesScript(String(data?.missionSlidesScript || "").trim() || null);
+    } catch (err: any) {
+      console.error("Mission slide generation error:", err);
+      setLocalError(err.message || "Failed to generate mission slide script");
+    } finally {
+      setGeneratingMissionSlides(false);
+    }
+  };
+
+  const handleGenerateLeaderboardSlide = async () => {
+    if (!adminUserId) return;
+
+    setGeneratingLeaderboardSlide(true);
+    setLocalError(null);
+    try {
+      const response = await fetch("/api/slideshow/generate-leaderboard-slide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          createdBy: adminUserId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.details || errData.error || "Failed to generate leaderboard slide");
+      }
+
+      const data = await response.json();
+      setLeaderboardSlideScript(String(data?.leaderboardSlideScript || "").trim() || null);
+    } catch (err: any) {
+      console.error("Leaderboard generation error:", err);
+      setLocalError(err.message || "Failed to generate leaderboard slide script");
+    } finally {
+      setGeneratingLeaderboardSlide(false);
+    }
+  };
+
+  const handleComposeSlideshow = async () => {
+    if (selectedSubmissionIds.size === 0 || !adminUserId) return;
+
+    setComposingSlideshow(true);
+    setLocalError(null);
+    setGenerationSource(null);
+    try {
+      const response = await fetch("/api/slideshow/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissions: getSelectedSubmissionPayload(),
+          createdBy: adminUserId,
+          title: `Family Slideshow - ${new Date().toLocaleDateString()}`,
+          promptTemplate,
+          includeMissionNarration,
+          slideshowModel,
+          missionSlidesScript,
+          leaderboardSlideScript,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.details || errData.error || "Failed to compose slideshow");
       }
 
       const data = await response.json();
       setLocalScript(data.slideshow.script);
       const videoInfo = data?.generation?.video;
-      const requestedMode = data?.generation?.requestedMode;
-      if (videoInfo?.created) {
-        if (videoInfo?.mode === "basic_fallback") {
-          setGenerationSource("Script generated and fallback MP4 slideshow created");
-        } else if (videoInfo?.mode === "deterministic_local") {
-          setGenerationSource("Script generated and deterministic local slideshow rendered");
-        } else if (videoInfo?.mode === "ai_ordered_budget") {
-          setGenerationSource(`Script generated and budget AI ordered slideshow rendered with ${videoInfo.aiModel || "AI"}`);
-        } else if (videoInfo?.mode === "gemini_cinematic") {
-          setGenerationSource(`Script generated and cinematic Gemini video rendered with ${videoInfo.aiModel || "Gemini"}`);
-        } else if (videoInfo?.aiModel) {
-          setGenerationSource(`Script generated and MP4 slideshow created with ${videoInfo.aiModel}`);
+      if (data?.generation?.cacheHit) {
+        setGenerationSource("Reused cached slideshow and video output");
+      } else if (videoInfo?.created) {
+        if (videoInfo?.mode === "presenton_remote") {
+          setGenerationSource(`Composed with Presenton (${videoInfo.aiModel || "AI"})`);
+        } else if (videoInfo?.mode === "presenton_plan_local_render") {
+          setGenerationSource(`Composed with Presenton plan and rendered locally (${videoInfo.aiModel || "AI"})`);
+        } else if (videoInfo?.mode === "local_ffmpeg") {
+          setGenerationSource(`Composed and rendered locally (${videoInfo.aiModel || "AI"})`);
         } else {
-          setGenerationSource("Script generated and MP4 slideshow created");
+          setGenerationSource("Composed slideshow and generated MP4");
         }
-        if (requestedMode === "gemini_cinematic" && videoInfo?.mode !== "gemini_cinematic") {
-          setGenerationSource((prev) => `${prev || "Video generated"} (fell back from cinematic mode)`);
-        }
-      } else if (data?.generation?.usedFallbackScript) {
-        setGenerationSource("Script generated using offline fallback (video render unavailable)");
-      } else if (data?.generation?.aiModel) {
-        setGenerationSource(`Script generated with ${data.generation.aiModel} (video render unavailable)`);
       } else {
-        setGenerationSource("Script generated (video render unavailable)");
+        setGenerationSource("Composed slideshow, but video render is unavailable");
       }
-      if (data?.generation?.costEstimate) {
-        setServerCostEstimate(data.generation.costEstimate);
-      }
-      if (data?.generation?.geminiApiUsageCostEstimate) {
-        setServerUsageCostEstimate(data.generation.geminiApiUsageCostEstimate);
-      }
+
       if (onScriptGenerated) {
         onScriptGenerated(data.slideshow.script);
       }
@@ -247,10 +240,10 @@ export function SlideshowGeneratorModal({
         onSlideshowCreated(data.slideshow.id);
       }
     } catch (err: any) {
-      console.error("Slideshow generation error:", err);
-      setLocalError(err.message || "Failed to generate slideshow script");
+      console.error("Slideshow composition error:", err);
+      setLocalError(err.message || "Failed to compose slideshow");
     } finally {
-      setGeneratingScript(false);
+      setComposingSlideshow(false);
     }
   };
 
@@ -278,6 +271,9 @@ export function SlideshowGeneratorModal({
   if (!isOpen) return null;
 
   const currentScript = localScript || generatedScript;
+  const step1Done = !!missionSlidesScript;
+  const step2Done = !!leaderboardSlideScript;
+  const step3Done = !!currentScript;
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
@@ -305,76 +301,59 @@ export function SlideshowGeneratorModal({
 
         {/* Content */}
         <div className="overflow-y-auto flex-1 p-6 space-y-6">
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-gray-700 mb-2">Workflow Progress</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className={`rounded-lg border px-3 py-2 text-xs ${step1Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
+                <div className="font-semibold">Step 1</div>
+                <div>Mission slides {step1Done ? "complete" : "pending"}</div>
+              </div>
+              <div className={`rounded-lg border px-3 py-2 text-xs ${step2Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
+                <div className="font-semibold">Step 2</div>
+                <div>Leaderboard slide {step2Done ? "complete" : "pending"}</div>
+              </div>
+              <div className={`rounded-lg border px-3 py-2 text-xs ${step3Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
+                <div className="font-semibold">Step 3</div>
+                <div>Final compose {step3Done ? "complete" : "pending"}</div>
+              </div>
+            </div>
+          </div>
+
           {/* Step 1: Select Images */}
           {!currentScript && (
             <div className="space-y-4">
               <div>
                 <h3 className="font-bold text-gray-800 mb-2">Step 1: Select Photos</h3>
                 <p className="text-xs text-gray-500 mb-4">
-                  Choose approved submissions to include in your AI-generated slideshow with animations and music.
+                  Choose approved submissions, generate mission and leaderboard slide content separately, then compose the final MP4 slideshow.
                 </p>
               </div>
 
               <div className="space-y-2">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1 sm:col-span-3">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Generation Mode</label>
-                    <select
-                      value={generationMode}
-                      onChange={(e) => setGenerationMode(e.target.value as SlideshowGenerationMode)}
-                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
-                    >
-                      {SLIDESHOW_GENERATION_MODE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-gray-500">
-                      {SLIDESHOW_GENERATION_MODE_OPTIONS.find((opt) => opt.value === generationMode)?.detail}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Slideshow AI Model</label>
-                    <select
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Slideshow AI Model (Ollama)</label>
+                    <input
                       value={slideshowModel}
                       onChange={(e) => setSlideshowModel(e.target.value)}
                       className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
-                    >
-                      {slideshowModels.map((model) => (
-                        <option key={model} value={model}>{model}</option>
-                      ))}
-                    </select>
+                      placeholder="llama3.1"
+                    />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Estimated Cost</label>
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Pipeline</label>
                     <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
                       <div className="font-semibold">{selectedSubmissionIds.size} photo(s)</div>
-                      {generationMode === "deterministic_local" ? (
-                        <>
-                          <div className="font-mono text-[11px] mt-0.5 text-emerald-700">Local render path</div>
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            Gemini is used for script guidance; slideshow assembly stays local and in-order.
-                          </div>
-                        </>
-                      ) : slideshowModelCostLookup[slideshowModel] ? (
-                        <>
-                          <div className="font-mono text-[11px] mt-0.5">
-                            ${(slideshowModelCostLookup[slideshowModel].baseUsd + (slideshowModelCostLookup[slideshowModel].perPhotoUsd * selectedSubmissionIds.size)).toFixed(4)} USD
-                          </div>
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            Base ${slideshowModelCostLookup[slideshowModel].baseUsd.toFixed(4)} + ${slideshowModelCostLookup[slideshowModel].perPhotoUsd.toFixed(5)} per photo
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-[11px] mt-0.5 text-gray-500">
-                          Estimate unavailable for this model
-                        </div>
-                      )}
+                      <div className="font-mono text-[11px] mt-0.5 text-emerald-700">Mission slides + leaderboard + compose</div>
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Presenton is attempted first. If unavailable, local FFmpeg MP4 rendering is used.
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Gemini Prompt Template</label>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Ollama Prompt Template</label>
                   <button
                     type="button"
                     onClick={() => setPromptTemplate(DEFAULT_SLIDESHOW_PROMPT)}
@@ -452,24 +431,90 @@ export function SlideshowGeneratorModal({
                     ))}
                   </div>
 
-                  {/* Generate Button */}
-                  <button
-                    onClick={handleGenerateSlideshow}
-                    disabled={selectedSubmissionIds.size === 0 || generatingScript || !adminUserId}
-                    className="w-full bg-purple-600 text-white font-bold py-3 rounded-xl hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
-                  >
-                    {generatingScript ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Generating Script + Slideshow...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-4 w-4" />
-                        Generate Script + Slideshow ({selectedSubmissionIds.size} photos)
-                      </>
-                    )}
-                  </button>
+                  <div className="space-y-3">
+                    <button
+                      onClick={handleGenerateMissionSlides}
+                      disabled={selectedSubmissionIds.size === 0 || generatingMissionSlides || !adminUserId}
+                      className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                    >
+                      {generatingMissionSlides ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Generating Mission Slides...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          Generate Mission Slides
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={handleGenerateLeaderboardSlide}
+                      disabled={generatingLeaderboardSlide || !adminUserId}
+                      className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                    >
+                      {generatingLeaderboardSlide ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Generating Leaderboard Slide...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          Generate Leaderboard Slide
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={handleComposeSlideshow}
+                      disabled={
+                        selectedSubmissionIds.size === 0 ||
+                        composingSlideshow ||
+                        !adminUserId ||
+                        !missionSlidesScript ||
+                        !leaderboardSlideScript
+                      }
+                      className="w-full bg-purple-600 text-white font-bold py-3 rounded-xl hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                    >
+                      {composingSlideshow ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Composing Final Slideshow...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          Compose Final Slideshow ({selectedSubmissionIds.size} photos)
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">Mission Slides</div>
+                      {missionSlidesScript ? (
+                        <pre className="text-[11px] text-gray-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">
+                          {missionSlidesScript}
+                        </pre>
+                      ) : (
+                        <p className="text-xs text-gray-500">Not generated yet.</p>
+                      )}
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">Leaderboard Slide</div>
+                      {leaderboardSlideScript ? (
+                        <pre className="text-[11px] text-gray-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">
+                          {leaderboardSlideScript}
+                        </pre>
+                      ) : (
+                        <p className="text-xs text-gray-500">Not generated yet.</p>
+                      )}
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -487,46 +532,13 @@ export function SlideshowGeneratorModal({
               <div>
                 <h3 className="font-bold text-gray-800 mb-2">Your AI Slideshow Script</h3>
                 <p className="text-xs text-gray-500 mb-4">
-                  This script includes animation suggestions, music recommendations, and timing guidance for your family reunion slideshow.
+                  This script includes pacing and transition guidance for your MP4 family reunion slideshow.
                 </p>
                 {generationSource && (
                   <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 inline-block">
                     {generationSource}
                   </p>
                 )}
-              {(preGenEstimateUsd !== null || serverCostEstimate) && (
-                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-700 space-y-1.5">
-                  <p className="font-bold uppercase tracking-wider text-gray-500 text-[10px]">Cost Breakdown</p>
-                  {preGenEstimateUsd !== null && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Pre-generation estimate</span>
-                      <span className="font-mono font-semibold">${preGenEstimateUsd.toFixed(4)} USD</span>
-                    </div>
-                  )}
-                  {serverCostEstimate && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Server-returned estimate</span>
-                      <span className="font-mono font-semibold text-purple-700">${serverCostEstimate.totalUsd.toFixed(4)} USD</span>
-                    </div>
-                  )}
-                  {serverCostEstimate && (
-                    <div className="text-[10px] text-gray-400 pt-0.5">
-                      Base ${serverCostEstimate.baseUsd.toFixed(4)} + ${serverCostEstimate.perPhotoUsd.toFixed(5)}/photo &times; {serverCostEstimate.pictureCount} photos
-                    </div>
-                  )}
-                  {serverUsageCostEstimate && (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Gemini API usage estimate</span>
-                        <span className="font-mono font-semibold text-emerald-700">${serverUsageCostEstimate.totalUsd.toFixed(6)} USD</span>
-                      </div>
-                      <div className="text-[10px] text-gray-400">
-                        {serverUsageCostEstimate.promptTokens} prompt + {serverUsageCostEstimate.completionTokens} completion = {serverUsageCostEstimate.totalTokens} total tokens
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
               </div>
 
               {/* Script Display */}
@@ -567,10 +579,9 @@ export function SlideshowGeneratorModal({
               <button
                 onClick={() => {
                   setLocalScript(null);
+                  setMissionSlidesScript(null);
+                  setLeaderboardSlideScript(null);
                   setSelectedSubmissionIds(new Set());
-                  setPreGenEstimateUsd(null);
-                  setServerCostEstimate(null);
-                  setServerUsageCostEstimate(null);
                   setGenerationSource(null);
                 }}
                 className="w-full text-gray-700 font-medium py-2 hover:bg-gray-100 rounded-lg transition"
