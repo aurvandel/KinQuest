@@ -445,12 +445,12 @@ export function SlideshowGeneratorModal({
                   <textarea
                     value={songQueriesInput}
                     onChange={(e) => setSongQueriesInput(e.target.value)}
-                    rows={3}
-                    placeholder="Enter song names, one per line or comma separated"
-                    className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-xs text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                    rows={4}
+                    placeholder={`Artist - Song Title (one per line or comma separated)\nExamples:\nMichael Jackson - Thriller\nSweet Caroline by Neil Diamond\nCelebration`}
+                    className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-xs text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-300 font-mono"
                   />
                   <p className="text-[11px] text-emerald-900/80">
-                    Preview matches before composing. Coverage should be at least 110% for safer runtime alignment.
+                    Supports <span className="font-semibold">Artist - Song Title</span> or <span className="font-semibold">Song Title by Artist</span> format. Artist name improves match accuracy. Coverage should be ≥ 110% for safe runtime alignment.
                   </p>
                   <button
                     onClick={handleTestSongMatches}

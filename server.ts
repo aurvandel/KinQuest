@@ -660,10 +660,42 @@ function estimateSlideshowDurationFromSubmissionPayload(
   return baseDurationSeconds + transitionSeconds;
 }
 
+function parseSongQueryEntry(raw: string): { artistHint: string; titleHint: string; searchQuery: string } {
+  const trimmed = String(raw || "").trim();
+
+  // Formats: "Artist - Title"  or  "Title by Artist"
+  const dashMatch = trimmed.match(/^(.+?)\s+-\s+(.+)$/);
+  if (dashMatch) {
+    const artistHint = dashMatch[1].trim();
+    const titleHint = dashMatch[2].trim();
+    return { artistHint, titleHint, searchQuery: `${titleHint} ${artistHint}` };
+  }
+
+  const byMatch = trimmed.match(/^(.+?)\s+by\s+(.+)$/i);
+  if (byMatch) {
+    const titleHint = byMatch[1].trim();
+    const artistHint = byMatch[2].trim();
+    return { artistHint, titleHint, searchQuery: `${titleHint} ${artistHint}` };
+  }
+
+  return { artistHint: "", titleHint: trimmed, searchQuery: trimmed };
+}
+
+function artistMatchScore(candidateArtist: string, hintArtist: string): number {
+  if (!hintArtist) return 1; // no hint — all candidates equally valid
+  const a = candidateArtist.toLowerCase();
+  const b = hintArtist.toLowerCase();
+  if (a === b) return 3;
+  if (a.includes(b) || b.includes(a)) return 2;
+  return 0;
+}
+
 async function searchNavidromeSong(query: string): Promise<{ id: string; title: string; artist: string; durationSeconds?: number } | null> {
+  const parsed = parseSongQueryEntry(query);
+
   const payload = await navidromeGetJson("/rest/search3", {
-    query,
-    songCount: "8",
+    query: parsed.searchQuery,
+    songCount: "10",
     artistCount: "0",
     albumCount: "0",
   });
@@ -673,15 +705,27 @@ async function searchNavidromeSong(query: string): Promise<{ id: string; title: 
   const songs = Array.isArray(result?.song) ? result.song : [];
   if (!songs.length) return null;
 
-  const first = songs[0];
-  const id = String(first?.id || "").trim();
+  // Pick the candidate with the best artist match when a hint was provided.
+  let best = songs[0];
+  if (parsed.artistHint) {
+    let bestScore = -1;
+    for (const song of songs) {
+      const score = artistMatchScore(String(song?.artist || ""), parsed.artistHint);
+      if (score > bestScore) {
+        bestScore = score;
+        best = song;
+      }
+    }
+  }
+
+  const id = String(best?.id || "").trim();
   if (!id) return null;
 
   return {
     id,
-    title: String(first?.title || query).trim(),
-    artist: String(first?.artist || "Unknown Artist").trim(),
-    durationSeconds: Number.isFinite(Number(first?.duration)) ? Math.max(0, Number(first.duration)) : undefined,
+    title: String(best?.title || parsed.titleHint).trim(),
+    artist: String(best?.artist || "Unknown Artist").trim(),
+    durationSeconds: Number.isFinite(Number(best?.duration)) ? Math.max(0, Number(best.duration)) : undefined,
   };
 }
 
