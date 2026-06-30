@@ -625,6 +625,41 @@ function estimateSlideshowDurationSeconds(
   return baseDurationSeconds + transitionSeconds;
 }
 
+function estimateSlideshowDurationFromSubmissionPayload(
+  submissions: Array<{ id?: string; title?: string; description?: string; imageUrl?: string }>
+): number {
+  let previousMissionKey: string | null = null;
+  let slideCount = 0;
+  let baseDurationSeconds = 0;
+
+  submissions.forEach((submission, index) => {
+    const imageUrl = String(submission?.imageUrl || "").trim();
+    if (!imageUrl) return;
+
+    const missionTitle = String(submission?.title || "Mission").trim();
+    const missionDescription = String(submission?.description || "").trim();
+    const missionKey = `${missionTitle}::${missionDescription}`;
+
+    if (missionKey !== previousMissionKey) {
+      previousMissionKey = missionKey;
+      slideCount += 1;
+      baseDurationSeconds += 4;
+    }
+
+    // Keep per-photo duration consistent with render endpoint.
+    slideCount += 1;
+    baseDurationSeconds += 5;
+  });
+
+  if (slideCount > 0) {
+    slideCount += 1;
+    baseDurationSeconds += 6;
+  }
+
+  const transitionSeconds = slideCount > 1 ? (PI_CONSTRAINED_RENDER ? 0.45 : 0.8) : 0;
+  return baseDurationSeconds + transitionSeconds;
+}
+
 async function searchNavidromeSong(query: string): Promise<{ id: string; title: string; artist: string; durationSeconds?: number } | null> {
   const payload = await navidromeGetJson("/rest/search3", {
     query,
@@ -2895,8 +2930,9 @@ app.post("/api/slideshow/generate-leaderboard-slide", async (req, res) => {
 
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
-    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, missionSlidesScript, leaderboardSlideScript } = req.body;
+    const { submissions, createdBy, title, promptTemplate, includeMissionNarration, missionSlidesScript, leaderboardSlideScript, songQueries } = req.body;
     const chosenSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel);
+    const requestedSongQueries = parseRequestedSongQueries(songQueries);
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for slideshow generation" });
@@ -3310,7 +3346,7 @@ Important output requirements:
           }
 
           const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-            renderSlideshowMp4(slideshow.id, renderSlides)
+            renderSlideshowMp4(slideshow.id, renderSlides, { requestedSongQueries })
           );
 
           videoGeneration = {
@@ -3333,7 +3369,7 @@ Important output requirements:
             throw new Error("No slides available for local MP4 render");
           }
           const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-            renderSlideshowMp4(slideshow.id, fallbackSlides)
+            renderSlideshowMp4(slideshow.id, fallbackSlides, { requestedSongQueries })
           );
           videoGeneration = {
             created: true,
@@ -3486,10 +3522,9 @@ app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
   }
 });
 
-app.post("/api/slideshows/:id/song-match-preview", async (req, res) => {
+app.post("/api/slideshow/song-match-preview", async (req, res) => {
   try {
-    const { id } = req.params;
-    const { userId, songQueries } = req.body || {};
+    const { userId, songQueries, submissions } = req.body || {};
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
@@ -3501,18 +3536,16 @@ app.post("/api/slideshows/:id/song-match-preview", async (req, res) => {
       return res.status(403).json({ error: "Only admin users can preview song matches" });
     }
 
-    const slideshow = await getSlideshow(id);
-    if (!slideshow) {
-      return res.status(404).json({ error: "Slideshow not found" });
+    if (!Array.isArray(submissions) || submissions.length === 0) {
+      return res.status(400).json({ error: "At least one selected submission is required for preview" });
     }
 
     const requestedSongQueries = parseRequestedSongQueries(songQueries);
     const preview = await previewRequestedSongs(requestedSongQueries);
-    const estimatedSlideshowDurationSeconds = estimateSlideshowDurationSeconds(slideshow, state.submissions, state.items);
+    const estimatedSlideshowDurationSeconds = estimateSlideshowDurationFromSubmissionPayload(submissions);
 
     return res.json({
       success: true,
-      slideshowId: slideshow.id,
       requested: preview.requested,
       matches: preview.matches,
       foundCount: preview.matches.filter((m) => m.found).length,
@@ -3523,7 +3556,7 @@ app.post("/api/slideshows/:id/song-match-preview", async (req, res) => {
       fallbackSource: preview.fallbackSource,
     });
   } catch (err: any) {
-    console.error("Song match preview error:", err);
+    console.error("Song match preview error (modal):", err);
     return res.status(500).json({ error: "Failed to preview song matches", details: err?.message || "Unknown error" });
   }
 });

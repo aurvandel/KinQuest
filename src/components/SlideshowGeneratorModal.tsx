@@ -59,6 +59,18 @@ export function SlideshowGeneratorModal({
   const [includeMissionNarration, setIncludeMissionNarration] = useState(false);
   const [slideshowModel, setSlideshowModel] = useState<string>("llama3.1");
   const [generationSource, setGenerationSource] = useState<string | null>(null);
+  const [songQueriesInput, setSongQueriesInput] = useState("");
+  const [songPreviewLoading, setSongPreviewLoading] = useState(false);
+  const [songPreview, setSongPreview] = useState<{
+    requested: string[];
+    matches: Array<{ query: string; found: boolean; title?: string; artist?: string; durationSeconds?: number; durationLabel?: string }>;
+    foundCount: number;
+    matchedDurationSeconds: number;
+    matchedDurationLabel: string;
+    estimatedSlideshowDurationSeconds: number;
+    estimatedSlideshowDurationLabel: string;
+    fallbackSource: "file" | "silence";
+  } | null>(null);
 
   const approvedSubmissions = submissions.filter((sub) => sub.status === "approved");
   const groupedApprovedSubmissions = approvedSubmissions.reduce((acc, sub) => {
@@ -126,6 +138,54 @@ export function SlideshowGeneratorModal({
       description: items.find((it) => it.id === sub.itemId)?.description || "",
       username: sub.username,
     }));
+  };
+
+  const parseSongQueries = (value: string): string[] => {
+    return String(value || "")
+      .split(/[\n,]+/)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .slice(0, 8);
+  };
+
+  const handleTestSongMatches = async () => {
+    if (!adminUserId || selectedSubmissionIds.size === 0) return;
+
+    setSongPreviewLoading(true);
+    setLocalError(null);
+    try {
+      const requestedSongs = parseSongQueries(songQueriesInput);
+      const response = await fetch("/api/slideshow/song-match-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: adminUserId,
+          songQueries: requestedSongs,
+          submissions: getSelectedSubmissionPayload(),
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.details || data?.error || "Failed to preview songs");
+      }
+
+      setSongPreview({
+        requested: Array.isArray(data?.requested) ? data.requested : [],
+        matches: Array.isArray(data?.matches) ? data.matches : [],
+        foundCount: Number(data?.foundCount) || 0,
+        matchedDurationSeconds: Number(data?.matchedDurationSeconds) || 0,
+        matchedDurationLabel: String(data?.matchedDurationLabel || "0:00"),
+        estimatedSlideshowDurationSeconds: Number(data?.estimatedSlideshowDurationSeconds) || 0,
+        estimatedSlideshowDurationLabel: String(data?.estimatedSlideshowDurationLabel || "0:00"),
+        fallbackSource: data?.fallbackSource === "silence" ? "silence" : "file",
+      });
+    } catch (err: any) {
+      setLocalError(err?.message || "Failed to preview songs");
+      setSongPreview(null);
+    } finally {
+      setSongPreviewLoading(false);
+    }
   };
 
   const handleGenerateMissionSlides = async () => {
@@ -204,6 +264,7 @@ export function SlideshowGeneratorModal({
           promptTemplate,
           includeMissionNarration,
           slideshowModel,
+          songQueries: parseSongQueries(songQueriesInput),
           missionSlidesScript,
           leaderboardSlideScript,
         }),
@@ -378,6 +439,66 @@ export function SlideshowGeneratorModal({
                   />
                   Include mission narrator overlays (AI will create a short story line for each mission group)
                 </label>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-emerald-800">Navidrome Songs (Optional)</label>
+                  <textarea
+                    value={songQueriesInput}
+                    onChange={(e) => setSongQueriesInput(e.target.value)}
+                    rows={3}
+                    placeholder="Enter song names, one per line or comma separated"
+                    className="w-full rounded-lg border border-emerald-200 px-3 py-2 text-xs text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                  />
+                  <p className="text-[11px] text-emerald-900/80">
+                    Preview matches before composing. Coverage should be at least 110% for safer runtime alignment.
+                  </p>
+                  <button
+                    onClick={handleTestSongMatches}
+                    disabled={songPreviewLoading || selectedSubmissionIds.size === 0 || !adminUserId}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 text-white font-semibold px-3 py-2 text-xs hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed transition"
+                  >
+                    {songPreviewLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Testing Matches...
+                      </>
+                    ) : (
+                      "Test Song Matches"
+                    )}
+                  </button>
+
+                  {songPreview && (
+                    <div className="rounded-lg border border-emerald-200 bg-white p-3 text-xs text-emerald-900 space-y-2">
+                      <p className="font-semibold">
+                        Matched {songPreview.foundCount} of {songPreview.requested.length} requested song(s)
+                      </p>
+                      <p>Estimated matched music length: {songPreview.matchedDurationLabel}</p>
+                      <p>Estimated slideshow length: {songPreview.estimatedSlideshowDurationLabel}</p>
+                      <p className={songPreview.estimatedSlideshowDurationSeconds > 0 && (songPreview.matchedDurationSeconds / songPreview.estimatedSlideshowDurationSeconds) >= 1.1 ? "font-semibold text-emerald-700" : "font-semibold text-amber-700"}>
+                        Coverage: {Math.round(songPreview.estimatedSlideshowDurationSeconds > 0 ? (songPreview.matchedDurationSeconds / songPreview.estimatedSlideshowDurationSeconds) * 100 : 0)}% ({songPreview.matchedDurationLabel} / {songPreview.estimatedSlideshowDurationLabel})
+                        {songPreview.estimatedSlideshowDurationSeconds > 0 && (songPreview.matchedDurationSeconds / songPreview.estimatedSlideshowDurationSeconds) >= 1.1
+                          ? " - likely enough music"
+                          : " - likely too short"}
+                      </p>
+                      {songPreview.matches.length > 0 ? (
+                        <ul className="space-y-1">
+                          {songPreview.matches.map((match, idx) => (
+                            <li key={`${match.query}_${idx}`}>
+                              {match.found
+                                ? `Found: ${match.query} -> ${match.title || "Unknown Title"} - ${match.artist || "Unknown Artist"} (${match.durationLabel || "0:00"})`
+                                : `Missing: ${match.query}`}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>No song queries provided yet.</p>
+                      )}
+                      <p>
+                        Fallback if needed: {songPreview.fallbackSource === "file" ? "local fallback music" : "silence"}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {approvedSubmissions.length === 0 ? (
