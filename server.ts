@@ -85,6 +85,11 @@ const PRESENTON_PASSWORD = (process.env.PRESENTON_PASSWORD || "").trim();
 const PRESENTON_AUTH_MODE = (process.env.PRESENTON_AUTH_MODE || "auto").trim().toLowerCase();
 const PRESENTON_LOGIN_PATH = (process.env.PRESENTON_LOGIN_PATH || "/api/v1/auth/jwt/login").trim();
 const PRESENTON_GENERATE_PATH = (process.env.PRESENTON_GENERATE_PATH || "/api/v1/ppt/presentation/generate").trim();
+const NAVIDROME_SERVER_URL = (process.env.NAVIDROME_SERVER_URL || "").trim();
+const NAVIDROME_USERNAME = (process.env.NAVIDROME_USERNAME || "").trim();
+const NAVIDROME_PASSWORD = (process.env.NAVIDROME_PASSWORD || "").trim();
+const NAVIDROME_API_VERSION = "1.16.1";
+const NAVIDROME_CLIENT_NAME = "kinquest";
 
 let presentonJwtTokenCache: { token: string; issuedAtMs: number } | null = null;
 
@@ -515,6 +520,290 @@ function sanitizeSlideshowId(raw: string): string {
   return raw.replace(/[^a-zA-Z0-9_-]/g, "");
 }
 
+function sanitizeAudioBasename(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+function parseRequestedSongQueries(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((entry) => String(entry || "").trim())
+      .filter((entry) => entry.length > 0)
+      .slice(0, 8);
+  }
+
+  if (typeof raw === "string") {
+    return raw
+      .split(/[\n,]+/)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .slice(0, 8);
+  }
+
+  return [];
+}
+
+function buildNavidromeAuthParams(): URLSearchParams | null {
+  if (!NAVIDROME_USERNAME || !NAVIDROME_PASSWORD) {
+    return null;
+  }
+
+  const salt = `${Date.now()}${Math.floor(Math.random() * 100000)}`;
+  const token = createHash("md5").update(`${NAVIDROME_PASSWORD}${salt}`).digest("hex");
+
+  const params = new URLSearchParams();
+  params.set("u", NAVIDROME_USERNAME);
+  params.set("s", salt);
+  params.set("t", token);
+  params.set("v", NAVIDROME_API_VERSION);
+  params.set("c", NAVIDROME_CLIENT_NAME);
+  params.set("f", "json");
+  return params;
+}
+
+async function navidromeGetJson(endpointPath: string, extraParams: Record<string, string>): Promise<any | null> {
+  const base = normalizeServerUrl(NAVIDROME_SERVER_URL);
+  const authParams = buildNavidromeAuthParams();
+  if (!base || !authParams) return null;
+
+  const params = new URLSearchParams(authParams);
+  Object.entries(extraParams).forEach(([key, value]) => {
+    params.set(key, value);
+  });
+
+  const url = `${base}${endpointPath}?${params.toString()}`;
+  try {
+    const response = await withTimeout(fetch(url), 10000, "Navidrome request");
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function formatDurationLabel(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function estimateSlideshowDurationSeconds(
+  slideshow: Slideshow,
+  submissions: Record<string, Submission>,
+  items: Record<string, ScavengerItem>
+): number {
+  let previousMissionKey: string | null = null;
+  let slideCount = 0;
+  let baseDurationSeconds = 0;
+
+  slideshow.submissionIds.forEach((subId) => {
+    const submission = submissions[subId];
+    if (!submission?.imageUrl) return;
+
+    const item = items[submission.itemId];
+    const missionTitle = String(item?.title || "Mission").trim();
+    const missionDescription = String(item?.description || "").trim();
+    const missionKey = `${submission.itemId}::${missionTitle}::${missionDescription}`;
+
+    if (missionKey !== previousMissionKey) {
+      previousMissionKey = missionKey;
+      slideCount += 1;
+      baseDurationSeconds += 4;
+    }
+
+    slideCount += 1;
+    baseDurationSeconds += 5;
+  });
+
+  if (slideCount > 0) {
+    slideCount += 1;
+    baseDurationSeconds += 6;
+  }
+
+  const transitionSeconds = slideCount > 1 ? (PI_CONSTRAINED_RENDER ? 0.45 : 0.8) : 0;
+  return baseDurationSeconds + transitionSeconds;
+}
+
+async function searchNavidromeSong(query: string): Promise<{ id: string; title: string; artist: string; durationSeconds?: number } | null> {
+  const payload = await navidromeGetJson("/rest/search3", {
+    query,
+    songCount: "8",
+    artistCount: "0",
+    albumCount: "0",
+  });
+
+  const root = payload?.["subsonic-response"];
+  const result = root?.searchResult3;
+  const songs = Array.isArray(result?.song) ? result.song : [];
+  if (!songs.length) return null;
+
+  const first = songs[0];
+  const id = String(first?.id || "").trim();
+  if (!id) return null;
+
+  return {
+    id,
+    title: String(first?.title || query).trim(),
+    artist: String(first?.artist || "Unknown Artist").trim(),
+    durationSeconds: Number.isFinite(Number(first?.duration)) ? Math.max(0, Number(first.duration)) : undefined,
+  };
+}
+
+async function downloadNavidromeSongToTemp(songId: string, tmpDir: string, hint: string): Promise<string | null> {
+  const base = normalizeServerUrl(NAVIDROME_SERVER_URL);
+  const authParams = buildNavidromeAuthParams();
+  if (!base || !authParams) return null;
+
+  const params = new URLSearchParams(authParams);
+  params.set("id", songId);
+  const url = `${base}/rest/stream.view?${params.toString()}`;
+
+  try {
+    const response = await withTimeout(fetch(url), 20000, "Navidrome stream download");
+    if (!response.ok) return null;
+
+    const ext = (response.headers.get("content-type") || "").includes("ogg") ? "ogg" : "mp3";
+    const safeBase = sanitizeAudioBasename(hint) || `song_${Date.now()}`;
+    const outputPath = path.join(tmpDir, `navidrome_${safeBase}_${songId}.${ext}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    await fsp.writeFile(outputPath, bytes);
+    return outputPath;
+  } catch {
+    return null;
+  }
+}
+
+async function concatAudioFiles(audioFiles: string[], outputPath: string): Promise<boolean> {
+  if (!audioFiles.length) return false;
+  if (audioFiles.length === 1) {
+    await fsp.copyFile(audioFiles[0], outputPath);
+    return true;
+  }
+
+  const inputArgs = audioFiles.flatMap((audio) => ["-i", audio]);
+  const concatInputs = audioFiles.map((_, idx) => `[${idx}:a]`).join("");
+  const filter = `${concatInputs}concat=n=${audioFiles.length}:v=0:a=1[aout]`;
+
+  return await new Promise<boolean>((resolve) => {
+    const proc = spawn("ffmpeg", [
+      "-y",
+      ...inputArgs,
+      "-filter_complex", filter,
+      "-map", "[aout]",
+      "-c:a", "mp3",
+      "-b:a", "192k",
+      outputPath,
+    ]);
+
+    proc.on("error", () => resolve(false));
+    proc.on("close", (code) => resolve(code === 0));
+  });
+}
+
+async function resolveBackgroundMusicTrack(tmpDir: string, requestedSongQueries: string[]): Promise<{ filePath: string | null; source: string }> {
+  const requested = requestedSongQueries
+    .map((entry) => String(entry || "").trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 8);
+
+  if (requested.length > 0) {
+    const downloadedTracks: string[] = [];
+
+    for (const requestedSong of requested) {
+      const found = await searchNavidromeSong(requestedSong);
+      if (!found) {
+        console.warn(`[SlideshowRender] Navidrome song not found for query: ${requestedSong}`);
+        continue;
+      }
+
+      const downloaded = await downloadNavidromeSongToTemp(found.id, tmpDir, `${found.title}_${found.artist}`);
+      if (!downloaded) {
+        console.warn(`[SlideshowRender] Failed to download Navidrome song: ${found.title} - ${found.artist}`);
+        continue;
+      }
+
+      downloadedTracks.push(downloaded);
+    }
+
+    if (downloadedTracks.length > 0) {
+      const stitchedPath = path.join(tmpDir, "requested_playlist.mp3");
+      const stitched = await concatAudioFiles(downloadedTracks, stitchedPath);
+      if (stitched) {
+        return { filePath: stitchedPath, source: `navidrome:${downloadedTracks.length}_tracks` };
+      }
+      return { filePath: downloadedTracks[0], source: "navidrome:single_track" };
+    }
+  }
+
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const fallbackCandidates = [
+    process.env.SLIDESHOW_BGM_FILE || "",
+    path.join(uploadsDir, "slideshow-bgm.mp3"),
+    path.join(process.cwd(), "assets", "slideshow-bgm.mp3"),
+    path.join(uploadsDir, "slideshows", "kinquest-ambient-cinematic-6m30.mp3"),
+    path.join(uploadsDir, "slideshows", "kinquest-ambient-6m30.mp3"),
+  ].filter(Boolean);
+  const selected = fallbackCandidates.find((candidate) => fs.existsSync(candidate)) || null;
+
+  return {
+    filePath: selected,
+    source: selected ? "fallback:file" : "fallback:silence",
+  };
+}
+
+async function previewRequestedSongs(requestedSongQueries: string[]): Promise<{
+  requested: string[];
+  matches: Array<{ query: string; found: boolean; title?: string; artist?: string; durationSeconds?: number; durationLabel?: string }>;
+  matchedDurationSeconds: number;
+  matchedDurationLabel: string;
+  fallbackSource: "file" | "silence";
+}> {
+  const requested = requestedSongQueries
+    .map((entry) => String(entry || "").trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 8);
+
+  const matches: Array<{ query: string; found: boolean; title?: string; artist?: string; durationSeconds?: number; durationLabel?: string }> = [];
+  let matchedDurationSeconds = 0;
+
+  for (const query of requested) {
+    const found = await searchNavidromeSong(query);
+    if (found) {
+      const durationSeconds = Number(found.durationSeconds) || 0;
+      matchedDurationSeconds += durationSeconds;
+      matches.push({
+        query,
+        found: true,
+        title: found.title,
+        artist: found.artist,
+        durationSeconds,
+        durationLabel: formatDurationLabel(durationSeconds),
+      });
+    } else {
+      matches.push({ query, found: false });
+    }
+  }
+
+  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
+  const fallbackCandidates = [
+    process.env.SLIDESHOW_BGM_FILE || "",
+    path.join(uploadsDir, "slideshow-bgm.mp3"),
+    path.join(process.cwd(), "assets", "slideshow-bgm.mp3"),
+    path.join(uploadsDir, "slideshows", "kinquest-ambient-cinematic-6m30.mp3"),
+    path.join(uploadsDir, "slideshows", "kinquest-ambient-6m30.mp3"),
+  ].filter(Boolean);
+  const hasFallbackFile = fallbackCandidates.some((candidate) => fs.existsSync(candidate));
+
+  return {
+    requested,
+    matches,
+    matchedDurationSeconds,
+    matchedDurationLabel: formatDurationLabel(matchedDurationSeconds),
+    fallbackSource: hasFallbackFile ? "file" : "silence",
+  };
+}
+
 function buildFinalScoreboardOverlay(
   playerTotals: Array<{ username: string; score: number }>
 ): string {
@@ -791,7 +1080,8 @@ function normalizeOverlayTextForFfmpeg(raw: unknown): string {
 
 async function renderSlideshowMp4(
   slideshowId: string,
-  slides: Array<{ imageUrl?: string; overlayText?: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }>
+  slides: Array<{ imageUrl?: string; overlayText?: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }>,
+  options?: { requestedSongQueries?: string[] }
 ): Promise<{ outputPath: string; outputUrl: string }> {
   if (!slides.length) {
     throw new Error("No images available to render slideshow video");
@@ -857,12 +1147,8 @@ async function renderSlideshowMp4(
     const descriptionFontSize = PI_CONSTRAINED_RENDER ? 28 : 40;
     const overlayFontSize = PI_CONSTRAINED_RENDER ? 24 : 34;
 
-    const backgroundMusicCandidates = [
-      process.env.SLIDESHOW_BGM_FILE || "",
-      path.join(uploadsDir, "slideshow-bgm.mp3"),
-      path.join(process.cwd(), "assets", "slideshow-bgm.mp3"),
-    ].filter(Boolean);
-    const selectedBackgroundMusic = backgroundMusicCandidates.find((candidate) => fs.existsSync(candidate));
+    const musicResolution = await resolveBackgroundMusicTrack(tmpDir, options?.requestedSongQueries || []);
+    const selectedBackgroundMusic = musicResolution.filePath;
 
     const audioInputArgs = selectedBackgroundMusic
       ? ["-stream_loop", "-1", "-i", selectedBackgroundMusic]
@@ -873,9 +1159,9 @@ async function renderSlideshowMp4(
       : `afade=t=in:st=0:d=1.2,afade=t=out:st=${fadeOutStart}:d=1.5`;
 
     if (selectedBackgroundMusic) {
-      console.log("[SlideshowRender] Using background music track:", selectedBackgroundMusic);
+      console.log("[SlideshowRender] Using background music track:", selectedBackgroundMusic, `(${musicResolution.source})`);
     } else {
-      console.log("[SlideshowRender] No background music track found; using silence track");
+      console.log("[SlideshowRender] No background music track found; using silence track", `(${musicResolution.source})`);
     }
 
     const ffmpegInputs: string[] = [];
@@ -3103,7 +3389,7 @@ Important output requirements:
 app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId } = req.body || {};
+    const { userId, songQueries } = req.body || {};
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
@@ -3179,21 +3465,66 @@ app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
     }
 
     // RESILIENCE: Queue rendering operations to prevent concurrent renders from crashing the Pi
+    const requestedSongQueries = parseRequestedSongQueries(songQueries);
+
     const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () => 
-      renderSlideshowMp4(slideshow.id, slides)
+      renderSlideshowMp4(slideshow.id, slides, { requestedSongQueries })
     );
 
     return res.json({
       success: true,
       slideshowId: slideshow.id,
       videoUrl: rendered.outputUrl,
-      imageCount: slides.length
+      imageCount: slides.length,
+      songQueriesUsed: requestedSongQueries,
     });
   } catch (err: any) {
     console.error("Slideshow MP4 render error:", err);
     const message = err?.message || "Failed to render slideshow MP4";
     const status = message.includes("FFmpeg is not installed") ? 503 : 500;
     return res.status(status).json({ error: "Failed to render slideshow MP4", details: message });
+  }
+});
+
+app.post("/api/slideshows/:id/song-match-preview", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, songQueries } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    const state = await getAppState();
+    const requestingUser = state.users[userId];
+    if (!requestingUser || requestingUser.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can preview song matches" });
+    }
+
+    const slideshow = await getSlideshow(id);
+    if (!slideshow) {
+      return res.status(404).json({ error: "Slideshow not found" });
+    }
+
+    const requestedSongQueries = parseRequestedSongQueries(songQueries);
+    const preview = await previewRequestedSongs(requestedSongQueries);
+    const estimatedSlideshowDurationSeconds = estimateSlideshowDurationSeconds(slideshow, state.submissions, state.items);
+
+    return res.json({
+      success: true,
+      slideshowId: slideshow.id,
+      requested: preview.requested,
+      matches: preview.matches,
+      foundCount: preview.matches.filter((m) => m.found).length,
+      matchedDurationSeconds: preview.matchedDurationSeconds,
+      matchedDurationLabel: preview.matchedDurationLabel,
+      estimatedSlideshowDurationSeconds,
+      estimatedSlideshowDurationLabel: formatDurationLabel(estimatedSlideshowDurationSeconds),
+      fallbackSource: preview.fallbackSource,
+    });
+  } catch (err: any) {
+    console.error("Song match preview error:", err);
+    return res.status(500).json({ error: "Failed to preview song matches", details: err?.message || "Unknown error" });
   }
 });
 

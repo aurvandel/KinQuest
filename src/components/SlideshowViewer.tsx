@@ -76,6 +76,28 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
   const [voiceEnabledMap, setVoiceEnabledMap] = useState<{ [slideshowId: string]: boolean }>({});
   const [scriptDraftMap, setScriptDraftMap] = useState<{ [slideshowId: string]: string }>({});
   const [savingScriptId, setSavingScriptId] = useState<string | null>(null);
+  const [songQueriesDraftMap, setSongQueriesDraftMap] = useState<{ [slideshowId: string]: string }>({});
+  const [songPreviewLoadingId, setSongPreviewLoadingId] = useState<string | null>(null);
+  const [songPreviewMap, setSongPreviewMap] = useState<{
+    [slideshowId: string]: {
+      requested: string[];
+      matches: Array<{ query: string; found: boolean; title?: string; artist?: string; durationSeconds?: number; durationLabel?: string }>;
+      foundCount: number;
+      matchedDurationSeconds: number;
+      matchedDurationLabel: string;
+      estimatedSlideshowDurationSeconds: number;
+      estimatedSlideshowDurationLabel: string;
+      fallbackSource: "file" | "silence";
+    };
+  }>({});
+
+  const parseSongQueries = (value: string): string[] => {
+    return String(value || "")
+      .split(/[\n,]+/)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .slice(0, 8);
+  };
 
   useEffect(() => {
     const fetchSlideshows = async () => {
@@ -238,10 +260,11 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     setRenderingId(slideshowId);
     setRenderErrorMap((prev) => ({ ...prev, [slideshowId]: null }));
     try {
+      const requestedSongs = parseSongQueries(songQueriesDraftMap[slideshowId] || "");
       const response = await fetch(`/api/slideshows/${slideshowId}/render-mp4`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId, songQueries: requestedSongs }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -256,6 +279,44 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
       setRenderErrorMap((prev) => ({ ...prev, [slideshowId]: err?.message || "Failed to render MP4" }));
     } finally {
       setRenderingId(null);
+    }
+  };
+
+  const handleTestSongMatches = async (slideshowId: string) => {
+    if (!userId) return;
+
+    setSongPreviewLoadingId(slideshowId);
+    setRenderErrorMap((prev) => ({ ...prev, [slideshowId]: null }));
+    try {
+      const requestedSongs = parseSongQueries(songQueriesDraftMap[slideshowId] || "");
+      const response = await fetch(`/api/slideshows/${slideshowId}/song-match-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, songQueries: requestedSongs }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.details || data?.error || "Failed to preview songs");
+      }
+
+      setSongPreviewMap((prev) => ({
+        ...prev,
+        [slideshowId]: {
+          requested: Array.isArray(data?.requested) ? data.requested : [],
+          matches: Array.isArray(data?.matches) ? data.matches : [],
+          foundCount: Number(data?.foundCount) || 0,
+          matchedDurationSeconds: Number(data?.matchedDurationSeconds) || 0,
+          matchedDurationLabel: String(data?.matchedDurationLabel || "0:00"),
+          estimatedSlideshowDurationSeconds: Number(data?.estimatedSlideshowDurationSeconds) || 0,
+          estimatedSlideshowDurationLabel: String(data?.estimatedSlideshowDurationLabel || "0:00"),
+          fallbackSource: data?.fallbackSource === "silence" ? "silence" : "file",
+        },
+      }));
+    } catch (err: any) {
+      setRenderErrorMap((prev) => ({ ...prev, [slideshowId]: err?.message || "Failed to preview songs" }));
+    } finally {
+      setSongPreviewLoadingId(null);
     }
   };
 
@@ -419,6 +480,12 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
             const narratorMap = extractNarratorOverlayMap(slideshow.script || "");
             const currentNarration = currentSlide ? narratorMap[currentSlide.title] : null;
             const hasVideo = Boolean(videoUrlMap[slideshow.id]);
+            const preview = songPreviewMap[slideshow.id];
+            const coverageRatio = preview && preview.estimatedSlideshowDurationSeconds > 0
+              ? preview.matchedDurationSeconds / preview.estimatedSlideshowDurationSeconds
+              : 0;
+            const coveragePercent = Math.round(Math.max(0, coverageRatio) * 100);
+            const coverageEnough = coverageRatio >= 1.1;
 
             return (
           <div
@@ -626,6 +693,70 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
 
                 {isAdmin && (
                   <>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                        Navidrome Songs (Optional)
+                      </label>
+                      <textarea
+                        value={songQueriesDraftMap[slideshow.id] || ""}
+                        onChange={(e) => setSongQueriesDraftMap((prev) => ({ ...prev, [slideshow.id]: e.target.value }))}
+                        rows={3}
+                        placeholder="Enter song names, one per line or comma separated"
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                      />
+                      <p className="text-[11px] text-gray-500">
+                        Example: Home, Sweet Caroline, Celebration. If no match is found, KinQuest uses fallback music automatically.
+                      </p>
+                      <button
+                        onClick={() => handleTestSongMatches(slideshow.id)}
+                        disabled={songPreviewLoadingId === slideshow.id}
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-100 text-emerald-800 font-semibold px-3 py-2 text-xs hover:bg-emerald-200 disabled:opacity-60 disabled:cursor-not-allowed transition"
+                      >
+                        {songPreviewLoadingId === slideshow.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Testing Matches...
+                          </>
+                        ) : (
+                          "Test Song Matches"
+                        )}
+                      </button>
+
+                      {songPreviewMap[slideshow.id] && (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 space-y-2">
+                          <p className="font-semibold">
+                            Matched {songPreviewMap[slideshow.id].foundCount} of {songPreviewMap[slideshow.id].requested.length} requested song(s)
+                          </p>
+                          <p>
+                            Estimated matched music length: {songPreviewMap[slideshow.id].matchedDurationLabel}
+                          </p>
+                          <p>
+                            Estimated slideshow length: {songPreviewMap[slideshow.id].estimatedSlideshowDurationLabel}
+                          </p>
+                          <p className={coverageEnough ? "font-semibold text-emerald-800" : "font-semibold text-amber-800"}>
+                            Coverage: {coveragePercent}% ({songPreviewMap[slideshow.id].matchedDurationLabel} / {songPreviewMap[slideshow.id].estimatedSlideshowDurationLabel})
+                            {coverageEnough ? " - likely enough music" : " - likely too short"}
+                          </p>
+                          {songPreviewMap[slideshow.id].matches.length > 0 ? (
+                            <ul className="space-y-1">
+                              {songPreviewMap[slideshow.id].matches.map((match, idx) => (
+                                <li key={`${match.query}_${idx}`}>
+                                  {match.found
+                                    ? `Found: ${match.query} -> ${match.title || "Unknown Title"} - ${match.artist || "Unknown Artist"} (${match.durationLabel || "0:00"})`
+                                    : `Missing: ${match.query}`}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>No song queries provided yet.</p>
+                          )}
+                          <p>
+                            Fallback if needed: {songPreviewMap[slideshow.id].fallbackSource === "file" ? "local fallback music" : "silence"}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="flex gap-2">
                       {userRole === "admin" && !hasVideo && (
                         <button
