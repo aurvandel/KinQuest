@@ -101,7 +101,7 @@ The app automatically detects database availability and falls back to local JSON
 │   ├── types.ts             # TypeScript interfaces
 │   └── index.css            # Global styles
 ├── server.ts                # Express API & WebSocket server
-├── db-manager.ts            # Database layer (Supabase + fallback)
+├── db-manager.ts            # Database layer (Supabase)
 ├── password-manager.ts      # Admin authentication
 ├── docker-compose.yml       # Local development stack
 ├── supabase/init.sql        # Database schema
@@ -158,7 +158,7 @@ Key tables:
 
 ## Development Notes
 
-- The app uses both Supabase and local JSON fallback
+- The app uses Supabase exclusively for data persistence
 - WebSocket handles real-time features (chat, online status)
 - Missions are stored with creator ID for permission management
 - All API responses include error details for debugging

@@ -6,13 +6,14 @@ You are assisting with development on **KinQuest**, a family reunion scavenger h
 
 ## Critical Rule: Database Schema Synchronization ⚠️
 
-**READ AGENTS.md FIRST**, specifically the "Database Schema Synchronization" section.
+**READ AGENTS.md FIRST**, specifically the "Database Architecture" section.
 
 When making ANY changes that involve data structures:
-1. **Check AGENTS.md** for the critical constraint
-2. **Never add a field to TypeScript without updating Supabase schema**
-3. **Always run migrations on running databases**
-4. **Test both with Supabase up and down**
+1. **Check AGENTS.md** for the schema patterns
+2. **Always update Supabase schema first** (`supabase/init.sql`)
+3. **Update TypeScript types** (`src/types.ts`) to match
+4. **Always run migrations on running databases** to keep them in sync
+5. **Use snake_case in SQL, camelCase in TypeScript**
 
 This is the #1 cause of bugs in KinQuest.
 
@@ -24,9 +25,8 @@ From AGENTS.md's "Key Files to Remember" table:
 |------|---------|
 | `supabase/init.sql` | SQL schema definition - update here first for new tables/columns |
 | `src/types.ts` | TypeScript interfaces - update after init.sql |
-| `db-manager.ts` | Database layer - implement both Supabase and local paths |
+| `db-manager.ts` | Database operations - implement CRUD functions for Supabase |
 | `server.ts` | API endpoints - handle requests and delegate to db-manager |
-| `db.json` | Local fallback database - verify data persists here |
 
 ## Standard Development Workflow
 
@@ -38,31 +38,28 @@ When implementing a new feature that touches data:
 4. **API Layer**: Add endpoints to `server.ts` that call db-manager functions
 5. **UI Layer**: Create React components in `src/components/`
 6. **Migrations**: Run `docker compose exec -T db psql -U postgres -d postgres -c "..."`
-7. **Test**: Verify with Supabase running, then with it stopped
+7. **Test**: Verify with Supabase running
 
-## Dual-Database System
+## Supabase Architecture
 
-KinQuest intelligently handles two storage systems:
+KinQuest uses **Supabase exclusively** for all data persistence. Data is stored in PostgreSQL and accessed via the Supabase client.
 
-- **Supabase (Primary)**: PostgreSQL database for production
-- **Local Fallback**: `db.json` when Supabase is unavailable
+Key points:
+- All data persists to Supabase
+- No local fallback database
+- TypeScript uses camelCase, Supabase uses snake_case
+- Always convert field names when inserting/updating
 
-The database layer in `db-manager.ts` implements this pattern:
-- Try Supabase first
-- On error, fall back to local storage
-- Return the same object shape regardless of storage path
-- Both paths must handle the same fields
-
-See AGENTS.md "Database Layer Pattern" for code examples.
+See AGENTS.md "Database Function Pattern" for code examples.
 
 ## Common Development Tasks
 
 ### Adding a new mission field
 1. Add column to `supabase/init.sql`
 2. Add to `ScavengerItem` interface in `src/types.ts`
-3. Include in both local and Supabase paths in `db-manager.ts`
+3. Update Supabase insert logic in `db-manager.ts` with snake_case field name
 4. Run migration command
-5. Test both storage paths
+5. Test
 
 ### Creating an admin feature
 1. Add to `AdminSettingsModal.tsx`
@@ -87,9 +84,8 @@ npm run build
 docker compose up -d
 npm run dev
 
-# Test with Supabase down
-docker compose stop supabase-local-kong
-# Should still work with local fallback
+# Query the database to verify data
+docker compose exec -T db psql -U postgres -d postgres -c "SELECT * FROM items;"
 
 # Reset Docker stack (fresh schema)
 docker compose down -v
@@ -104,29 +100,18 @@ export async function createSomething(data: SomeData): Promise<SomeData> {
   // 1. Create object with ID
   const item: SomeData = { id: generateId(), ...data };
   
-  // 2. Check database mode
-  const mode = getDbMode();
+  // 2. Prepare row for Supabase (convert to snake_case)
+  const row = {
+    id: item.id,
+    field_name: item.fieldName,  // Note: snake_case
+    // ... other fields
+  };
   
-  // 3. Try local if fallback mode
-  if (mode === "local_fallback" || !supabase) {
-    const db = loadLocalDb();
-    db.collection[item.id] = item;
-    saveLocalDb(db);
-    return item;
-  }
+  // 3. Insert into Supabase
+  const { error } = await supabase!.from("table").insert(row);
+  if (error) throw error;
   
-  // 4. Try Supabase
-  try {
-    const { error } = await supabase.from("table").insert({...});
-    if (error) throw error;
-    return item;
-  } catch (err) {
-    // 5. Fall back gracefully
-    const db = loadLocalDb();
-    db.collection[item.id] = item;
-    saveLocalDb(db);
-    return item;
-  }
+  return item;  // Return with camelCase for frontend
 }
 ```
 
@@ -148,17 +133,32 @@ app.post("/api/endpoint", async (req, res) => {
 });
 ```
 
+## Field Name Conventions
+
+**TypeScript/Frontend**: camelCase (e.g., `createdBy`, `userId`, `itemTitle`)
+**Supabase/SQL**: snake_case (e.g., `created_by`, `user_id`, `item_title`)
+
+Always convert when inserting/updating to Supabase:
+```typescript
+// Frontend object (camelCase)
+const user = { createdAt: "2024-01-01", userId: "123" };
+
+// Supabase row (snake_case)
+const row = {
+  created_at: user.createdAt,
+  user_id: user.userId
+};
+```
+
 ## Schema Change Checklist
 
 Before committing schema changes:
 - [ ] Field added to `supabase/init.sql`
 - [ ] Field added to TypeScript interface in `src/types.ts`
-- [ ] Field handled in `db-manager.ts` (local path)
-- [ ] Field handled in `db-manager.ts` (Supabase path)
+- [ ] Field handled in `db-manager.ts` (with snake_case conversion)
 - [ ] Migration run: `docker compose exec -T db psql -U postgres -d postgres -c "..."`
 - [ ] Tested creation with Supabase running
-- [ ] Tested creation with Supabase stopped
-- [ ] Data verified in both `db.json` and Supabase
+- [ ] Data verified in Supabase
 
 ## References
 
@@ -180,4 +180,4 @@ Do NOT update for bug fixes, minor refactoring, or feature flags.
 
 ---
 
-**Remember**: The golden rule is **database schema synchronization**. When in doubt, check AGENTS.md.
+**Remember**: The golden rule is **schema alignment**. When in doubt, check AGENTS.md.

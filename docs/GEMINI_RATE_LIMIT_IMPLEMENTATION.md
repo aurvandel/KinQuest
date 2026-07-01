@@ -212,7 +212,7 @@ npm run dev
 ```bash
 # Temporarily mock Gemini to return 429
 # Upload photo - should save as "pending" ✓
-# Check db.json or Supabase - status should be "pending" ✓
+# Check Supabase - status should be "pending" ✓
 # See "Ref Checking..." badge in Feed ✓
 # Click Retry button - should attempt verification ✓
 ```
@@ -293,11 +293,8 @@ Shows:
 
 ### Check Submission Status
 ```bash
-# View pending submissions in database
-curl http://localhost:3000/api/db-status
-
-# Or directly inspect db.json
-cat db.json | grep -A 10 '"retryCount"'
+# View pending submissions in Supabase database
+docker compose exec -T db psql -U postgres -d postgres -c "SELECT * FROM submissions WHERE status='pending';"
 ```
 
 ### Server Logs
@@ -324,8 +321,7 @@ Gemini retry error: ...error details...
 - [ ] Admin panel shows pending submissions
 - [ ] Force-approve works on pending submissions
 - [ ] Database fields populated correctly (retryCount, retryReason, nextRetryAt)
-- [ ] Supabase schema updated (if using Supabase)
-- [ ] Local fallback works when Supabase down
+- [ ] Supabase schema updated
 
 ## 🏗️ Architecture
 
