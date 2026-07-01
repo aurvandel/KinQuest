@@ -2840,10 +2840,15 @@ CREATE TABLE IF NOT EXISTS submissions (
             onScriptGenerated={(script) => {
               setSlideshowGeneratedScript(script);
             }}
-            onSlideshowCreated={() => {
+            onSlideshowCreated={(id) => {
+              console.log("[App] onSlideshowCreated called with ID:", id);
               setSlideshowGeneratorOpen(false);
               setActiveTab("slideshows");
-              setSlideshowRefreshKey((prev) => prev + 1);
+              setSlideshowRefreshKey((prev) => {
+                const newKey = prev + 1;
+                console.log("[App] Updated slideshowRefreshKey from", prev, "to", newKey);
+                return newKey;
+              });
             }}
           />
         )}

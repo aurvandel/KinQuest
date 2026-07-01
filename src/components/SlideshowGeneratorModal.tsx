@@ -276,6 +276,7 @@ export function SlideshowGeneratorModal({
       }
 
       const data = await response.json();
+      console.log("[SlideshowModal] API Response:", data);
       setLocalScript(data.slideshow.script);
       const videoInfo = data?.generation?.video;
       if (data?.generation?.cacheHit) {
@@ -298,7 +299,10 @@ export function SlideshowGeneratorModal({
         onScriptGenerated(data.slideshow.script);
       }
       if (onSlideshowCreated && data?.slideshow?.id) {
+        console.log("[SlideshowModal] Calling onSlideshowCreated with ID:", data.slideshow.id);
         onSlideshowCreated(data.slideshow.id);
+      } else {
+        console.warn("[SlideshowModal] onSlideshowCreated not called - callback:", !!onSlideshowCreated, "id:", data?.slideshow?.id);
       }
     } catch (err: any) {
       console.error("Slideshow composition error:", err);
