@@ -85,6 +85,8 @@ const PRESENTON_PASSWORD = (process.env.PRESENTON_PASSWORD || "").trim();
 const PRESENTON_AUTH_MODE = (process.env.PRESENTON_AUTH_MODE || "auto").trim().toLowerCase();
 const PRESENTON_LOGIN_PATH = (process.env.PRESENTON_LOGIN_PATH || "/api/v1/auth/jwt/login").trim();
 const PRESENTON_GENERATE_PATH = (process.env.PRESENTON_GENERATE_PATH || "/api/v1/ppt/presentation/generate").trim();
+const PRESENTON_REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.PRESENTON_REQUEST_TIMEOUT_MS || 25000) || 25000);
+const SKIP_PRESENTON_ON_CONSTRAINED_RENDER = (process.env.SKIP_PRESENTON_ON_CONSTRAINED_RENDER || "true").trim().toLowerCase() !== "false";
 const NAVIDROME_SERVER_URL = (process.env.NAVIDROME_SERVER_URL || "").trim();
 const NAVIDROME_USERNAME = (process.env.NAVIDROME_USERNAME || "").trim();
 const NAVIDROME_PASSWORD = (process.env.NAVIDROME_PASSWORD || "").trim();
@@ -374,7 +376,7 @@ async function callPresentonSlideshow(
         },
         body: JSON.stringify(presentonBody),
       }),
-      120000,
+      PRESENTON_REQUEST_TIMEOUT_MS,
       "Presenton slideshow generation"
     );
 
@@ -1028,10 +1030,28 @@ function isLikelyRaspberryPi(): boolean {
       if (model.includes("raspberry pi")) return true;
     }
   } catch {
-    // Fall back to architecture-based detection below.
+    // Continue checking other hardware markers below.
   }
 
-  return armArch;
+  try {
+    const cpuInfoPath = "/proc/cpuinfo";
+    if (fs.existsSync(cpuInfoPath)) {
+      const cpuInfo = fs.readFileSync(cpuInfoPath, "utf8").toLowerCase();
+      if (
+        cpuInfo.includes("raspberry pi") ||
+        cpuInfo.includes("bcm270") ||
+        cpuInfo.includes("bcm271") ||
+        cpuInfo.includes("bcm283")
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    // No additional system hints available.
+  }
+
+  // Do not treat generic ARM servers as Raspberry Pi.
+  return false;
 }
 
 const PI_CONSTRAINED_RENDER = isLikelyRaspberryPi();
@@ -1159,18 +1179,69 @@ function normalizeMissionCardText(raw: unknown): string {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    // Strip zero-width and direction/control formatting marks.
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "")
     // Handle visible control pictures that can show as boxed glyphs.
     .replace(/[\u240D\u240A]/g, "\n")
+    .replace(/[\u2400-\u2421\u25A0-\u25FF\uFFFD]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
 function normalizeOverlayTextForFfmpeg(raw: unknown): string {
   return String(raw || "")
+    // Handle escaped newline sequences from serialized payloads.
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
     .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "")
+    .replace(/\r/g, "\n")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "")
+    .replace(/\u0085/g, "\n")
+    .replace(/[\u2028\u2029]/g, "\n")
+    // Handle visible control pictures that render as boxed glyphs in drawtext.
+    .replace(/[\u2400-\u2421\u25A0-\u25FF\uFFFD]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** Final sanitization before writing text to disk for FFmpeg drawtext. Strips any control char except LF. */
+function sanitizeTextForFfmpegFile(text: string): string {
+  return String(text || "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "")
+    .replace(/[\u2400-\u2421\u25A0-\u25FF\uFFFD]/g, "")
+    .replace(/[^\n\x20-\x7E\u00A0-\uFFFF]/g, "")
+    .trim();
+}
+
+// Temporary deep debug for mission-card text artifacts in rendered video overlays.
+const ENABLE_MISSION_TEXT_BYTE_DEBUG = (process.env.KINQUEST_MISSION_TEXT_DEBUG || "1").trim() !== "0";
+
+function formatUtf8ByteHex(text: string): string {
+  const bytes = Buffer.from(String(text || ""), "utf8");
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join(" ");
+}
+
+function logMissionTextByteDebug(
+  slideshowId: string,
+  slideIndex: number,
+  title: string,
+  description: string
+) {
+  if (!ENABLE_MISSION_TEXT_BYTE_DEBUG) return;
+
+  const titleHex = formatUtf8ByteHex(title);
+  const descriptionHex = formatUtf8ByteHex(description);
+
+  console.log(
+    `[MISSION_TEXT_DEBUG] slideshow=${slideshowId} slide=${slideIndex} title_json=${JSON.stringify(title)} title_hex=${titleHex}`
+  );
+  console.log(
+    `[MISSION_TEXT_DEBUG] slideshow=${slideshowId} slide=${slideIndex} description_json=${JSON.stringify(description)} description_hex=${descriptionHex}`
+  );
 }
 
 async function renderSlideshowMp4(
@@ -1227,7 +1298,9 @@ async function renderSlideshowMp4(
       throw new Error("Could not resolve slideshow images for rendering");
     }
 
-    const transitionSeconds = resolvedSlides.length > 1 ? (PI_CONSTRAINED_RENDER ? 0.45 : 0.8) : 0;
+    // xfade can stall on some constrained ARM FFmpeg builds; prefer concat there for stable playback.
+    // Prefer hard cuts for maximum playback compatibility across browsers/devices.
+    const transitionSeconds = 0;
     const totalDurationSeconds = resolvedSlides.reduce((sum, s) => sum + s.durationSeconds, 0) + transitionSeconds;
     const fadeOutStart = Math.max(totalDurationSeconds - 1.5, 0);
 
@@ -1292,26 +1365,63 @@ async function renderSlideshowMp4(
         const [rawTitle, ...rawDescriptionParts] = normalizeOverlayTextForFfmpeg(slide.overlayText).split("\n");
         const title = wrapTextForCard(rawTitle || "", 30, 2);
         const description = wrapMultilineTextForCard(rawDescriptionParts.join("\n").trim(), 48, 6);
+        const sanitizedTitle = sanitizeTextForFfmpegFile(title || "");
+        const sanitizedDescription = sanitizeTextForFfmpegFile(description || "");
+        const titleLines = sanitizedTitle.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+        const descriptionLines = sanitizedDescription.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
 
         const titleTextFilePath = path.join(tmpDir, `overlay_${idx}_title.txt`);
         const descriptionTextFilePath = path.join(tmpDir, `overlay_${idx}_description.txt`);
-        fs.writeFileSync(titleTextFilePath, title || "", "utf8");
-        fs.writeFileSync(descriptionTextFilePath, description || "", "utf8");
+        fs.writeFileSync(titleTextFilePath, sanitizedTitle, "utf8");
+        fs.writeFileSync(descriptionTextFilePath, sanitizedDescription, "utf8");
+        logMissionTextByteDebug(slideshowId, idx, sanitizedTitle, sanitizedDescription);
 
-        const drawTitle = `drawtext=fontfile='${escapedFontFile}':textfile='${titleTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${titleFontSize}:line_spacing=10:borderw=4:bordercolor=black@0.70:shadowcolor=black@0.45:shadowx=2:shadowy=2:x=(w-text_w)/2:y=72`;
-        const drawDescription = `drawtext=fontfile='${escapedFontFile}':textfile='${descriptionTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${descriptionFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:shadowcolor=black@0.40:shadowx=2:shadowy=2:x=(w-text_w)/2:y=210`;
+        const drawMissionTextFilters: string[] = [];
+        const titleBaseY = 72;
+        const titleLineHeight = Math.round(titleFontSize * 1.2);
+        const descriptionBaseY = 210;
+        const descriptionLineHeight = Math.round(descriptionFontSize * 1.22);
 
-        videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawTitle},${drawDescription},format=rgba[v${idx}]`);
+        if (titleLines.length === 0) {
+          const drawTitle = `drawtext=fontfile='${escapedFontFile}':textfile='${titleTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${titleFontSize}:borderw=4:bordercolor=black@0.70:shadowcolor=black@0.45:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${titleBaseY}`;
+          drawMissionTextFilters.push(drawTitle);
+        } else {
+          titleLines.forEach((line, lineIdx) => {
+            const linePath = path.join(tmpDir, `overlay_${idx}_title_line_${lineIdx}.txt`);
+            fs.writeFileSync(linePath, sanitizeTextForFfmpegFile(line), "utf8");
+            drawMissionTextFilters.push(
+              `drawtext=fontfile='${escapedFontFile}':textfile='${linePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${titleFontSize}:borderw=4:bordercolor=black@0.70:shadowcolor=black@0.45:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${titleBaseY + lineIdx * titleLineHeight}`
+            );
+          });
+        }
+
+        if (descriptionLines.length === 0) {
+          const drawDescription = `drawtext=fontfile='${escapedFontFile}':textfile='${descriptionTextFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${descriptionFontSize}:borderw=3:bordercolor=black@0.65:shadowcolor=black@0.40:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${descriptionBaseY}`;
+          drawMissionTextFilters.push(drawDescription);
+        } else {
+          descriptionLines.forEach((line, lineIdx) => {
+            const linePath = path.join(tmpDir, `overlay_${idx}_description_line_${lineIdx}.txt`);
+            fs.writeFileSync(linePath, sanitizeTextForFfmpegFile(line), "utf8");
+            drawMissionTextFilters.push(
+              `drawtext=fontfile='${escapedFontFile}':textfile='${linePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${descriptionFontSize}:borderw=3:bordercolor=black@0.65:shadowcolor=black@0.40:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${descriptionBaseY + lineIdx * descriptionLineHeight}`
+            );
+          });
+        }
+
+        videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawMissionTextFilters.join(",")},fps=${renderFps},format=rgba[v${idx}]`);
       } else {
-        fs.writeFileSync(textFilePath, normalizeOverlayTextForFfmpeg(slide.overlayText), "utf8");
-        const drawText = `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${overlayFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:box=1:boxcolor=black@0.28:boxborderw=14:x=w-text_w-40:y=h-text_h-32`;
-        videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},format=rgba[v${idx}]`);
+        fs.writeFileSync(textFilePath, sanitizeTextForFfmpegFile(normalizeOverlayTextForFfmpeg(slide.overlayText)), "utf8");
+        const drawText = `drawtext=fontfile='${escapedFontFile}':textfile='${textFilePath.replace(/'/g, "'\\''")}':fontcolor=white:fontsize=${overlayFontSize}:line_spacing=8:borderw=3:bordercolor=black@0.65:shadowcolor=black@0.45:shadowx=2:shadowy=2:x=w-text_w-40:y=h-text_h-32`;
+        videoLabelParts.push(`[${idx}:v]${scalePadFilter},${drawText},fps=${renderFps},format=rgba[v${idx}]`);
       }
     });
 
-    let currentLabel = "v0";
-    let cumulativeOffset = resolvedSlides[0]?.durationSeconds || 0;
-    if (resolvedSlides.length > 1) {
+    let filterComplex = "";
+    if (resolvedSlides.length === 1) {
+      filterComplex = `${videoLabelParts.join(";")};[v0]format=yuv420p[vfinal]`;
+    } else if (transitionSeconds > 0) {
+      let currentLabel = "v0";
+      let cumulativeOffset = resolvedSlides[0]?.durationSeconds || 0;
       for (let idx = 1; idx < resolvedSlides.length; idx += 1) {
         const previous = currentLabel;
         const next = `v${idx}`;
@@ -1332,9 +1442,11 @@ async function renderSlideshowMp4(
         cumulativeOffset += resolvedSlides[idx].durationSeconds;
         currentLabel = output;
       }
+      filterComplex = `${videoLabelParts.join(";")};[${currentLabel}]format=yuv420p[vfinal]`;
+    } else {
+      const concatInputs = resolvedSlides.map((_, idx) => `[v${idx}]`).join("");
+      filterComplex = `${videoLabelParts.join(";")};${concatInputs}concat=n=${resolvedSlides.length}:v=1:a=0,format=yuv420p[vfinal]`;
     }
-
-    const filterComplex = `${videoLabelParts.join(";")};[${currentLabel}]format=yuv420p[vfinal]`;
 
     // RESILIENCE: Add timeout protection for FFmpeg to prevent hung processes on Raspberry Pi
     const FFMPEG_TIMEOUT_MS = 300000; // 5 minutes - reasonable for even high-res on Pi
@@ -1349,6 +1461,11 @@ async function renderSlideshowMp4(
         "-shortest",
         "-r", String(renderFps),
         "-c:v", "libx264",
+        "-profile:v", "baseline",
+        "-level", "3.1",
+        "-g", String(renderFps * 2),
+        "-keyint_min", String(renderFps),
+        "-sc_threshold", "0",
         "-preset", renderPreset,
         "-crf", renderCrf,
         "-threads", renderThreads,
@@ -1357,6 +1474,8 @@ async function renderSlideshowMp4(
         "-b:a", renderAudioBitrate,
         "-af", audioFilter,
         "-pix_fmt", "yuv420p",
+        "-maxrate", PI_CONSTRAINED_RENDER ? "1200k" : "2200k",
+        "-bufsize", PI_CONSTRAINED_RENDER ? "2400k" : "4400k",
         "-movflags", "+faststart",
         outputPath
       ]);
@@ -3133,9 +3252,6 @@ Important output requirements:
         missionTitle: mission.missionTitle.trim(),
         missionDescription: mission.missionDescription.trim(),
       }));
-      const normalizedSongQueries = requestedSongQueries
-        .map((entry) => String(entry || "").trim().toLowerCase())
-        .filter((entry) => entry.length > 0);
       const normalizedStandings = playerTotals
         .filter((entry) => entry.score > 0)
         .map((entry) => ({ username: entry.username.trim(), score: entry.score }));
@@ -3144,11 +3260,10 @@ Important output requirements:
         .filter((id) => id.length > 0);
 
       const payload = {
-        version: "mission_grouped_v2",
+        version: "mission_grouped_v3",
         missions: normalizedMissions,
         standings: normalizedStandings,
         submissionOrder: normalizedSubmissionOrder,
-        songQueries: normalizedSongQueries,
         providedMissionSlidesScript,
         providedLeaderboardSlideScript,
       };
@@ -3178,38 +3293,32 @@ Important output requirements:
           }
         }
 
-        if (!cachedVideoUrl) {
-          console.warn("Cached slideshow found without video output; regenerating render for:", cachedSlideshow.id);
-        }
-
-        if (cachedVideoUrl) {
-          return res.json({
-            success: true,
-            slideshow: cachedSlideshow,
-            photoCount: orderedSubmissions.length,
-            generation: {
+        return res.json({
+          success: true,
+          slideshow: cachedSlideshow,
+          photoCount: orderedSubmissions.length,
+          generation: {
+            aiModel: "presenton-cache-hit",
+            requestedMode: "mp4_only",
+            usedFallbackScript: false,
+            costEstimate: null,
+            geminiApiUsageCostEstimate: null,
+            slideshowModel: chosenSlideshowModel,
+            slideshowProvider: "ollama_presenton",
+            narrationRequested: false,
+            narrationGeneratedByAi: false,
+            cacheHit: true,
+            video: {
+              created: !!cachedVideoUrl,
+              videoUrl: cachedVideoUrl,
+              mode: "local_ffmpeg",
               aiModel: "presenton-cache-hit",
-              requestedMode: "mp4_only",
-              usedFallbackScript: false,
-              costEstimate: null,
-              geminiApiUsageCostEstimate: null,
-              slideshowModel: chosenSlideshowModel,
-              slideshowProvider: "ollama_presenton",
-              narrationRequested: false,
-              narrationGeneratedByAi: false,
-              cacheHit: true,
-              video: {
-                created: true,
-                videoUrl: cachedVideoUrl,
-                mode: "local_ffmpeg",
-                aiModel: "presenton-cache-hit",
-                usedFallbackPlan: false,
-                error: null,
-              }
-            },
-            generatedAt: new Date().toISOString(),
-          });
-        }
+              usedFallbackPlan: !cachedVideoUrl,
+              error: cachedVideoUrl ? null : "Cached slideshow exists but MP4 is not available",
+            }
+          },
+          generatedAt: new Date().toISOString(),
+        });
       }
     } catch (cacheErr: any) {
       console.warn("Slideshow cache lookup failed, continuing with generation:", cacheErr?.message || cacheErr);
@@ -3397,39 +3506,45 @@ Important output requirements:
     };
 
     if (sourceSlides.length > 0) {
-      try {
-        const presentonResult = await callPresentonSlideshow(slideshow.id, script, sourceSlides, playerTotals);
+      const shouldAttemptPresenton = presentonConfigured && !(PI_CONSTRAINED_RENDER && SKIP_PRESENTON_ON_CONSTRAINED_RENDER);
 
-        if (presentonResult.videoUrl) {
-          videoGeneration = {
-            created: true,
-            videoUrl: presentonResult.videoUrl,
-            mode: "presenton_remote",
-            aiModel: usedAiModel,
-            usedFallbackPlan: false,
-            error: null,
-          };
-        } else if (presentonResult.slidesPlan?.length) {
-          const renderSlides = renderSlidesFromPlanRows(presentonResult.slidesPlan);
-          if (!renderSlides.length) {
-            throw new Error("Presenton returned an empty slideshow plan");
+      if (shouldAttemptPresenton) {
+        try {
+          const presentonResult = await callPresentonSlideshow(slideshow.id, script, sourceSlides, playerTotals);
+
+          if (presentonResult.videoUrl) {
+            videoGeneration = {
+              created: true,
+              videoUrl: presentonResult.videoUrl,
+              mode: "presenton_remote",
+              aiModel: usedAiModel,
+              usedFallbackPlan: false,
+              error: null,
+            };
+          } else if (presentonResult.slidesPlan?.length) {
+            const renderSlides = renderSlidesFromPlanRows(presentonResult.slidesPlan);
+            if (!renderSlides.length) {
+              throw new Error("Presenton returned an empty slideshow plan");
+            }
+
+            const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
+              renderSlideshowMp4(slideshow.id, renderSlides, { requestedSongQueries })
+            );
+
+            videoGeneration = {
+              created: true,
+              videoUrl: rendered.outputUrl,
+              mode: "presenton_plan_local_render",
+              aiModel: usedAiModel,
+              usedFallbackPlan: false,
+              error: null,
+            };
           }
-
-          const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-            renderSlideshowMp4(slideshow.id, renderSlides, { requestedSongQueries })
-          );
-
-          videoGeneration = {
-            created: true,
-            videoUrl: rendered.outputUrl,
-            mode: "presenton_plan_local_render",
-            aiModel: usedAiModel,
-            usedFallbackPlan: false,
-            error: null,
-          };
+        } catch (presentonErr: any) {
+          console.warn("Presenton generation failed, falling back to local MP4 render:", presentonErr?.message || presentonErr);
         }
-      } catch (presentonErr: any) {
-        console.warn("Presenton generation failed, falling back to local MP4 render:", presentonErr?.message || presentonErr);
+      } else if (presentonConfigured) {
+        console.log("Skipping Presenton for constrained render host; using local MP4 pipeline");
       }
 
       if (!videoGeneration.created) {
@@ -3690,8 +3805,32 @@ app.get("/api/slideshows/video/:filename", (req, res) => {
     return res.status(404).json({ error: "Video not found" });
   }
 
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Cache-Control", "public, max-age=86400");
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = end - start + 1;
+
+    res.writeHead(206, {
+      "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": chunkSize,
+      "Content-Type": "video/mp4",
+      "Cache-Control": "public, max-age=86400",
+    });
+    return fs.createReadStream(filePath, { start, end }).pipe(res);
+  }
+
+  res.writeHead(200, {
+    "Content-Length": fileSize,
+    "Content-Type": "video/mp4",
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "public, max-age=86400",
+  });
   return fs.createReadStream(filePath).pipe(res);
 });
 
