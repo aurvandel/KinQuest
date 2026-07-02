@@ -169,27 +169,22 @@ ON CONFLICT (id) DO NOTHING;
 -- Initial Scavenger Hunt Items (Optional Seed Data)
 -- ============================================
 INSERT INTO items (id, title, description, points, category, icon, lat, lng, radius) VALUES
--- Grandpa Grant Missions
-('item_grant_fort_ord_clerk', 'Fort Ord Payday', 'Grandpa Grant served at Fort Ord as company clerk and lent money at high interest. Take a picture at the welcome kiosk holding some money.', 45, 'Grandpa Grant', 'Coins', 38.80116, -111.68356, 50),
-('item_grant_truck_rawlins', 'Rawlins Recovery Run', 'Grandpa Grant was a truck driver and once had appendix surgery in Rawlins, Wyoming during a trip. Take a picture with one of the trucks in the parking lot.', 30, 'Grandpa Grant', 'Footprints', 38.80104, -111.68362, 25),
-('item_grant_wrestling_champ', 'Provo Pin', 'Grandpa Grant pinned the best wrestler on the team twice and later took second at Utah state. Take a picture of wrestling in the rec hall.', 50, 'Grandpa Grant', 'Flag', 38.80039, -111.68339, 20),
-('item_grant_hitchhike_home', '1000-Mile Thumb', 'After Army basic training, Grandpa Grant hitchhiked over 1000 miles to get home. Take a picture thumbing for a ride at the ATV parking area.', 35, 'Grandpa Grant', 'Map', 38.80232, -111.68294, 30),
-('item_grant_milk_cows', 'Hunting Season Chores', 'As a young boy, Grandpa Grant stayed home to milk cows during deer hunting season. Take a picture with cows in the background.', 30, 'Grandpa Grant', 'Leaf', NULL, NULL, NULL),
-('item_grant_dummy_prank', 'Dummy Drop Dash', 'Grandpa Grant and Dick dropped a dummy near Harmon Park, then ran from police and snuck home. Take a picture by the big tree next to the entry road.', 40, 'Grandpa Grant', 'Tree', 38.80193, -111.68305, 50),
-('item_grant_overalls_wedding', 'Overalls Forever', 'Grandpa Grant always wore overalls and even wore them to tease Paula at Kirk and Paula''s wedding. Take a picture with the overalls at the water spigot by the bathroom.', 25, 'Grandpa Grant', 'Gift', 38.80103, -111.68292, 20),
-('item_grant_rodeo_champion', '18 Wheeler Champion', 'Grandpa Grant won the National 18 Wheeler Rodeo in Minneapolis, Minnesota. Take a picture by the trailer next to cabin 1.', 35, 'Grandpa Grant', 'Parachute', 38.80075, -111.68293, 23),
-('item_grant_gold_prospect', 'SanPete Gold Hunt', 'Grandpa Grant loved to prospect for gold and found low-grade ore in SanPete County. Take a picture by the FFA gate with a big rock.', 30, 'Grandpa Grant', 'Coins', NULL, NULL, NULL),
-
--- Grandma Marcia Missions
-('item_marcia_cheerleader', 'Rec Hall Cheer', 'Grandma Marcia was a high school cheerleader. Take a picture at the side of the rec hall cheering for the team.', 25, 'Grandma Marcia', 'Flag', 38.8004, -111.68358, 20),
-('item_marcia_salutatorian', 'Salutatorian Spotlight', 'Grandma Marcia graduated as salutatorian of Tooele High School. Take a picture receiving a diploma at the flagpole.', 30, 'Grandma Marcia', 'Book', 38.80102, -111.68332, 25),
-('item_marcia_brick_builder', 'Brick Builder', 'Grandma Marcia carried bricks while pregnant with Kirk during the Orem home build. Take a picture by the bathroom with an armload of rocks.', 40, 'Grandma Marcia', 'Pot', 38.8009, -111.68297, 20),
-('item_marcia_fire_rescue', 'Fire Escape Story', 'Grandma Marcia was trapped in a burning car after being rear-ended until John Roach broke the window and pulled her out. Take a picture by the fire pit.', 35, 'Grandma Marcia', 'Flame', 38.8015, -111.68392, 40),
-('item_marcia_seamstress', 'Wedding Dress Maker', 'Grandma Marcia was an amazing seamstress who designed and sewed her own wedding dress and winter coats. Take a picture of the group holding the picture near the kitchen.', 35, 'Grandma Marcia', 'Heart', 38.80059, -111.68308, 15),
-('item_marcia_quarry_blast', 'Quarry Boom', 'Grandma Marcia hated blasting at the picture rock quarry and cried until John came back into view. Take a picture with your fingers in your ears behind cabin 3.', 30, 'Grandma Marcia', 'VolumeUp', 38.80096, -111.68391, 25),
-('item_marcia_irrigation', 'Ditch Crew', 'Grandma Marcia helped change irrigation water by moving the dam and directing water with a shovel. Take a picture with the shovel at the creek by the bridge.', 35, 'Grandma Marcia', 'WaterDrop', 38.80145, -111.68401, 50),
-('item_marcia_reading', 'Front Hall Book Time', 'Grandma Marcia read to her children nearly every day and taught a love of reading. Take a picture in front of the rec hall holding a book.', 20, 'Grandma Marcia', 'Book', 38.80071, -111.68344, 20),
-('item_marcia_mouse_story', 'Fireplace Mouse Watch', 'Grandma Marcia was not afraid of mice and the family watched one explore the fireplace wall. Take a picture holding the mouse by the tail at the side of cabin 4.', 45, 'Grandma Marcia', 'Footprints', 38.80118, -111.68395, 25)
+-- Stewart Family Missions
+('item_stewart_rocket', 'By The Rocket', 'Grant was drafted in the military but was rejected because he had a squeaky knee and flat feet. He chose a job testing ammunition for the military. Take a picture by the rocket.', 30, 'Stewart Legacy', 'Parachute', NULL, NULL, NULL),
+('item_stewart_magic_pot', 'Magic Soup Pot', 'Geneel made the best homemade soup with her magic soup pot. Find Marilyn and take a picture with the authentic magic pot.', 25, 'Stewart Legacy', 'Pot', NULL, NULL, NULL),
+('item_stewart_basketball', 'Center Court', 'Grant was the center of his high school basketball team. Take a picture with the basketball courts in the background.', 25, 'Stewart Legacy', 'Basketball', NULL, NULL, NULL),
+('item_stewart_root_beer', 'Root Beer Bench', 'Grant and Geneel loved to make homemade root beer for family occasions. Go to the bench by the tree and take your picture with the dads root beer bottle.', 25, 'Stewart Legacy', 'Glass', NULL, NULL, NULL),
+('item_stewart_christmas', 'Christmas Sweatshirts', 'Geneel loved Christmas. She owned several Christmas sweatshirts and wore them proudly. Find Ileen and take a picture with the sweatshirts.', 20, 'Stewart Legacy', 'Gift', NULL, NULL, NULL),
+('item_stewart_deer_hunt', 'Orange Hunter', 'Grant loved to deer hunt. Geneel disliked deer meat. Find a person wearing orange and take a picture with them.', 20, 'Stewart Legacy', 'Tree', NULL, NULL, NULL),
+('item_stewart_popcorn', 'Bonanza Popcorn Toss', 'Every Sunday evening Grant and Geneel and their children would pop popcorn and watch Bonanza. Go to the northeast corner of the quad and take a picture with popcorn in the air.', 35, 'Stewart Legacy', 'Popcorn', NULL, NULL, NULL),
+('item_stewart_three_bears', 'Three Bears Story', 'Geneel loved to read Goldilocks and the Three Bears to her grandchildren. Go to the three bears and take a picture.', 20, 'Stewart Legacy', 'Book', NULL, NULL, NULL),
+('item_stewart_briefcase', 'Depot Briefcase', 'Grant worked at the Tooele Ordinance Depot and Tooele Army Depot in the Civil Service Personnel Department for over 30 years. Find the family briefcase he took to work and take a picture with it.', 30, 'Stewart Legacy', 'Briefcase', NULL, NULL, NULL),
+('item_stewart_love_note', 'Fourth Grade Love Note', 'Geneel was a school teacher. She once received a love note from a fourth-grade student who said he wanted to marry her. Take a picture with the youngest in your group expressing love.', 25, 'Stewart Legacy', 'Heart', NULL, NULL, NULL),
+('item_stewart_byu', 'BYU Letters', 'Grant graduated from BYU. Take a picture of your group using the letters B, Y, or U.', 20, 'Stewart Legacy', 'Flag', NULL, NULL, NULL),
+('item_stewart_bear_lake', 'Bear Lake Condos', 'In 1979 Grant and Geneel purchased two Bear Lake condos. Take a picture with the words Bear Lake.', 20, 'Stewart Legacy', 'Sign', NULL, NULL, NULL),
+('item_stewart_japan', 'Japan Dinner Table', 'Grant and Geneel took their family to Japan for two years. Find the sibling born there, get chopsticks, sit at a table, and take a photo pretending to eat dinner.', 35, 'Stewart Legacy', 'Globe', NULL, NULL, NULL),
+('item_stewart_playground', 'Ideal Beach Playground', 'Grant and Geneel loved watching their posterity play on Ideal Beach playground equipment. Take a picture at the playground.', 20, 'Stewart Legacy', 'Playground', NULL, NULL, NULL),
+('item_stewart_shells', 'Five Shells', 'Geneel loved collecting sea shells whenever she went on vacation. Find five shells and take a picture of your group with the shells.', 25, 'Stewart Legacy', 'Water', NULL, NULL, NULL)
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================
