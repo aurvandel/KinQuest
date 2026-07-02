@@ -936,6 +936,33 @@ function wrapMultilineTextForCard(text: string, maxCharsPerLine: number, maxLine
   return wrappedLines.join("\n");
 }
 
+function placeLastSentenceOnOwnLine(text: string): string {
+  const compact = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\s*\n+\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!compact) return "";
+
+  const matches = Array.from(compact.matchAll(/[.!?]["')\]]*\s+/g));
+  if (!matches.length) {
+    return compact;
+  }
+
+  const last = matches[matches.length - 1];
+  const splitAt = (last.index ?? 0) + last[0].length;
+  const head = compact.slice(0, splitAt).trim();
+  const tail = compact.slice(splitAt).trim();
+
+  if (!tail) {
+    return compact;
+  }
+
+  return `${head}\n${tail}`;
+}
+
 // ========== RESILIENCE HELPERS FOR RASPBERRY PI ==========
 // These helpers prevent server crashes by adding timeouts, concurrency control, and memory safeguards
 
@@ -1363,8 +1390,14 @@ async function renderSlideshowMp4(
 
       if (slide.isTitleCard) {
         const [rawTitle, ...rawDescriptionParts] = normalizeOverlayTextForFfmpeg(slide.overlayText).split("\n");
-        const title = wrapTextForCard(rawTitle || "", 30, 2);
-        const description = wrapMultilineTextForCard(rawDescriptionParts.join("\n").trim(), 48, 6);
+        const titleText = String(rawTitle || "").trim();
+        const title = wrapTextForCard(titleText, 30, 2);
+        const rawDescriptionText = rawDescriptionParts.join("\n").trim();
+        const shouldPreserveExplicitLines = titleText.toLowerCase() === "final standings";
+        const descriptionInput = shouldPreserveExplicitLines
+          ? rawDescriptionText
+          : placeLastSentenceOnOwnLine(rawDescriptionText);
+        const description = wrapMultilineTextForCard(descriptionInput, 48, 6);
         const sanitizedTitle = sanitizeTextForFfmpegFile(title || "");
         const sanitizedDescription = sanitizeTextForFfmpegFile(description || "");
         const titleLines = sanitizedTitle.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
