@@ -602,8 +602,8 @@ function estimateSlideshowDurationSeconds(
     if (!submission?.imageUrl) return;
 
     const item = items[submission.itemId];
-    const missionTitle = String(item?.title || "Mission").trim();
-    const missionDescription = String(item?.description || "").trim();
+    const missionTitle = normalizeMissionCardText(item?.title || "Mission") || "Mission";
+    const missionDescription = normalizeMissionCardText(item?.description || "");
     const missionKey = `${submission.itemId}::${missionTitle}::${missionDescription}`;
 
     if (missionKey !== previousMissionKey) {
@@ -636,8 +636,8 @@ function estimateSlideshowDurationFromSubmissionPayload(
     const imageUrl = String(submission?.imageUrl || "").trim();
     if (!imageUrl) return;
 
-    const missionTitle = String(submission?.title || "Mission").trim();
-    const missionDescription = String(submission?.description || "").trim();
+    const missionTitle = normalizeMissionCardText(submission?.title || "Mission") || "Mission";
+    const missionDescription = normalizeMissionCardText(submission?.description || "");
     const missionKey = `${missionTitle}::${missionDescription}`;
 
     if (missionKey !== previousMissionKey) {
@@ -1147,6 +1147,22 @@ function wrapTextForCard(text: string, maxCharsPerLine: number, maxLines: number
   }
 
   return lines.join("\n");
+}
+
+function normalizeMissionCardText(raw: unknown): string {
+  return String(raw || "")
+    // Handle escaped newline sequences from serialized payloads.
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    // Handle literal newline/control characters.
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+    // Handle visible control pictures that can show as boxed glyphs.
+    .replace(/[\u240D\u240A]/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function normalizeOverlayTextForFfmpeg(raw: unknown): string {
@@ -2884,8 +2900,8 @@ app.post("/api/slideshow/generate-mission-slides", async (req, res) => {
 
     for (const rawSub of submissions) {
       const normalized = {
-        title: String(rawSub?.title || "Unknown Mission"),
-        description: rawSub?.description ? String(rawSub.description) : "",
+        title: normalizeMissionCardText(rawSub?.title || "Unknown Mission") || "Unknown Mission",
+        description: normalizeMissionCardText(rawSub?.description || ""),
       };
 
       if (!groupedByMission.has(normalized.title)) {
@@ -3117,6 +3133,9 @@ Important output requirements:
         missionTitle: mission.missionTitle.trim(),
         missionDescription: mission.missionDescription.trim(),
       }));
+      const normalizedSongQueries = requestedSongQueries
+        .map((entry) => String(entry || "").trim().toLowerCase())
+        .filter((entry) => entry.length > 0);
       const normalizedStandings = playerTotals
         .filter((entry) => entry.score > 0)
         .map((entry) => ({ username: entry.username.trim(), score: entry.score }));
@@ -3129,6 +3148,7 @@ Important output requirements:
         missions: normalizedMissions,
         standings: normalizedStandings,
         submissionOrder: normalizedSubmissionOrder,
+        songQueries: normalizedSongQueries,
         providedMissionSlidesScript,
         providedLeaderboardSlideScript,
       };
@@ -3158,32 +3178,38 @@ Important output requirements:
           }
         }
 
-        return res.json({
-          success: true,
-          slideshow: cachedSlideshow,
-          photoCount: orderedSubmissions.length,
-          generation: {
-            aiModel: "presenton-cache-hit",
-            requestedMode: "mp4_only",
-            usedFallbackScript: false,
-            costEstimate: null,
-            geminiApiUsageCostEstimate: null,
-            slideshowModel: chosenSlideshowModel,
-            slideshowProvider: "ollama_presenton",
-            narrationRequested: false,
-            narrationGeneratedByAi: false,
-            cacheHit: true,
-            video: {
-              created: !!cachedVideoUrl,
-              videoUrl: cachedVideoUrl,
-              mode: "local_ffmpeg",
+        if (!cachedVideoUrl) {
+          console.warn("Cached slideshow found without video output; regenerating render for:", cachedSlideshow.id);
+        }
+
+        if (cachedVideoUrl) {
+          return res.json({
+            success: true,
+            slideshow: cachedSlideshow,
+            photoCount: orderedSubmissions.length,
+            generation: {
               aiModel: "presenton-cache-hit",
-              usedFallbackPlan: !cachedVideoUrl,
-              error: cachedVideoUrl ? null : "Cached slideshow exists but MP4 is not available",
-            }
-          },
-          generatedAt: new Date().toISOString(),
-        });
+              requestedMode: "mp4_only",
+              usedFallbackScript: false,
+              costEstimate: null,
+              geminiApiUsageCostEstimate: null,
+              slideshowModel: chosenSlideshowModel,
+              slideshowProvider: "ollama_presenton",
+              narrationRequested: false,
+              narrationGeneratedByAi: false,
+              cacheHit: true,
+              video: {
+                created: true,
+                videoUrl: cachedVideoUrl,
+                mode: "local_ffmpeg",
+                aiModel: "presenton-cache-hit",
+                usedFallbackPlan: false,
+                error: null,
+              }
+            },
+            generatedAt: new Date().toISOString(),
+          });
+        }
       }
     } catch (cacheErr: any) {
       console.warn("Slideshow cache lookup failed, continuing with generation:", cacheErr?.message || cacheErr);
@@ -3270,8 +3296,8 @@ Important output requirements:
       .map((sub) => ({
         submissionId: sub.id,
         imageUrl: sub.imageUrl,
-        missionTitle: sub.title || "Unknown Mission",
-        missionDescription: sub.description || sub.title || "",
+        missionTitle: normalizeMissionCardText(sub.title || "Unknown Mission") || "Unknown Mission",
+        missionDescription: normalizeMissionCardText(sub.description || sub.title || ""),
         username: sub.username || "Unknown Player",
       }))
       .filter((entry) => !!entry.submissionId && !!entry.imageUrl);
@@ -3502,8 +3528,8 @@ app.post("/api/slideshows/:id/render-mp4", async (req, res) => {
       if (!submission?.imageUrl) return;
 
       const item = itemById.get(submission.itemId);
-      const missionTitle = String(item?.title || "Mission").trim();
-      const missionDescription = String(item?.description || "").trim();
+      const missionTitle = normalizeMissionCardText(item?.title || "Mission") || "Mission";
+      const missionDescription = normalizeMissionCardText(item?.description || "");
       const missionKey = `${submission.itemId}::${missionTitle}::${missionDescription}`;
 
       if (missionKey !== previousMissionKey) {

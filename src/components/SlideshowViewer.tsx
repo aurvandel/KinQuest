@@ -79,7 +79,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
 
   useEffect(() => {
     const fetchSlideshows = async () => {
-      console.log("[SlideshowViewer] Fetching slideshows, refreshKey:", refreshKey);
       setIsLoading(true);
       setError(null);
       try {
@@ -89,7 +88,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
         }
         const data = await response.json();
         const slideshowList = Array.isArray(data) ? data : [];
-        console.log("[SlideshowViewer] Fetched slideshows:", slideshowList.length, "items");
         setSlideshows(slideshowList);
 
         const statusResponses = await Promise.all(
@@ -116,7 +114,6 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
         });
         setVideoUrlMap(availableVideos);
       } catch (err: any) {
-        console.error("[SlideshowViewer] Error fetching slideshows:", err);
         setError(err.message);
         setSlideshows([]);
       } finally {
