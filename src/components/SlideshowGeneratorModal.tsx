@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Submission, ScavengerItem } from "../types";
 import { X, Loader2, Sparkles, Download, Copy, Check } from "lucide-react";
-import { DEFAULT_SLIDESHOW_PROMPT } from "../../slideshow-prompt.ts";
+import { DEFAULT_LEADERBOARD_IMAGE_PROMPT, DEFAULT_SLIDESHOW_PROMPT } from "../../slideshow-prompt.ts";
 
 interface SlideshowGeneratorModalProps {
   isOpen: boolean;
@@ -24,6 +24,40 @@ interface SlideshowModelOption {
   costTier: "low" | "medium" | "high";
 }
 
+interface MissionCardPlan {
+  missionTitle: string;
+  missionDescription: string;
+  photoCount: number;
+  cardImagePrompt: string;
+}
+
+interface MissionCardImage {
+  missionTitle: string;
+  imageUrl: string | null;
+  error: string | null;
+}
+
+interface SlideshowRenderPlan {
+  title: string;
+  overview: string;
+  colorGrading: { brightness: number; contrast: number; saturation: number; gamma: number };
+  transitionSeconds: number;
+  defaultTransition: string;
+  missions: Array<{
+    missionTitle: string;
+    cardDurationSeconds: number;
+    photoDurationSeconds: number;
+    transition: string;
+    narration: string;
+    cardImagePrompt: string;
+  }>;
+  finalCard: { durationSeconds: number; transition: string };
+  musicSuggestions: string[];
+  parsedFromAi: boolean;
+}
+
+type SlideshowImageProvider = "gemini" | "openai";
+
 export function SlideshowGeneratorModal({
   isOpen,
   onClose,
@@ -41,18 +75,30 @@ export function SlideshowGeneratorModal({
 }: SlideshowGeneratorModalProps) {
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set());
   const [generatingMissionSlides, setGeneratingMissionSlides] = useState(false);
+  const [generatingMissionCardImages, setGeneratingMissionCardImages] = useState(false);
   const [generatingLeaderboardSlide, setGeneratingLeaderboardSlide] = useState(false);
   const [composingSlideshow, setComposingSlideshow] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localScript, setLocalScript] = useState<string | null>(generatedScript);
   const [missionSlidesScript, setMissionSlidesScript] = useState<string | null>(null);
+  const [renderPlan, setRenderPlan] = useState<SlideshowRenderPlan | null>(null);
+  const [missionCardPlans, setMissionCardPlans] = useState<MissionCardPlan[]>([]);
+  const [missionCardImages, setMissionCardImages] = useState<MissionCardImage[]>([]);
   const [leaderboardSlideScript, setLeaderboardSlideScript] = useState<string | null>(null);
+  const [leaderboardImageUrl, setLeaderboardImageUrl] = useState<string | null>(null);
   const [promptTemplate, setPromptTemplate] = useState(DEFAULT_SLIDESHOW_PROMPT);
+  const [leaderboardImagePromptTemplate, setLeaderboardImagePromptTemplate] = useState(DEFAULT_LEADERBOARD_IMAGE_PROMPT);
   const [includeMissionNarration, setIncludeMissionNarration] = useState(false);
   const [slideshowModel, setSlideshowModel] = useState<string>("");
+  const [leaderboardImageProvider, setLeaderboardImageProvider] = useState<SlideshowImageProvider>("gemini");
+  const [leaderboardImageModel, setLeaderboardImageModel] = useState("");
   const [slideshowModels, setSlideshowModels] = useState<Record<"ollama" | "gemini" | "openai", SlideshowModelOption[]>>({
     ollama: [],
+    gemini: [],
+    openai: [],
+  });
+  const [leaderboardImageModels, setLeaderboardImageModels] = useState<Record<SlideshowImageProvider, SlideshowModelOption[]>>({
     gemini: [],
     openai: [],
   });
@@ -126,6 +172,24 @@ export function SlideshowGeneratorModal({
         if (firstModel) {
           setSlideshowModel(firstModel);
         }
+
+        const imageModelsByProvider = (["gemini", "openai"] as SlideshowImageProvider[]).reduce((result, provider) => {
+          const catalog = Array.isArray(payload?.slideshowImageProviders)
+            ? payload.slideshowImageProviders.find((entry: any) => entry?.provider === provider)
+            : null;
+          result[provider] = Array.isArray(catalog?.models)
+            ? catalog.models
+                .map((entry: any) => ({
+                  model: typeof entry === "string" ? entry.trim() : String(entry?.model || "").trim(),
+                  costTier: entry?.costTier === "high" || entry?.costTier === "medium" ? entry.costTier : "low",
+                }))
+                .filter((entry: SlideshowModelOption) => entry.model.length > 0)
+            : [];
+          return result;
+        }, {} as Record<SlideshowImageProvider, SlideshowModelOption[]>);
+        setLeaderboardImageModels(imageModelsByProvider);
+        const firstImageModel = imageModelsByProvider[leaderboardImageProvider][0]?.model || "";
+        if (firstImageModel) setLeaderboardImageModel(firstImageModel);
       } catch (err) {
         // Keep local default if catalog fetch fails.
       }
@@ -136,7 +200,7 @@ export function SlideshowGeneratorModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, slideshowProvider]);
+  }, [isOpen, slideshowProvider, leaderboardImageProvider]);
 
   const selectedSlideshowModels = slideshowModels[slideshowProvider];
   const slideshowModelOptions = selectedSlideshowModels.some((entry) => entry.model === slideshowModel)
@@ -144,6 +208,7 @@ export function SlideshowGeneratorModal({
     : slideshowModel
       ? [{ model: slideshowModel, costTier: "medium" as const }, ...selectedSlideshowModels]
       : selectedSlideshowModels;
+  const selectedLeaderboardImageModels = leaderboardImageModels[leaderboardImageProvider];
 
   const getSelectedSubmissionPayload = () => {
     const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
@@ -216,6 +281,9 @@ export function SlideshowGeneratorModal({
         body: JSON.stringify({
           submissions: getSelectedSubmissionPayload(),
           createdBy: adminUserId,
+          promptTemplate,
+          slideshowProvider,
+          slideshowModel,
         }),
       });
 
@@ -226,11 +294,63 @@ export function SlideshowGeneratorModal({
 
       const data = await response.json();
       setMissionSlidesScript(String(data?.missionSlidesScript || "").trim() || null);
+
+      const plan: SlideshowRenderPlan | null = data?.renderPlan || null;
+      setRenderPlan(plan);
+      setMissionCardImages([]);
+
+      const cards = Array.isArray(data?.missionCards) ? data.missionCards : [];
+      setMissionCardPlans(
+        cards.map((card: any) => ({
+          missionTitle: String(card?.missionTitle || ""),
+          missionDescription: String(card?.missionDescription || ""),
+          photoCount: Number(card?.photoCount) || 0,
+          cardImagePrompt:
+            plan?.missions?.find((mission) => mission.missionTitle === card?.missionTitle)?.cardImagePrompt || "",
+        }))
+      );
     } catch (err: any) {
       console.error("Mission slide generation error:", err);
       setLocalError(err.message || "Failed to generate mission slide script");
     } finally {
       setGeneratingMissionSlides(false);
+    }
+  };
+
+  const handleGenerateMissionCardImages = async () => {
+    if (!adminUserId || missionCardPlans.length === 0) return;
+
+    setGeneratingMissionCardImages(true);
+    setLocalError(null);
+    try {
+      const response = await fetch("/api/slideshow/generate-mission-card-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          createdBy: adminUserId,
+          imageProvider: leaderboardImageProvider,
+          imageModel: leaderboardImageModel,
+          missions: missionCardPlans,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.details || data?.error || "Failed to generate mission card images");
+      }
+
+      setMissionCardImages(
+        (Array.isArray(data?.cards) ? data.cards : []).map((card: any) => ({
+          missionTitle: String(card?.missionTitle || ""),
+          imageUrl: card?.imageUrl ? String(card.imageUrl) : null,
+          error: card?.error ? String(card.error) : null,
+        }))
+      );
+    } catch (err: any) {
+      console.error("Mission card image generation error:", err);
+      setLocalError(err.message || "Failed to generate mission card images");
+    } finally {
+      setGeneratingMissionCardImages(false);
     }
   };
 
@@ -245,6 +365,9 @@ export function SlideshowGeneratorModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           createdBy: adminUserId,
+          imageProvider: leaderboardImageProvider,
+          imageModel: leaderboardImageModel,
+          imagePromptTemplate: leaderboardImagePromptTemplate,
         }),
       });
 
@@ -255,6 +378,7 @@ export function SlideshowGeneratorModal({
 
       const data = await response.json();
       setLeaderboardSlideScript(String(data?.leaderboardSlideScript || "").trim() || null);
+      setLeaderboardImageUrl(String(data?.imageUrl || "").trim() || null);
     } catch (err: any) {
       console.error("Leaderboard generation error:", err);
       setLocalError(err.message || "Failed to generate leaderboard slide script");
@@ -284,6 +408,10 @@ export function SlideshowGeneratorModal({
           songQueries: parseSongQueries(songQueriesInput),
           missionSlidesScript,
           leaderboardSlideScript,
+          leaderboardImageUrl,
+          missionCardImages: missionCardImages
+            .filter((card) => !!card.imageUrl)
+            .map((card) => ({ missionTitle: card.missionTitle, imageUrl: card.imageUrl })),
         }),
       });
 
@@ -348,8 +476,9 @@ export function SlideshowGeneratorModal({
 
   const currentScript = localScript || generatedScript;
   const step1Done = !!missionSlidesScript;
-  const step2Done = !!leaderboardSlideScript;
-  const step3Done = !!currentScript;
+  const step2Done = missionCardPlans.length > 0 && missionCardImages.some((card) => !!card.imageUrl);
+  const step3Done = !!leaderboardSlideScript && !!leaderboardImageUrl;
+  const step4Done = !!currentScript;
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
@@ -379,18 +508,22 @@ export function SlideshowGeneratorModal({
         <div className="overflow-y-auto flex-1 p-6 space-y-6">
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
             <div className="text-[11px] font-bold uppercase tracking-wider text-gray-700 mb-2">Workflow Progress</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
               <div className={`rounded-lg border px-3 py-2 text-xs ${step1Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
                 <div className="font-semibold">Step 1</div>
-                <div>Mission slides {step1Done ? "complete" : "pending"}</div>
+                <div>Production plan {step1Done ? "complete" : "pending"}</div>
               </div>
               <div className={`rounded-lg border px-3 py-2 text-xs ${step2Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
                 <div className="font-semibold">Step 2</div>
-                <div>Leaderboard slide {step2Done ? "complete" : "pending"}</div>
+                <div>Mission card art {step2Done ? "complete" : "pending"}</div>
               </div>
               <div className={`rounded-lg border px-3 py-2 text-xs ${step3Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
                 <div className="font-semibold">Step 3</div>
-                <div>Final compose {step3Done ? "complete" : "pending"}</div>
+                <div>Leaderboard slide {step3Done ? "complete" : "pending"}</div>
+              </div>
+              <div className={`rounded-lg border px-3 py-2 text-xs ${step4Done ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-gray-200 bg-white text-gray-600"}`}>
+                <div className="font-semibold">Step 4</div>
+                <div>Final compose {step4Done ? "complete" : "pending"}</div>
               </div>
             </div>
           </div>
@@ -468,7 +601,9 @@ export function SlideshowGeneratorModal({
                   rows={8}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
                 />
-                <p className="text-[11px] text-gray-500">Use <span className="font-mono">{"{{PHOTO_LIST}}"}</span> where you want mission-grouped photo details inserted.</p>
+                <p className="text-[11px] text-gray-500">
+                  Photos are not sent to the AI. Use <span className="font-mono">{"{{MISSION_SUMMARY}}"}</span> for the mission list with per-mission photo counts, plus <span className="font-mono">{"{{TOTAL_PHOTOS}}"}</span> and <span className="font-mono">{"{{MISSION_COUNT}}"}</span>.
+                </p>
                 <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
                   <input
                     type="checkbox"
@@ -478,6 +613,55 @@ export function SlideshowGeneratorModal({
                   />
                   Include mission narrator overlays (AI will create a short story line for each mission group)
                 </label>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs font-bold uppercase tracking-wider text-amber-900">Leaderboard Image Generation</label>
+                    <button
+                      type="button"
+                      onClick={() => setLeaderboardImagePromptTemplate(DEFAULT_LEADERBOARD_IMAGE_PROMPT)}
+                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Reset Default
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Image Provider</label>
+                      <select
+                        value={leaderboardImageProvider}
+                        onChange={(e) => {
+                          const provider: SlideshowImageProvider = e.target.value === "openai" ? "openai" : "gemini";
+                          setLeaderboardImageProvider(provider);
+                          setLeaderboardImageModel(leaderboardImageModels[provider][0]?.model || "");
+                        }}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      >
+                        <option value="gemini" disabled={providerAvailability ? !providerAvailability.gemini : false}>Gemini{providerAvailability && !providerAvailability.gemini ? " (not ready)" : ""}</option>
+                        <option value="openai" disabled={providerAvailability ? !providerAvailability.openai : false}>OpenAI{providerAvailability && !providerAvailability.openai ? " (not ready)" : ""}</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Image Model</label>
+                      <select
+                        value={leaderboardImageModel}
+                        onChange={(e) => setLeaderboardImageModel(e.target.value)}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      >
+                        {selectedLeaderboardImageModels.length > 0
+                          ? selectedLeaderboardImageModels.map((entry) => <option key={entry.model} value={entry.model}>{entry.model} ({entry.costTier} cost)</option>)
+                          : <option value="">No image models available</option>}
+                      </select>
+                    </div>
+                  </div>
+                  <textarea
+                    value={leaderboardImagePromptTemplate}
+                    onChange={(e) => setLeaderboardImagePromptTemplate(e.target.value)}
+                    rows={5}
+                    className="w-full rounded-lg border border-amber-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-amber-300"
+                  />
+                  <p className="text-[11px] text-amber-900/80">Use <span className="font-mono">{"{{LEADERBOARD}}"}</span> to place the live standings into the image prompt.</p>
+                </div>
 
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-emerald-800">Navidrome Songs (Optional)</label>
@@ -600,19 +784,76 @@ export function SlideshowGeneratorModal({
                       {generatingMissionSlides ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          Generating Mission Slides...
+                          Generating Production Plan...
                         </>
                       ) : (
                         <>
                           <Sparkles className="h-4 w-4" />
-                          Generate Mission Slides
+                          Generate Production Plan
                         </>
                       )}
                     </button>
 
+                    {missionCardPlans.length > 0 && (
+                      <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
+                        <div className="text-xs font-bold uppercase tracking-wider text-indigo-900">
+                          Mission Transition Card Prompts
+                        </div>
+                        <p className="text-[11px] text-indigo-900/80">
+                          Edit the AI-suggested prompts, then send them to the same image model used for the leaderboard.
+                        </p>
+                        {missionCardPlans.map((card, idx) => {
+                          const generated = missionCardImages.find((entry) => entry.missionTitle === card.missionTitle);
+                          return (
+                            <div key={`${card.missionTitle}_${idx}`} className="space-y-1">
+                              <label className="text-[11px] font-semibold text-gray-700">
+                                {card.missionTitle} ({card.photoCount} photos)
+                              </label>
+                              <textarea
+                                value={card.cardImagePrompt}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setMissionCardPlans((current) =>
+                                    current.map((entry, entryIdx) => (entryIdx === idx ? { ...entry, cardImagePrompt: value } : entry))
+                                  );
+                                }}
+                                rows={3}
+                                className="w-full rounded-lg border border-indigo-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                              />
+                              {generated?.imageUrl && (
+                                <img
+                                  src={generated.imageUrl}
+                                  alt={`${card.missionTitle} card art`}
+                                  className="w-full max-h-32 object-contain rounded-md border border-indigo-200 bg-white"
+                                />
+                              )}
+                              {generated?.error && <p className="text-[11px] text-red-600">{generated.error}</p>}
+                            </div>
+                          );
+                        })}
+                        <button
+                          onClick={handleGenerateMissionCardImages}
+                          disabled={generatingMissionCardImages || !adminUserId || !leaderboardImageModel}
+                          className="w-full bg-indigo-500 text-white font-bold py-2.5 rounded-xl hover:bg-indigo-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2 text-sm"
+                        >
+                          {generatingMissionCardImages ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Generating Mission Card Images...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4" />
+                              Generate Mission Card Images ({missionCardPlans.length})
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
                     <button
                       onClick={handleGenerateLeaderboardSlide}
-                      disabled={generatingLeaderboardSlide || !adminUserId}
+                      disabled={generatingLeaderboardSlide || !adminUserId || !leaderboardImageModel}
                       className="w-full bg-amber-600 text-white font-bold py-3 rounded-xl hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
                     >
                       {generatingLeaderboardSlide ? (
@@ -635,7 +876,8 @@ export function SlideshowGeneratorModal({
                         composingSlideshow ||
                         !adminUserId ||
                         !missionSlidesScript ||
-                        !leaderboardSlideScript
+                        !leaderboardSlideScript ||
+                        !leaderboardImageUrl
                       }
                       className="w-full bg-purple-600 text-white font-bold py-3 rounded-xl hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
                     >
@@ -655,7 +897,17 @@ export function SlideshowGeneratorModal({
 
                   <div className="grid grid-cols-1 gap-3">
                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                      <div className="text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">Mission Slides</div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">Production Plan</div>
+                      {renderPlan && (
+                        <div className="text-[11px] text-gray-600 mb-2 space-y-0.5">
+                          <div>Source: {renderPlan.parsedFromAi ? "AI plan" : "local defaults"}</div>
+                          <div>Transition: {renderPlan.defaultTransition} ({renderPlan.transitionSeconds}s)</div>
+                          <div>
+                            Color grading: brightness {renderPlan.colorGrading.brightness}, contrast {renderPlan.colorGrading.contrast}, saturation {renderPlan.colorGrading.saturation}, gamma {renderPlan.colorGrading.gamma}
+                          </div>
+                          <div>Final card: {renderPlan.finalCard.durationSeconds}s</div>
+                        </div>
+                      )}
                       {missionSlidesScript ? (
                         <pre className="text-[11px] text-gray-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">
                           {missionSlidesScript}
@@ -667,9 +919,10 @@ export function SlideshowGeneratorModal({
                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                       <div className="text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">Leaderboard Slide</div>
                       {leaderboardSlideScript ? (
-                        <pre className="text-[11px] text-gray-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">
-                          {leaderboardSlideScript}
-                        </pre>
+                        <div className="space-y-2">
+                          {leaderboardImageUrl && <img src={leaderboardImageUrl} alt="Generated leaderboard artwork" className="w-full max-h-48 object-contain rounded-md border border-amber-200 bg-white" />}
+                          <pre className="text-[11px] text-gray-700 whitespace-pre-wrap font-mono leading-relaxed max-h-28 overflow-y-auto">{leaderboardSlideScript}</pre>
+                        </div>
                       ) : (
                         <p className="text-xs text-gray-500">Not generated yet.</p>
                       )}
@@ -740,7 +993,11 @@ export function SlideshowGeneratorModal({
                 onClick={() => {
                   setLocalScript(null);
                   setMissionSlidesScript(null);
+                  setRenderPlan(null);
+                  setMissionCardPlans([]);
+                  setMissionCardImages([]);
                   setLeaderboardSlideScript(null);
+                  setLeaderboardImageUrl(null);
                   setSelectedSubmissionIds(new Set());
                   setGenerationSource(null);
                 }}
