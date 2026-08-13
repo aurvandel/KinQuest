@@ -48,6 +48,9 @@ import {
   getAllSlideshows,
   deleteSlideshow,
   Slideshow,
+  saveMissionSlideshowPlan,
+  getMissionSlideshowPlans,
+  MissionSlideshowPlan,
   getAppSettings,
   saveAppSettings,
   AppSettings,
@@ -3119,6 +3122,7 @@ interface SlideshowRenderPlan {
   missions: SlideshowMissionPlan[];
   finalCard: { durationSeconds: number; transition: string };
   musicSuggestions: string[];
+  similarMusicSuggestions: string[];
   parsedFromAi: boolean;
 }
 
@@ -3196,6 +3200,9 @@ function buildSlideshowRenderPlan(
     musicSuggestions: Array.isArray(parsed?.musicSuggestions)
       ? parsed.musicSuggestions.map((entry: any) => String(entry || "").trim()).filter((entry: string) => entry.length > 0).slice(0, 8)
       : [],
+    similarMusicSuggestions: Array.isArray(parsed?.similarMusicSuggestions)
+      ? parsed.similarMusicSuggestions.map((entry: any) => String(entry || "").trim()).filter((entry: string) => entry.length > 0).slice(0, 8)
+      : [],
     parsedFromAi: !!parsed && missionEntries.length > 0,
   };
 }
@@ -3227,12 +3234,29 @@ function applyMissionSummaryTokens(
     : `${withSummary}\n\nMission summary (${totalPhotos} photos across ${missionCount} missions):\n${missionSummary}`;
 }
 
+function appendMusicPlanningGuidance(basePrompt: string, requestedSongQueries: string[]): string {
+  if (requestedSongQueries.length === 0) return basePrompt;
+  //TODO: Move this to the prompt file to make editing easier
+  return `${basePrompt}
+
+User-provided Navidrome song selections (use these as musical context, not as mission data):
+${requestedSongQueries.map((song, idx) => `${idx + 1}. ${song}`).join("\n")}
+
+Music recommendation requirements:
+- Return up to 8 suitable general recommendations in "musicSuggestions".
+- Return up to 8 additional recommendations that are similar in style, artist, genre, or mood to the user-provided selections in "similarMusicSuggestions".
+- Use the exact "Artist - Song Title" format for every recommendation.
+- Do not repeat user-provided songs between either recommendation list.
+- Keep both lists concise and suitable for a celebratory family reunion slideshow.`;
+}
+
 // 6.5 Generate the AI production plan (timing, transitions, color grading, mission card prompts)
 app.post("/api/slideshow/generate-mission-slides", async (req, res) => {
   try {
-    const { submissions, createdBy, promptTemplate } = req.body || {};
+    const { submissions, createdBy, promptTemplate, songQueries } = req.body || {};
     const chosenSlideshowProvider = normalizeSlideshowProvider(req.body?.slideshowProvider);
     const chosenSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel, chosenSlideshowProvider);
+    const requestedSongQueries = parseRequestedSongQueries(songQueries);
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
       return res.status(400).json({ error: "No submissions provided for mission slide generation" });
@@ -3279,7 +3303,10 @@ app.post("/api/slideshow/generate-mission-slides", async (req, res) => {
     const basePrompt = typeof promptTemplate === "string" && promptTemplate.trim().length > 0
       ? promptTemplate.trim()
       : DEFAULT_SLIDESHOW_PROMPT;
-    const planPrompt = applyMissionSummaryTokens(basePrompt, missionSummary, submissions.length, missionCards.length);
+    const planPrompt = appendMusicPlanningGuidance(
+      applyMissionSummaryTokens(basePrompt, missionSummary, submissions.length, missionCards.length),
+      requestedSongQueries
+    );
 
     let missionSlidesScript = "";
     let usedAiModel = "local-mission-grouped";
@@ -3303,11 +3330,32 @@ app.post("/api/slideshow/generate-mission-slides", async (req, res) => {
       ].join("\n");
     }
 
+    const savedPlan: MissionSlideshowPlan = {
+      id: `mission_plan_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      title: renderPlan.title || `Mission Plan - ${new Date().toLocaleDateString()}`,
+      missionSlidesScript,
+      renderPlan: renderPlan as unknown as Record<string, unknown>,
+      missionCardPlans: missionCards.map((card) => {
+        const missionPlan = renderPlan.missions.find((mission) => mission.missionTitle === card.missionTitle);
+        return {
+          missionTitle: card.missionTitle,
+          missionDescription: card.missionDescription,
+          photoCount: card.photoCount,
+          cardImagePrompt: missionPlan?.cardImagePrompt || "",
+        };
+      }),
+      missionCardImages: [],
+      createdBy,
+      createdAt: new Date().toISOString(),
+    };
+    await saveMissionSlideshowPlan(savedPlan);
+
     return res.json({
       success: true,
       missionSlidesScript,
       missionCards,
       renderPlan,
+      savedPlan,
       totalPhotos: submissions.length,
       generation: {
         aiModel: usedAiModel,
@@ -3324,6 +3372,24 @@ app.post("/api/slideshow/generate-mission-slides", async (req, res) => {
       error: "Failed to generate mission slides",
       details: err.message || "Unknown error",
     });
+  }
+});
+
+app.get("/api/slideshow/mission-plans", async (req, res) => {
+  try {
+    const createdBy = String(req.query.createdBy || "").trim();
+    if (!createdBy) return res.status(400).json({ error: "Admin user ID is required" });
+
+    const state = await getAppState();
+    const creatorProfile = state.users[createdBy];
+    if (!creatorProfile || creatorProfile.role !== "admin") {
+      return res.status(403).json({ error: "Only admin users can access mission plans" });
+    }
+
+    res.json(await getMissionSlideshowPlans(createdBy));
+  } catch (err: any) {
+    console.error("Mission slideshow plan retrieval error:", err);
+    res.status(500).json({ error: "Failed to fetch mission slideshow plans", details: err.message });
   }
 });
 
@@ -3389,7 +3455,7 @@ app.post("/api/slideshow/generate-leaderboard-slide", async (req, res) => {
 
 app.post("/api/slideshow/generate-mission-card-images", async (req, res) => {
   try {
-    const { createdBy, missions } = req.body || {};
+    const { createdBy, missions, planId } = req.body || {};
     const imageProvider = normalizeSlideshowImageProvider(req.body?.imageProvider);
     const imageModel = String(req.body?.imageModel || (imageProvider === "openai" ? OPENAI_SLIDESHOW_IMAGE_MODEL : GEMINI_SLIDESHOW_IMAGE_MODEL)).trim();
 
@@ -3435,6 +3501,21 @@ app.post("/api/slideshow/generate-mission-card-images", async (req, res) => {
         console.warn(`Mission card image generation failed for "${missionTitle}":`, cardErr?.message || cardErr);
         cards.push({ missionTitle, imageUrl: null, prompt, error: cardErr?.message || "Image generation failed" });
       }
+    }
+
+    if (planId) {
+      const savedPlans = await getMissionSlideshowPlans(createdBy);
+      const savedPlan = savedPlans.find((plan) => plan.id === String(planId));
+      if (!savedPlan) return res.status(404).json({ error: "Saved mission plan not found" });
+
+      const imageByTitle = new Map<string, Record<string, unknown>>(
+        savedPlan.missionCardImages.map((image) => [String(image.missionTitle || ""), image])
+      );
+      cards.forEach((card) => {
+        if (card.imageUrl) imageByTitle.set(card.missionTitle, card);
+      });
+      savedPlan.missionCardImages = [...imageByTitle.values()];
+      await saveMissionSlideshowPlan(savedPlan);
     }
 
     return res.json({

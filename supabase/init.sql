@@ -128,6 +128,22 @@ CREATE TABLE IF NOT EXISTS slideshows (
 GRANT SELECT, INSERT, UPDATE, DELETE ON slideshows TO anon;
 
 -- ============================================
+-- Saved AI Mission Slideshow Plans
+-- ============================================
+CREATE TABLE IF NOT EXISTS mission_slideshow_plans (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  mission_slides_script TEXT NOT NULL,
+  render_plan JSONB,
+  mission_card_plans JSONB NOT NULL DEFAULT '[]'::JSONB,
+  mission_card_images JSONB NOT NULL DEFAULT '[]'::JSONB,
+  created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON mission_slideshow_plans TO anon;
+
+-- ============================================
 -- Indexes for Performance
 -- ============================================
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON profiles(username);
@@ -143,6 +159,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_slideshows_created_by ON slideshows(created_by);
 CREATE INDEX IF NOT EXISTS idx_slideshows_is_published ON slideshows(is_published);
 CREATE INDEX IF NOT EXISTS idx_slideshows_created_at ON slideshows(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mission_slideshow_plans_created_by ON mission_slideshow_plans(created_by);
+CREATE INDEX IF NOT EXISTS idx_mission_slideshow_plans_created_at ON mission_slideshow_plans(created_at DESC);
 
 -- ============================================
 -- Grant Sequence Permissions

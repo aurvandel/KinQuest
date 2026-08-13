@@ -82,6 +82,17 @@ export interface Slideshow {
   isPublished: boolean;
 }
 
+export interface MissionSlideshowPlan {
+  id: string;
+  title: string;
+  missionSlidesScript: string;
+  renderPlan: Record<string, unknown> | null;
+  missionCardPlans: Array<Record<string, unknown>>;
+  missionCardImages: Array<Record<string, unknown>>;
+  createdBy?: string | null;
+  createdAt: string;
+}
+
 export interface DbStore {
   users: { [id: string]: PlayerProfile };
   items: { [id: string]: ScavengerItem };
@@ -1123,6 +1134,56 @@ export async function deleteSlideshow(id: string): Promise<boolean> {
     return true;
   } catch (err) {
     console.warn("Supabase slideshow delete error:", err);
+    throw err;
+  }
+}
+
+export async function saveMissionSlideshowPlan(plan: MissionSlideshowPlan): Promise<MissionSlideshowPlan> {
+  try {
+    const { error } = await supabase!
+      .from("mission_slideshow_plans")
+      .upsert([{
+        id: plan.id,
+        title: plan.title,
+        mission_slides_script: plan.missionSlidesScript,
+        render_plan: plan.renderPlan,
+        mission_card_plans: plan.missionCardPlans,
+        mission_card_images: plan.missionCardImages,
+        created_by: plan.createdBy || null,
+        created_at: plan.createdAt,
+      }])
+      .select();
+
+    if (error) throw error;
+    return plan;
+  } catch (err) {
+    console.error("Supabase mission slideshow plan save error:", err);
+    throw err;
+  }
+}
+
+export async function getMissionSlideshowPlans(createdBy?: string): Promise<MissionSlideshowPlan[]> {
+  try {
+    let query = supabase!
+      .from("mission_slideshow_plans")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (createdBy) query = query.eq("created_by", createdBy);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return (data || []).map((plan) => ({
+      id: plan.id,
+      title: plan.title,
+      missionSlidesScript: plan.mission_slides_script,
+      renderPlan: plan.render_plan || null,
+      missionCardPlans: Array.isArray(plan.mission_card_plans) ? plan.mission_card_plans : [],
+      missionCardImages: Array.isArray(plan.mission_card_images) ? plan.mission_card_images : [],
+      createdBy: plan.created_by,
+      createdAt: plan.created_at,
+    }));
+  } catch (err) {
+    console.warn("Supabase mission slideshow plan retrieve error:", err);
     throw err;
   }
 }

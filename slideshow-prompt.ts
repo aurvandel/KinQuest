@@ -27,7 +27,8 @@ Return ONLY a JSON object (no markdown fences, no commentary) with this exact sh
     }
   ],
   "finalCard": { "durationSeconds": 6, "transition": "fade" },
-  "musicSuggestions": ["Artist - Song Title"]
+  "musicSuggestions": ["Artist - Song Title"],
+  "similarMusicSuggestions": ["Artist - Song Title"]
 }
 
 Rules:

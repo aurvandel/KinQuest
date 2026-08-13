@@ -53,7 +53,18 @@ interface SlideshowRenderPlan {
   }>;
   finalCard: { durationSeconds: number; transition: string };
   musicSuggestions: string[];
+  similarMusicSuggestions: string[];
   parsedFromAi: boolean;
+}
+
+interface SavedMissionSlideshowPlan {
+  id: string;
+  title: string;
+  missionSlidesScript: string;
+  renderPlan: SlideshowRenderPlan | null;
+  missionCardPlans: MissionCardPlan[];
+  missionCardImages: MissionCardImage[];
+  createdAt: string;
 }
 
 type SlideshowImageProvider = "gemini" | "openai";
@@ -105,6 +116,8 @@ export function SlideshowGeneratorModal({
   const [generationSource, setGenerationSource] = useState<string | null>(null);
   const [songQueriesInput, setSongQueriesInput] = useState("");
   const [songPreviewLoading, setSongPreviewLoading] = useState(false);
+  const [savedMissionPlans, setSavedMissionPlans] = useState<SavedMissionSlideshowPlan[]>([]);
+  const [selectedSavedMissionPlanId, setSelectedSavedMissionPlanId] = useState("");
   const [songPreview, setSongPreview] = useState<{
     requested: string[];
     matches: Array<{ query: string; found: boolean; title?: string; artist?: string; durationSeconds?: number; durationLabel?: string }>;
@@ -202,6 +215,27 @@ export function SlideshowGeneratorModal({
     };
   }, [isOpen, slideshowProvider, leaderboardImageProvider]);
 
+  useEffect(() => {
+    if (!isOpen || !adminUserId) return;
+
+    let cancelled = false;
+    const loadSavedMissionPlans = async () => {
+      try {
+        const response = await fetch(`/api/slideshow/mission-plans?createdBy=${encodeURIComponent(adminUserId)}`);
+        if (!response.ok) return;
+        const plans = await response.json();
+        if (!cancelled) setSavedMissionPlans(Array.isArray(plans) ? plans : []);
+      } catch {
+        if (!cancelled) setSavedMissionPlans([]);
+      }
+    };
+
+    loadSavedMissionPlans();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, adminUserId]);
+
   const selectedSlideshowModels = slideshowModels[slideshowProvider];
   const slideshowModelOptions = selectedSlideshowModels.some((entry) => entry.model === slideshowModel)
     ? selectedSlideshowModels
@@ -209,6 +243,18 @@ export function SlideshowGeneratorModal({
       ? [{ model: slideshowModel, costTier: "medium" as const }, ...selectedSlideshowModels]
       : selectedSlideshowModels;
   const selectedLeaderboardImageModels = leaderboardImageModels[leaderboardImageProvider];
+
+  const applySavedMissionPlan = () => {
+    const selectedPlan = savedMissionPlans.find((plan) => plan.id === selectedSavedMissionPlanId);
+    if (!selectedPlan) return;
+
+    setMissionSlidesScript(selectedPlan.missionSlidesScript || null);
+    setRenderPlan(selectedPlan.renderPlan);
+    setMissionCardPlans(Array.isArray(selectedPlan.missionCardPlans) ? selectedPlan.missionCardPlans : []);
+    setMissionCardImages(Array.isArray(selectedPlan.missionCardImages) ? selectedPlan.missionCardImages : []);
+    setLocalScript(null);
+    setLocalError(null);
+  };
 
   const getSelectedSubmissionPayload = () => {
     const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
@@ -284,6 +330,7 @@ export function SlideshowGeneratorModal({
           promptTemplate,
           slideshowProvider,
           slideshowModel,
+          songQueries: parseSongQueries(songQueriesInput),
         }),
       });
 
@@ -298,6 +345,17 @@ export function SlideshowGeneratorModal({
       const plan: SlideshowRenderPlan | null = data?.renderPlan || null;
       setRenderPlan(plan);
       setMissionCardImages([]);
+      if (data?.savedPlan?.id) {
+        setSavedMissionPlans((current) => [data.savedPlan as SavedMissionSlideshowPlan, ...current.filter((entry) => entry.id !== data.savedPlan.id)]);
+        setSelectedSavedMissionPlanId(String(data.savedPlan.id));
+      }
+      const suggestedSongs = [
+        ...(Array.isArray(plan?.musicSuggestions) ? plan.musicSuggestions : []),
+        ...(Array.isArray(plan?.similarMusicSuggestions) ? plan.similarMusicSuggestions : []),
+      ];
+      if (suggestedSongs.length > 0 && !songQueriesInput.trim()) {
+        setSongQueriesInput(suggestedSongs.join("\n"));
+      }
 
       const cards = Array.isArray(data?.missionCards) ? data.missionCards : [];
       setMissionCardPlans(
@@ -317,8 +375,8 @@ export function SlideshowGeneratorModal({
     }
   };
 
-  const handleGenerateMissionCardImages = async () => {
-    if (!adminUserId || missionCardPlans.length === 0) return;
+  const handleGenerateMissionCardImages = async (missions = missionCardPlans) => {
+    if (!adminUserId || missions.length === 0) return;
 
     setGeneratingMissionCardImages(true);
     setLocalError(null);
@@ -330,7 +388,8 @@ export function SlideshowGeneratorModal({
           createdBy: adminUserId,
           imageProvider: leaderboardImageProvider,
           imageModel: leaderboardImageModel,
-          missions: missionCardPlans,
+          planId: selectedSavedMissionPlanId || undefined,
+          missions,
         }),
       });
 
@@ -339,13 +398,24 @@ export function SlideshowGeneratorModal({
         throw new Error(data?.details || data?.error || "Failed to generate mission card images");
       }
 
-      setMissionCardImages(
-        (Array.isArray(data?.cards) ? data.cards : []).map((card: any) => ({
+      const generatedCards: MissionCardImage[] = (Array.isArray(data?.cards) ? data.cards : []).map((card: any) => ({
           missionTitle: String(card?.missionTitle || ""),
           imageUrl: card?.imageUrl ? String(card.imageUrl) : null,
           error: card?.error ? String(card.error) : null,
-        }))
-      );
+        }));
+      setMissionCardImages((current) => {
+        const updated = new Map(current.map((card) => [card.missionTitle, card]));
+        generatedCards.forEach((card) => {
+          const existing = updated.get(card.missionTitle);
+          updated.set(card.missionTitle, card.imageUrl || !existing ? card : { ...existing, error: card.error });
+        });
+        return [...updated.values()];
+      });
+      if (selectedSavedMissionPlanId) {
+        setSavedMissionPlans((current) => current.map((plan) => plan.id === selectedSavedMissionPlanId
+          ? { ...plan, missionCardImages: [...new Map([...plan.missionCardImages, ...generatedCards].map((card) => [card.missionTitle, card])).values()] }
+          : plan));
+      }
     } catch (err: any) {
       console.error("Mission card image generation error:", err);
       setLocalError(err.message || "Failed to generate mission card images");
@@ -675,6 +745,26 @@ export function SlideshowGeneratorModal({
                   <p className="text-[11px] text-emerald-900/80">
                     Supports <span className="font-semibold">Artist - Song Title</span> or <span className="font-semibold">Song Title by Artist</span> format. Artist name improves match accuracy. Coverage should be ≥ 110% for safe runtime alignment.
                   </p>
+                  {renderPlan && (renderPlan.musicSuggestions.length > 0 || renderPlan.similarMusicSuggestions.length > 0) && (
+                    <div className="rounded-lg border border-emerald-200 bg-white p-3 text-xs text-emerald-900 space-y-2">
+                      {renderPlan.musicSuggestions.length > 0 && (
+                        <div>
+                          <div className="font-semibold">Suggested songs</div>
+                          <div className="mt-1 space-y-0.5">
+                            {renderPlan.musicSuggestions.map((song, idx) => <div key={`suggested_${idx}`}>{song}</div>)}
+                          </div>
+                        </div>
+                      )}
+                      {renderPlan.similarMusicSuggestions.length > 0 && (
+                        <div>
+                          <div className="font-semibold">Similar to your selections</div>
+                          <div className="mt-1 space-y-0.5">
+                            {renderPlan.similarMusicSuggestions.map((song, idx) => <div key={`similar_${idx}`}>{song}</div>)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <button
                     onClick={handleTestSongMatches}
                     disabled={songPreviewLoading || selectedSubmissionIds.size === 0 || !adminUserId}
@@ -794,6 +884,34 @@ export function SlideshowGeneratorModal({
                       )}
                     </button>
 
+                    {savedMissionPlans.length > 0 && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-700">Reuse Saved Mission Plan</label>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <select
+                            value={selectedSavedMissionPlanId}
+                            onChange={(e) => setSelectedSavedMissionPlanId(e.target.value)}
+                            className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                          >
+                            <option value="">Select a saved plan...</option>
+                            {savedMissionPlans.map((plan) => (
+                              <option key={plan.id} value={plan.id}>
+                                {plan.title} ({new Date(plan.createdAt).toLocaleDateString()})
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={applySavedMissionPlan}
+                            disabled={!selectedSavedMissionPlanId}
+                            className="rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          >
+                            Use Saved Plan
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {missionCardPlans.length > 0 && (
                       <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
                         <div className="text-xs font-bold uppercase tracking-wider text-indigo-900">
@@ -828,11 +946,19 @@ export function SlideshowGeneratorModal({
                                 />
                               )}
                               {generated?.error && <p className="text-[11px] text-red-600">{generated.error}</p>}
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateMissionCardImages([card])}
+                                disabled={generatingMissionCardImages || !adminUserId || !leaderboardImageModel}
+                                className="rounded-lg bg-indigo-100 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                              >
+                                {generated?.imageUrl ? "Generate New Image" : "Generate This Image"}
+                              </button>
                             </div>
                           );
                         })}
                         <button
-                          onClick={handleGenerateMissionCardImages}
+                          onClick={() => handleGenerateMissionCardImages()}
                           disabled={generatingMissionCardImages || !adminUserId || !leaderboardImageModel}
                           className="w-full bg-indigo-500 text-white font-bold py-2.5 rounded-xl hover:bg-indigo-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition flex items-center justify-center gap-2 text-sm"
                         >

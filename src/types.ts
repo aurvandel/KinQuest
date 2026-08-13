@@ -77,6 +77,17 @@ export interface Slideshow {
   isPublished: boolean;
 }
 
+export interface MissionSlideshowPlan {
+  id: string;
+  title: string;
+  missionSlidesScript: string;
+  renderPlan: Record<string, unknown> | null;
+  missionCardPlans: Array<Record<string, unknown>>;
+  missionCardImages: Array<Record<string, unknown>>;
+  createdBy?: string | null;
+  createdAt: string;
+}
+
 export interface AppSettings {
   name: string;
   icon: string | null;
