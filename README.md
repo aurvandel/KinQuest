@@ -6,7 +6,7 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 
 - **Scavenger Hunt Missions**: Create photo and GPS-based challenges with point rewards
 - **AI Judge System**: Google Gemini AI verifies photo submissions in real-time with personalized feedback
-- **AI Slideshow Pipeline**: Ollama generates slideshow scripts, with Presenton + MP4 rendering for final video output
+- **AI Slideshow Pipeline**: Ollama generates slideshow scripts and local FFmpeg renders the final MP4 video
 - **Geofencing**: GPS-based challenges with configurable radius constraints
 - **Live Leaderboard**: Real-time scoring and family member rankings
 - **Interactive Map**: View all challenges with geolocation, simulate positions, and track proximity
@@ -27,7 +27,7 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 - **Frontend**: React 18, TypeScript, Tailwind CSS
 - **Backend**: Node.js Express, WebSocket (ws)
 - **Database**: Supabase (PostgreSQL)
-- **AI**: Google Gemini API for photo verification, Ollama for slideshow scripting
+- **AI**: Google Gemini API for photo verification, with Ollama, Gemini, or OpenAI available for slideshow scripting
 - **Build Tools**: Vite, esbuild
 - **Containerization**: Docker & Docker Compose
 
@@ -52,8 +52,9 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
    OLLAMA_SERVER_URL=http://your-ollama-server:11434
    OLLAMA_MODEL=llama3.1
    OLLAMA_API_KEY=your_optional_ollama_api_key
-   PRESENTON_SERVER_URL=http://your-presenton-server
-   PRESENTON_API_KEY=your_optional_presenton_api_key
+   GEMINI_SLIDESHOW_MODEL=gemini-2.5-flash
+   OPENAI_API_KEY=your_optional_openai_api_key
+   OPENAI_SLIDESHOW_MODEL=gpt-4o-mini
    ADMIN_PASSWORD=your_secure_admin_password
    SUPABASE_URL=http://localhost:8000  # for local dev
    SUPABASE_ANON_KEY=your_anon_key
@@ -123,8 +124,7 @@ The app automatically detects database availability and falls back to local JSON
 
 ### Slideshow Generation
 - Ollama generates the slideshow production script
-- KinQuest attempts Presenton MP4 generation first (when configured)
-- If Presenton is unavailable, KinQuest falls back to local FFmpeg MP4 rendering
+- KinQuest renders slideshow MP4 videos locally with FFmpeg
 
 ### Geolocation System
 - Real GPS tracking with fallback to simulated coordinates

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Submission, ScavengerItem } from "../types";
 import { X, Loader2, Sparkles, Download, Copy, Check } from "lucide-react";
+import { DEFAULT_SLIDESHOW_PROMPT } from "../../slideshow-prompt.ts";
 
 interface SlideshowGeneratorModalProps {
   isOpen: boolean;
@@ -13,26 +14,15 @@ interface SlideshowGeneratorModalProps {
   generatedScript: string | null;
   onScriptGenerated?: (script: string) => void;
   onSlideshowCreated?: (slideshowId: string) => void;
+  slideshowProvider: "ollama" | "gemini" | "openai";
+  onSlideshowProviderChange: (provider: "ollama" | "gemini" | "openai") => void;
+  providerAvailability?: Record<"ollama" | "gemini" | "openai", boolean> | null;
 }
 
-const DEFAULT_SLIDESHOW_PROMPT = `You are an expert multimedia producer specializing in creating family reunion slideshows.
-
-I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
-{{PHOTO_LIST}}
-
-Please generate a detailed slideshow script that includes:
-
-1. Mission Group Structure: Keep photos grouped by mission and suggest timing
-2. Mission Transition Cards: Add a transition card between each mission segment with mission title and mission description. The title should appear centered in large, bold text, and the description in smaller text below. The text should not overflow the card and should be legible. Apply a custom background that fits the current mission description but doesn't distract from the text.
-3. Transitions: Recommend transitions for each slide and between mission groups
-4. Music Recommendations: Suggest background music tracks that fit the full story arc
-5. Timing & Pacing: Provide total duration estimate and pacing guidance
-6. Animation Effects: Suggest subtle text overlay animations (mission title, photographer name, etc.) Keep it very subtle and not distracting from the photos themselves.
-7. Color Grading: Suggest filters or adjustments for visual consistency
-8. Voiceover Suggestions: Optional short commentary between mission groups
-9. Final Scoreboard Card: End with one single closing card that combines winners and full standings (all players and points), styled like the scores tab with a top 3 podium and the rest of the players listed below in descending order. Include a celebratory message for all participants.
-
-Format your response as a professional production guide. Keep it uplifting and celebratory for a family reunion event.`;
+interface SlideshowModelOption {
+  model: string;
+  costTier: "low" | "medium" | "high";
+}
 
 export function SlideshowGeneratorModal({
   isOpen,
@@ -44,7 +34,10 @@ export function SlideshowGeneratorModal({
   error,
   generatedScript,
   onScriptGenerated,
-  onSlideshowCreated
+  onSlideshowCreated,
+  slideshowProvider,
+  onSlideshowProviderChange,
+  providerAvailability = null
 }: SlideshowGeneratorModalProps) {
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set());
   const [generatingMissionSlides, setGeneratingMissionSlides] = useState(false);
@@ -57,7 +50,12 @@ export function SlideshowGeneratorModal({
   const [leaderboardSlideScript, setLeaderboardSlideScript] = useState<string | null>(null);
   const [promptTemplate, setPromptTemplate] = useState(DEFAULT_SLIDESHOW_PROMPT);
   const [includeMissionNarration, setIncludeMissionNarration] = useState(false);
-  const [slideshowModel, setSlideshowModel] = useState<string>("llama3.1");
+  const [slideshowModel, setSlideshowModel] = useState<string>("");
+  const [slideshowModels, setSlideshowModels] = useState<Record<"ollama" | "gemini" | "openai", SlideshowModelOption[]>>({
+    ollama: [],
+    gemini: [],
+    openai: [],
+  });
   const [generationSource, setGenerationSource] = useState<string | null>(null);
   const [songQueriesInput, setSongQueriesInput] = useState("");
   const [songPreviewLoading, setSongPreviewLoading] = useState(false);
@@ -111,9 +109,20 @@ export function SlideshowGeneratorModal({
         const response = await fetch("/api/ai-model-catalog");
         if (!response.ok) return;
         const payload = await response.json();
-        const catalog = Array.isArray(payload?.slideshowModels) ? payload.slideshowModels : [];
-        const firstModel = String(catalog?.[0]?.model || "").trim();
+        const selectedCatalog = Array.isArray(payload?.slideshowProviders)
+          ? payload.slideshowProviders.find((entry: any) => entry?.provider === slideshowProvider)
+          : null;
+        const models: SlideshowModelOption[] = Array.isArray(selectedCatalog?.models)
+          ? selectedCatalog.models
+              .map((entry: any) => ({
+                model: typeof entry === "string" ? entry.trim() : String(entry?.model || "").trim(),
+                costTier: entry?.costTier === "high" || entry?.costTier === "medium" ? entry.costTier : "low",
+              }))
+              .filter((entry: SlideshowModelOption) => entry.model.length > 0)
+          : [];
         if (cancelled) return;
+        setSlideshowModels((current) => ({ ...current, [slideshowProvider]: models }));
+        const firstModel = models[0]?.model || "";
         if (firstModel) {
           setSlideshowModel(firstModel);
         }
@@ -127,7 +136,14 @@ export function SlideshowGeneratorModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [isOpen, slideshowProvider]);
+
+  const selectedSlideshowModels = slideshowModels[slideshowProvider];
+  const slideshowModelOptions = selectedSlideshowModels.some((entry) => entry.model === slideshowModel)
+    ? selectedSlideshowModels
+    : slideshowModel
+      ? [{ model: slideshowModel, costTier: "medium" as const }, ...selectedSlideshowModels]
+      : selectedSlideshowModels;
 
   const getSelectedSubmissionPayload = () => {
     const selectedSubs = approvedSubmissions.filter((sub) => selectedSubmissionIds.has(sub.id));
@@ -264,6 +280,7 @@ export function SlideshowGeneratorModal({
           promptTemplate,
           includeMissionNarration,
           slideshowModel,
+          slideshowProvider,
           songQueries: parseSongQueries(songQueriesInput),
           missionSlidesScript,
           leaderboardSlideScript,
@@ -281,15 +298,7 @@ export function SlideshowGeneratorModal({
       if (data?.generation?.cacheHit) {
         setGenerationSource("Reused cached slideshow and video output");
       } else if (videoInfo?.created) {
-        if (videoInfo?.mode === "presenton_remote") {
-          setGenerationSource(`Composed with Presenton (${videoInfo.aiModel || "AI"})`);
-        } else if (videoInfo?.mode === "presenton_plan_local_render") {
-          setGenerationSource(`Composed with Presenton plan and rendered locally (${videoInfo.aiModel || "AI"})`);
-        } else if (videoInfo?.mode === "local_ffmpeg") {
-          setGenerationSource(`Composed and rendered locally (${videoInfo.aiModel || "AI"})`);
-        } else {
-          setGenerationSource("Composed slideshow and generated MP4");
-        }
+        setGenerationSource(`Composed and rendered locally (${videoInfo.aiModel || "AI"})`);
       } else {
         setGenerationSource("Composed slideshow, but video render is unavailable");
       }
@@ -397,15 +406,39 @@ export function SlideshowGeneratorModal({
               </div>
 
               <div className="space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1 sm:col-span-2">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Slideshow AI Model (Ollama)</label>
-                    <input
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">AI Provider</label>
+                    <select
+                      value={slideshowProvider}
+                      onChange={(e) => {
+                        const provider = e.target.value === "gemini" || e.target.value === "openai" ? e.target.value : "ollama";
+                        onSlideshowProviderChange(provider);
+                        const firstModel = slideshowModels[provider][0]?.model;
+                        if (firstModel) setSlideshowModel(firstModel);
+                      }}
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    >
+                      <option value="ollama" disabled={providerAvailability ? !providerAvailability.ollama : false}>Ollama{providerAvailability && !providerAvailability.ollama ? " (not ready)" : ""}</option>
+                      <option value="gemini" disabled={providerAvailability ? !providerAvailability.gemini : false}>Gemini{providerAvailability && !providerAvailability.gemini ? " (not ready)" : ""}</option>
+                      <option value="openai" disabled={providerAvailability ? !providerAvailability.openai : false}>OpenAI{providerAvailability && !providerAvailability.openai ? " (not ready)" : ""}</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Slideshow AI Model</label>
+                    <select
                       value={slideshowModel}
                       onChange={(e) => setSlideshowModel(e.target.value)}
                       className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
-                      placeholder="llama3.1"
-                    />
+                    >
+                      {slideshowModelOptions.length > 0
+                        ? slideshowModelOptions.map((entry) => (
+                            <option key={entry.model} value={entry.model}>
+                              {entry.model} ({entry.costTier} cost)
+                            </option>
+                          ))
+                        : <option value={slideshowModel}>{slideshowModel || "Loading models..."}</option>}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Pipeline</label>
@@ -413,14 +446,14 @@ export function SlideshowGeneratorModal({
                       <div className="font-semibold">{selectedSubmissionIds.size} photo(s)</div>
                       <div className="font-mono text-[11px] mt-0.5 text-emerald-700">Mission slides + leaderboard + compose</div>
                       <div className="text-[10px] text-gray-500 mt-1">
-                        Presenton is attempted first. If unavailable, local FFmpeg MP4 rendering is used.
+                        Local FFmpeg MP4 rendering is used.
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-700">Ollama Prompt Template</label>
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-700">AI Prompt Template</label>
                   <button
                     type="button"
                     onClick={() => setPromptTemplate(DEFAULT_SLIDESHOW_PROMPT)}

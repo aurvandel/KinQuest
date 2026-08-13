@@ -1135,7 +1135,8 @@ export interface AppSettings {
   defaultLng?: number;
   defaultRadius?: number;
   aiPromptCriteria?: string;
-  aiJudgeModel?: "gemini-3.5-flash" | "gemini-2.0-flash";
+  aiJudgeProvider?: "ollama" | "gemini" | "openai";
+  aiJudgeModel?: string;
   activeInviteCode?: string;
   inviteRequired?: boolean;
   aiVerificationEnabled?: boolean;
@@ -1159,11 +1160,16 @@ export function getAppSettings(): AppSettings {
         rawMapMode === "satellite_labels" || rawMapMode === "missions_only" || rawMapMode === "disabled"
           ? rawMapMode
           : "original";
-      const rawAiJudgeModel = parsed.aiJudgeModel;
-      const parsedAiJudgeModel =
-        rawAiJudgeModel === "gemini-2.0-flash" || rawAiJudgeModel === "gemini-3.5-flash"
-          ? rawAiJudgeModel
-          : "gemini-3.5-flash";
+      const parsedAiJudgeProvider = parsed.aiJudgeProvider === "ollama" || parsed.aiJudgeProvider === "openai"
+        ? parsed.aiJudgeProvider
+        : "gemini";
+      const parsedAiJudgeModel = typeof parsed.aiJudgeModel === "string" && parsed.aiJudgeModel.trim()
+        ? parsed.aiJudgeModel.trim()
+        : parsedAiJudgeProvider === "ollama"
+          ? "llama3.1"
+          : parsedAiJudgeProvider === "openai"
+            ? "gpt-4o-mini"
+            : "gemini-2.5-flash";
       return {
         name: parsed.name || "KinQuest",
         icon: parsed.icon || "/kinquest_logo.png",
@@ -1172,6 +1178,7 @@ export function getAppSettings(): AppSettings {
         defaultLng: Number(parsed.defaultLng) || -111.3800,
         defaultRadius: Number(parsed.defaultRadius) || 200,
         aiPromptCriteria: parsed.aiPromptCriteria || "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
+        aiJudgeProvider: parsedAiJudgeProvider,
         aiJudgeModel: parsedAiJudgeModel,
         activeInviteCode: parsed.activeInviteCode || "watkins",
         inviteRequired: parsed.inviteRequired !== undefined ? !!parsed.inviteRequired : true,
@@ -1195,7 +1202,8 @@ export function getAppSettings(): AppSettings {
     defaultLng: -111.3800,
     defaultRadius: 2500,
     aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-    aiJudgeModel: "gemini-3.5-flash",
+    aiJudgeProvider: "gemini",
+    aiJudgeModel: "gemini-2.5-flash",
     activeInviteCode: "watkins",
     inviteRequired: true,
     aiVerificationEnabled: true,
@@ -1478,26 +1486,9 @@ export async function completeTutorial(userId: string): Promise<PlayerProfile | 
       }
     }
     
-    // Fall back to local
-    const db = loadLocalDb();
-    if (db.users && db.users[userId]) {
-      db.users[userId].tutorialCompleted = true;
-      db.users[userId].tutorialCompletedAt = now;
-      saveLocalDb(db);
-      return db.users[userId];
-    }
-    
     return null;
   } catch (err) {
     console.warn("Failed to complete tutorial:", err);
-    // Fall back to local update
-    const db = loadLocalDb();
-    if (db.users && db.users[userId]) {
-      db.users[userId].tutorialCompleted = true;
-      db.users[userId].tutorialCompletedAt = new Date().toISOString();
-      saveLocalDb(db);
-      return db.users[userId];
-    }
     throw err;
   }
 }

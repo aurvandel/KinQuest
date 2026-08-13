@@ -1,14 +1,19 @@
 {
   "name": "KinQuest",
-  "icon": null,
+  "icon": "/kinquest_logo.png",
+  "mapMode": "disabled",
   "defaultLat": 41.9076,
   "defaultLng": -111.3800,
   "defaultRadius": 2500,
   "aiPromptCriteria": "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-  "activeInviteCode": "watkins",
+  "aiJudgeModel": "gemini-3.5-flash",
+  "activeInviteCode": "bear-lake-stewarts",
   "inviteRequired": true,
   "aiVerificationEnabled": true,
   "allowForceSubmit": false,
-  "imageCompressionMaxDim": 800,
-  "imageCompressionQuality": 0.7
+  "imageCompressionMaxDim": 1024,
+  "imageCompressionQuality": 1,
+  "showTitle": true,
+  "showLogo": true,
+  "chatDisabledByAdmin": false
 }

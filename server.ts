@@ -11,6 +11,7 @@ import { WebSocketServer } from "ws";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { DEFAULT_SLIDESHOW_PROMPT } from "./slideshow-prompt.ts";
 
 // Inject ws as global WebSocket for Supabase Realtime on Node.js 20
 import { WebSocket as NodeWebSocket } from "ws";
@@ -77,23 +78,15 @@ const OLLAMA_SERVER_URL = (process.env.OLLAMA_SERVER_URL || "http://localhost:11
 const OLLAMA_MODEL = (process.env.OLLAMA_MODEL || "llama3.1").trim();
 const OLLAMA_API_KEY = (process.env.OLLAMA_API_KEY || "").trim();
 const OLLAMA_REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.OLLAMA_REQUEST_TIMEOUT_MS || 15000) || 15000);
-const OLLAMA_SCRIPT_MODE = (process.env.OLLAMA_SCRIPT_MODE || "offload_if_presenton").trim().toLowerCase();
-const PRESENTON_SERVER_URL = (process.env.PRESENTON_SERVER_URL || "").trim();
-const PRESENTON_API_KEY = (process.env.PRESENTON_API_KEY || "").trim();
-const PRESENTON_USERNAME = (process.env.PRESENTON_USERNAME || "").trim();
-const PRESENTON_PASSWORD = (process.env.PRESENTON_PASSWORD || "").trim();
-const PRESENTON_AUTH_MODE = (process.env.PRESENTON_AUTH_MODE || "auto").trim().toLowerCase();
-const PRESENTON_LOGIN_PATH = (process.env.PRESENTON_LOGIN_PATH || "/api/v1/auth/jwt/login").trim();
-const PRESENTON_GENERATE_PATH = (process.env.PRESENTON_GENERATE_PATH || "/api/v1/ppt/presentation/generate").trim();
-const PRESENTON_REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.PRESENTON_REQUEST_TIMEOUT_MS || 25000) || 25000);
-const SKIP_PRESENTON_ON_CONSTRAINED_RENDER = (process.env.SKIP_PRESENTON_ON_CONSTRAINED_RENDER || "true").trim().toLowerCase() !== "false";
+const GEMINI_SLIDESHOW_MODEL = (process.env.GEMINI_SLIDESHOW_MODEL || "gemini-2.5-flash").trim();
+const OPENAI_SLIDESHOW_MODEL = (process.env.OPENAI_SLIDESHOW_MODEL || "gpt-4o-mini").trim();
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
+const OPENAI_API_URL = (process.env.OPENAI_API_URL || "https://api.openai.com/v1/chat/completions").trim();
 const NAVIDROME_SERVER_URL = (process.env.NAVIDROME_SERVER_URL || "").trim();
 const NAVIDROME_USERNAME = (process.env.NAVIDROME_USERNAME || "").trim();
 const NAVIDROME_PASSWORD = (process.env.NAVIDROME_PASSWORD || "").trim();
 const NAVIDROME_API_VERSION = "1.16.1";
 const NAVIDROME_CLIENT_NAME = "kinquest";
-
-let presentonJwtTokenCache: { token: string; issuedAtMs: number } | null = null;
 
 // Increase body size limit to support base64 snapshots of photographs
 app.use(express.json({ limit: "15mb" }));
@@ -111,12 +104,6 @@ const ai = new GoogleGenAI({
 
 function normalizeServerUrl(raw: string): string {
   return raw.replace(/\/+$/, "");
-}
-
-function normalizeApiPath(raw: string, fallback: string): string {
-  const value = (raw || "").trim();
-  if (!value) return fallback;
-  return value.startsWith("/") ? value : `/${value}`;
 }
 
 function buildAuthHeaders(auth: { apiKey?: string; username?: string; password?: string }): Record<string, string> {
@@ -137,119 +124,6 @@ function buildAuthHeaders(auth: { apiKey?: string; username?: string; password?:
   }
 
   return headers;
-}
-
-function buildPresentonAuthHeaders(): Record<string, string> {
-  const config = buildPresentonAuthConfig();
-  if (config.username) {
-    return buildAuthHeaders({ username: config.username, password: config.password });
-  }
-  if (config.apiKey) {
-    return buildAuthHeaders({ apiKey: config.apiKey });
-  }
-  return {};
-}
-
-function buildPresentonAuthConfig(): { apiKey?: string; username?: string; password?: string } {
-  const mode = PRESENTON_AUTH_MODE;
-  const apiKeyConfig = PRESENTON_API_KEY ? { apiKey: PRESENTON_API_KEY } : {};
-  const basicConfig = PRESENTON_USERNAME
-    ? { username: PRESENTON_USERNAME, password: PRESENTON_PASSWORD }
-    : {};
-
-  if (mode === "basic") return basicConfig;
-  if (mode === "api_key" || mode === "apikey" || mode === "bearer") return apiKeyConfig;
-  if (mode === "jwt" || mode === "local") return {};
-  if (mode === "none") return {};
-
-  // Auto mode prefers local login flow when username/password are configured.
-  if (PRESENTON_USERNAME) return {};
-  return apiKeyConfig;
-}
-
-async function getPresentonJwtBearerToken(baseUrl: string): Promise<string> {
-  const now = Date.now();
-  // Keep token fresh enough without decoding JWT expiry.
-  if (presentonJwtTokenCache && now - presentonJwtTokenCache.issuedAtMs < 45 * 60 * 1000) {
-    return presentonJwtTokenCache.token;
-  }
-
-  if (!PRESENTON_USERNAME || !PRESENTON_PASSWORD) {
-    throw new Error("Presenton JWT auth requires PRESENTON_USERNAME and PRESENTON_PASSWORD");
-  }
-
-  const loginPath = normalizeApiPath(PRESENTON_LOGIN_PATH, "/api/v1/auth/jwt/login");
-  const form = new URLSearchParams();
-  form.set("username", PRESENTON_USERNAME);
-  form.set("password", PRESENTON_PASSWORD);
-
-  const response = await withTimeout(
-    fetch(`${baseUrl}${loginPath}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: form.toString(),
-    }),
-    15000,
-    "Presenton JWT login"
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Presenton JWT login failed (${response.status}) at ${loginPath}: ${body}`);
-  }
-
-  const payload: any = await response.json();
-  const accessToken = String(payload?.access_token || "").trim();
-  if (!accessToken) {
-    throw new Error("Presenton JWT login returned no access_token");
-  }
-
-  presentonJwtTokenCache = {
-    token: accessToken,
-    issuedAtMs: now,
-  };
-
-  return accessToken;
-}
-
-async function buildPresentonRequestHeaders(baseUrl: string): Promise<Record<string, string>> {
-  const mode = PRESENTON_AUTH_MODE;
-
-  if (mode === "none") {
-    return {};
-  }
-
-  if (mode === "jwt" || mode === "local") {
-    const token = await getPresentonJwtBearerToken(baseUrl);
-    return { Authorization: `Bearer ${token}` };
-  }
-
-  if (mode === "basic") {
-    return buildAuthHeaders({ username: PRESENTON_USERNAME, password: PRESENTON_PASSWORD });
-  }
-
-  if (mode === "api_key" || mode === "apikey" || mode === "bearer") {
-    return buildAuthHeaders({ apiKey: PRESENTON_API_KEY });
-  }
-
-  // auto
-  if (PRESENTON_USERNAME && PRESENTON_PASSWORD) {
-    try {
-      const token = await getPresentonJwtBearerToken(baseUrl);
-      return { Authorization: `Bearer ${token}` };
-    } catch (jwtErr: any) {
-      console.warn("Presenton auto auth JWT login failed, trying Basic auth:", jwtErr?.message || jwtErr);
-      return buildAuthHeaders({ username: PRESENTON_USERNAME, password: PRESENTON_PASSWORD });
-    }
-  }
-
-  if (PRESENTON_API_KEY) {
-    return buildAuthHeaders({ apiKey: PRESENTON_API_KEY });
-  }
-
-  return {};
 }
 
 async function callOllamaText(prompt: string): Promise<{ text: string; model: string }> {
@@ -293,162 +167,152 @@ async function callOllamaText(prompt: string): Promise<{ text: string; model: st
   };
 }
 
-async function writeRemoteVideoToSlideshow(slideshowId: string, videoUrl: string): Promise<{ outputPath: string; outputUrl: string }> {
-  const cleanId = sanitizeSlideshowId(slideshowId);
-  if (!cleanId) throw new Error("Invalid slideshow id");
-
-  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
-  const videosDir = path.join(uploadsDir, "slideshows");
-  await fsp.mkdir(videosDir, { recursive: true });
-
-  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
-  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
-
-  const response = await withTimeout(fetch(videoUrl), 90000, "Presenton video download");
-  if (!response.ok) {
-    throw new Error(`Presenton video download failed with status ${response.status}`);
+async function callGeminiText(prompt: string): Promise<{ text: string; model: string }> {
+  if (!String(process.env.GEMINI_API_KEY || "").trim()) {
+    throw new Error("GEMINI_API_KEY is not configured");
   }
 
-  const data = Buffer.from(await response.arrayBuffer());
-  await fsp.writeFile(outputPath, data);
+  const model = GEMINI_SLIDESHOW_MODEL || "gemini-2.5-flash";
+  const response = await withTimeout(
+    ai.models.generateContent({
+      model,
+      contents: prompt,
+    }),
+    30000,
+    "Gemini slideshow generation"
+  );
+  const text = typeof response?.text === "string" ? response.text.trim() : "";
+  if (!text) throw new Error("Gemini returned an empty response");
 
-  return { outputPath, outputUrl };
+  return { text, model };
 }
 
-async function writeVideoBytesToSlideshow(slideshowId: string, base64Bytes: string): Promise<{ outputPath: string; outputUrl: string }> {
-  const cleanId = sanitizeSlideshowId(slideshowId);
-  if (!cleanId) throw new Error("Invalid slideshow id");
+async function callOpenAiText(prompt: string): Promise<{ text: string; model: string }> {
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
 
-  const uploadsDir = process.env.UPLOAD_DIR || "/app/uploads";
-  const videosDir = path.join(uploadsDir, "slideshows");
-  await fsp.mkdir(videosDir, { recursive: true });
-
-  const outputPath = path.join(videosDir, `${cleanId}.mp4`);
-  const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
-  await fsp.writeFile(outputPath, Buffer.from(base64Bytes, "base64"));
-
-  return { outputPath, outputUrl };
-}
-
-async function callPresentonSlideshow(
-  slideshowId: string,
-  script: string,
-  sourceSlides: Array<{ submissionId: string; imageUrl: string; missionTitle: string; missionDescription: string; username: string }>,
-  playerTotals: Array<{ username: string; score: number }>
-): Promise<{ videoUrl: string | null; slidesPlan: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }> | null }> {
-  const baseUrl = normalizeServerUrl(PRESENTON_SERVER_URL);
-  if (!baseUrl) {
-    return { videoUrl: null, slidesPlan: null };
-  }
-
-  const generatePath = normalizeApiPath(PRESENTON_GENERATE_PATH, "/api/v1/ppt/presentation/generate");
-  const looksLikeLocalGenerateApi = /\/api\/(v1\/ppt\/presentation|v3\/presentation)\/generate(?:\/async)?$/.test(generatePath);
-  const presentonBody = looksLikeLocalGenerateApi
-    ? {
-        // Local self-hosted API shape from Presenton docs.
-        content: script,
-        n_slides: Math.max(3, Math.min(sourceSlides.length + 2, 20)),
-        language: "English",
-        template: "general",
-        standard_template: "general",
-        export_as: "pptx",
-      }
-    : {
-        // Legacy/custom integration shape for deployments exposing a direct slideshow endpoint.
-        slideshowId,
-        script,
-        outputFormat: "mp4",
-        aiProvider: "ollama",
-        aiModel: OLLAMA_MODEL,
-        slides: sourceSlides,
-        scoreboard: playerTotals,
-      };
-
-  const presentonAuthHeaders = await buildPresentonRequestHeaders(baseUrl);
-
-  const sendPresentonRequest = async (headers: Record<string, string>) =>
-    withTimeout(
-      fetch(`${baseUrl}${generatePath}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...headers,
-        },
-        body: JSON.stringify(presentonBody),
+  const model = OPENAI_SLIDESHOW_MODEL || "gpt-4o-mini";
+  const response = await withTimeout(
+    fetch(OPENAI_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
       }),
-      PRESENTON_REQUEST_TIMEOUT_MS,
-      "Presenton slideshow generation"
-    );
+    }),
+    30000,
+    "OpenAI slideshow generation"
+  );
 
-  let response = await sendPresentonRequest(presentonAuthHeaders);
-
-  if (!response.ok && response.status === 401 && PRESENTON_AUTH_MODE === "auto" && Object.keys(presentonAuthHeaders).length > 0) {
-    // Some local setups are explicitly unauthenticated; retry once without auth.
-    response = await sendPresentonRequest({});
-  }
-
+  const payload: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Presenton request failed (${response.status}) at ${generatePath} [authMode=${PRESENTON_AUTH_MODE}]: ${body}`);
+    throw new Error(`OpenAI request failed (${response.status}): ${payload?.error?.message || "unknown error"}`);
   }
 
-  const payload: any = await response.json();
-
-  const presentationPath = typeof payload?.path === "string" ? payload.path.trim() : "";
-  if (presentationPath) {
-    const absolutePath = presentationPath.startsWith("http")
-      ? presentationPath
-      : `${baseUrl}${presentationPath.startsWith("/") ? "" : "/"}${presentationPath}`;
-
-    if (/\.mp4(\?|$)/i.test(absolutePath)) {
-      const written = await writeRemoteVideoToSlideshow(slideshowId, absolutePath);
-      return { videoUrl: written.outputUrl, slidesPlan: null };
-    }
-
-    // Standard local API returns pptx/pdf paths; KinQuest then falls back to local MP4 rendering.
-    return { videoUrl: null, slidesPlan: null };
-  }
-
-  const directVideoUrl =
-    (typeof payload?.videoUrl === "string" && payload.videoUrl) ||
-    (typeof payload?.result?.videoUrl === "string" && payload.result.videoUrl) ||
-    null;
-  if (directVideoUrl) {
-    const written = await writeRemoteVideoToSlideshow(slideshowId, directVideoUrl);
-    return { videoUrl: written.outputUrl, slidesPlan: null };
-  }
-
-  const base64Video =
-    (typeof payload?.videoBytesBase64 === "string" && payload.videoBytesBase64) ||
-    (typeof payload?.videoBytes === "string" && payload.videoBytes) ||
-    (typeof payload?.result?.videoBytesBase64 === "string" && payload.result.videoBytesBase64) ||
-    null;
-  if (base64Video) {
-    const written = await writeVideoBytesToSlideshow(slideshowId, base64Video);
-    return { videoUrl: written.outputUrl, slidesPlan: null };
-  }
-
-  const rawSlides = Array.isArray(payload?.slidesPlan)
-    ? payload.slidesPlan
-    : Array.isArray(payload?.result?.slidesPlan)
-      ? payload.result.slidesPlan
-      : Array.isArray(payload?.slides)
-        ? payload.slides
-        : [];
-
-  const slidesPlan = rawSlides
-    .map((row: any) => ({
-      submissionId: String(row?.submissionId || "").trim(),
-      overlayText: String(row?.overlayText || "").trim(),
-      durationSeconds: Math.max(2, Math.min(Number(row?.durationSeconds) || 5, 8)),
-      transition: String(row?.transition || "fade").trim().toLowerCase(),
-    }))
-    .filter((row: any) => row.submissionId.length > 0);
+  const text = typeof payload?.choices?.[0]?.message?.content === "string"
+    ? payload.choices[0].message.content.trim()
+    : "";
+  if (!text) throw new Error("OpenAI returned an empty response");
 
   return {
-    videoUrl: null,
-    slidesPlan: slidesPlan.length ? slidesPlan : null,
+    text,
+    model: typeof payload?.model === "string" && payload.model.trim() ? payload.model.trim() : model,
   };
+}
+
+type SlideshowProvider = "ollama" | "gemini" | "openai";
+
+function normalizeSlideshowProvider(raw: unknown): SlideshowProvider {
+  return raw === "gemini" || raw === "openai" ? raw : "ollama";
+}
+
+async function callSlideshowText(provider: SlideshowProvider, prompt: string): Promise<{ text: string; model: string }> {
+  if (provider === "gemini") return callGeminiText(prompt);
+  if (provider === "openai") return callOpenAiText(prompt);
+  return callOllamaText(prompt);
+}
+
+async function callAiJudgeText(
+  provider: SlideshowProvider,
+  model: string,
+  prompt: string,
+  mimeType: string,
+  imageData: string
+): Promise<string> {
+  if (provider === "gemini") {
+    const response = await withTimeout(
+      ai.models.generateContent({
+        model,
+        contents: { parts: [{ inlineData: { mimeType, data: imageData } }, { text: prompt }] },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              isMatch: { type: Type.BOOLEAN },
+              explanation: { type: Type.STRING },
+              confidence: { type: Type.INTEGER },
+              creativityScore: { type: Type.INTEGER },
+            },
+            required: ["isMatch", "explanation", "confidence", "creativityScore"],
+          },
+        },
+      }),
+      30000,
+      "Gemini AI judge"
+    );
+    return response.text || "{}";
+  }
+
+  if (provider === "openai") {
+    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
+    const response = await withTimeout(
+      fetch(OPENAI_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
+        body: JSON.stringify({
+          model,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: `${prompt}\nReturn only valid JSON with keys: isMatch, explanation, confidence, creativityScore.` },
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageData}` } },
+            ],
+          }],
+          response_format: { type: "json_object" },
+        }),
+      }),
+      30000,
+      "OpenAI AI judge"
+    );
+    const payload: any = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error?.message || `OpenAI returned ${response.status}`);
+    return payload?.choices?.[0]?.message?.content || "{}";
+  }
+
+  const baseUrl = normalizeServerUrl(OLLAMA_SERVER_URL);
+  if (!baseUrl) throw new Error("OLLAMA_SERVER_URL is not configured");
+  const response = await withTimeout(
+    fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...buildAuthHeaders({ apiKey: OLLAMA_API_KEY }) },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: "json",
+        messages: [{ role: "user", content: prompt, images: [imageData] }],
+      }),
+    }),
+    OLLAMA_REQUEST_TIMEOUT_MS,
+    "Ollama AI judge"
+  );
+  const payload: any = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error || `Ollama returned ${response.status}`);
+  return payload?.message?.content || payload?.response || "{}";
 }
 
 // Run live Supabase diagnostics and onboarding queries
@@ -1101,18 +965,104 @@ const AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION: Record<"gemini-3.5-flash" | "gemin
   "gemini-2.0-flash": 0.0015,
 };
 
-function normalizeAiJudgeModel(raw: unknown): "gemini-3.5-flash" | "gemini-2.0-flash" {
-  return raw === "gemini-2.0-flash" ? "gemini-2.0-flash" : "gemini-3.5-flash";
+function normalizeAiJudgeProvider(raw: unknown): SlideshowProvider {
+  return normalizeSlideshowProvider(raw);
 }
 
-function normalizeSlideshowModel(raw: unknown): string {
+function normalizeAiJudgeModel(raw: unknown, provider: SlideshowProvider = "gemini"): string {
   const model = typeof raw === "string" ? raw.trim() : "";
-  if (!model) return OLLAMA_MODEL || "llama3.1";
+  if (model) return model;
+  if (provider === "ollama") return OLLAMA_MODEL || "llama3.1";
+  if (provider === "openai") return OPENAI_SLIDESHOW_MODEL || "gpt-4o-mini";
+  return GEMINI_SLIDESHOW_MODEL || "gemini-2.5-flash";
+}
+
+function normalizeSlideshowModel(raw: unknown, provider: SlideshowProvider = "ollama"): string {
+  const model = typeof raw === "string" ? raw.trim() : "";
+  if (!model) {
+    if (provider === "gemini") return GEMINI_SLIDESHOW_MODEL;
+    if (provider === "openai") return OPENAI_SLIDESHOW_MODEL;
+    return OLLAMA_MODEL || "llama3.1";
+  }
   return model;
 }
 
 async function fetchAvailableSlideshowModels(): Promise<string[]> {
-  return [OLLAMA_MODEL || "llama3.1"];
+  try {
+    const response = await withTimeout(
+      fetch(`${normalizeServerUrl(OLLAMA_SERVER_URL)}/api/tags`, {
+        headers: buildAuthHeaders({ apiKey: OLLAMA_API_KEY }),
+      }),
+      5000,
+      "Ollama model catalog"
+    );
+    const payload: any = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || `Ollama returned ${response.status}`);
+    const models = Array.isArray(payload?.models)
+      ? payload.models.map((model: any) => String(model?.name || model?.model || "").trim()).filter(Boolean)
+      : [];
+    return models.length ? models : [OLLAMA_MODEL || "llama3.1"];
+  } catch (err: any) {
+    console.warn("Failed to load Ollama model catalog:", err?.message || err);
+    return [OLLAMA_MODEL || "llama3.1"];
+  }
+}
+
+async function fetchGeminiModels(): Promise<string[]> {
+  const fallback = [GEMINI_SLIDESHOW_MODEL || "gemini-2.5-flash"];
+  if (!String(process.env.GEMINI_API_KEY || "").trim()) return fallback;
+
+  try {
+    const pager = await withTimeout(ai.models.list({ config: { pageSize: 100, queryBase: true } }), 10000, "Gemini model catalog");
+    const models: string[] = [];
+    for await (const model of pager as any) {
+      const name = String(model?.name || "").replace(/^models\//, "").trim();
+      const supportedActions = Array.isArray(model?.supportedActions) ? model.supportedActions : [];
+      if (name && (!supportedActions.length || supportedActions.includes("generateContent"))) {
+        models.push(name);
+      }
+    }
+    return models.length ? Array.from(new Set(models)).sort() : fallback;
+  } catch (err: any) {
+    console.warn("Failed to load Gemini model catalog:", err?.message || err);
+    return fallback;
+  }
+}
+
+async function fetchOpenAiModels(): Promise<string[]> {
+  const fallback = [OPENAI_SLIDESHOW_MODEL || "gpt-4o-mini"];
+  if (!OPENAI_API_KEY) return fallback;
+
+  try {
+    const modelsUrl = OPENAI_API_URL.replace(/\/chat\/completions\/?$/, "/models");
+    const response = await withTimeout(
+      fetch(modelsUrl, { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` } }),
+      10000,
+      "OpenAI model catalog"
+    );
+    const payload: any = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error?.message || `OpenAI returned ${response.status}`);
+    const models: string[] = Array.isArray(payload?.data)
+      ? payload.data.map((model: any) => String(model?.id || "").trim()).filter((model: string) => /^(gpt-|o[1-9]|chatgpt-)/i.test(model))
+      : [];
+    return models.length ? Array.from(new Set(models)).sort() : fallback;
+  } catch (err: any) {
+    console.warn("Failed to load OpenAI model catalog:", err?.message || err);
+    return fallback;
+  }
+}
+
+function getModelCostTier(provider: SlideshowProvider, model: string): "low" | "medium" | "high" {
+  const normalized = model.toLowerCase();
+  if (provider === "ollama") return "low";
+  if (provider === "gemini") {
+    if (normalized.includes("pro") || normalized.includes("ultra")) return "high";
+    if (normalized.includes("flash-lite") || normalized.includes("flash-8b")) return "low";
+    return "medium";
+  }
+  if (normalized.includes("mini") || normalized.includes("nano") || normalized.includes("haiku")) return "low";
+  if (/^(o1|o3|o4)/i.test(normalized) || normalized.includes("pro")) return "high";
+  return "medium";
 }
 
 async function resolveImagePathForRender(imageUrl: string, tmpDir: string): Promise<string | null> {
@@ -1863,22 +1813,62 @@ app.get("/api/admin/ai-health", async (req, res) => {
   if (!(await validateAdminUserFromQuery(req, res))) return;
 
   try {
-    const [ollama, presenton] = await Promise.all([
-      probeServiceConnectivity(OLLAMA_SERVER_URL, ["/api/tags", "/"], { apiKey: OLLAMA_API_KEY }),
-      probeServiceConnectivity(PRESENTON_SERVER_URL, ["/health", "/api/health", "/"], {
-        ...buildPresentonAuthConfig(),
-      }),
-    ]);
+    const provider = normalizeSlideshowProvider(req.query.provider);
+    const checkTextProvider = async (providerName: "gemini" | "openai") => {
+      const configured = providerName === "gemini"
+        ? Boolean(String(process.env.GEMINI_API_KEY || "").trim())
+        : Boolean(OPENAI_API_KEY);
+      const endpoint = providerName === "gemini" ? "generativelanguage.googleapis.com" : OPENAI_API_URL;
+      const startedAt = Date.now();
+      if (!configured) {
+        return { configured: false, reachable: false, endpoint, statusCode: null, latencyMs: 0, error: `${providerName} API key is not configured` };
+      }
 
-    const overallOk = ollama.reachable && (!presenton.configured || presenton.reachable);
+      try {
+        if (providerName === "gemini") {
+          await callGeminiText("Reply with READY.");
+          return { configured: true, reachable: true, endpoint, statusCode: 200, latencyMs: Date.now() - startedAt, error: null };
+        }
+
+        const response = await withTimeout(
+          fetch(OPENAI_API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
+            body: JSON.stringify({ model: OPENAI_SLIDESHOW_MODEL, messages: [{ role: "user", content: "Reply with READY." }], max_tokens: 4 }),
+          }),
+          15000,
+          "OpenAI readiness check"
+        );
+        const payload: any = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.error?.message || `OpenAI returned ${response.status}`);
+        return { configured: true, reachable: true, endpoint, statusCode: response.status, latencyMs: Date.now() - startedAt, error: null };
+      } catch (err: any) {
+        return {
+          configured: true,
+          reachable: false,
+          endpoint,
+          statusCode: Number(err?.status || err?.statusCode) || null,
+          latencyMs: Date.now() - startedAt,
+          error: err?.message || `${providerName} readiness check failed`,
+        };
+      }
+    };
+
+    const [ollama, gemini, openai] = await Promise.all([
+      probeServiceConnectivity(OLLAMA_SERVER_URL, ["/api/tags", "/"], { apiKey: OLLAMA_API_KEY }),
+      checkTextProvider("gemini"),
+      checkTextProvider("openai"),
+    ]);
+    const services = { ollama, gemini, openai };
+    const overallOk = services[provider].configured && services[provider].reachable;
     res.status(overallOk ? 200 : 503).json({
       overallOk,
-      services: {
-        ollama,
-        presenton,
-      },
+      activeProvider: provider,
+      services,
       configured: {
         ollamaModel: OLLAMA_MODEL,
+        geminiModel: GEMINI_SLIDESHOW_MODEL,
+        openAiModel: OPENAI_SLIDESHOW_MODEL,
       },
       timestamp: new Date().toISOString(),
     });
@@ -1897,13 +1887,18 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.get("/api/ai-model-catalog", async (_req, res) => {
-  const slideshowModels = await fetchAvailableSlideshowModels();
+  const [ollamaModels, geminiModels, openAiModels] = await Promise.all([
+    fetchAvailableSlideshowModels(),
+    fetchGeminiModels(),
+    fetchOpenAiModels(),
+  ]);
   res.json({
-    aiJudgeModels: Object.entries(AI_JUDGE_MODEL_COST_USD_PER_SUBMISSION).map(([model, estimatedCostUsdPerSubmission]) => ({
-      model,
-      estimatedCostUsdPerSubmission,
-    })),
-    slideshowModels: slideshowModels.map((model) => ({
+    aiJudgeProviders: [
+      { provider: "ollama", models: ollamaModels.map((model) => ({ model, costTier: getModelCostTier("ollama", model) })) },
+      { provider: "gemini", models: geminiModels.map((model) => ({ model, costTier: getModelCostTier("gemini", model) })) },
+      { provider: "openai", models: openAiModels.map((model) => ({ model, costTier: getModelCostTier("openai", model) })) },
+    ],
+    slideshowModels: ollamaModels.map((model) => ({
       model,
       baseUsd: null,
       perPhotoUsd: null,
@@ -1911,15 +1906,22 @@ app.get("/api/ai-model-catalog", async (_req, res) => {
       serverUrl: normalizeServerUrl(OLLAMA_SERVER_URL),
     })),
     slideshowProvider: {
-      provider: "ollama_presenton",
+      providers: ["ollama", "gemini", "openai"],
+      defaultProvider: "ollama",
       ollamaServerUrl: normalizeServerUrl(OLLAMA_SERVER_URL),
-      presentonServerUrl: normalizeServerUrl(PRESENTON_SERVER_URL),
+      geminiModel: GEMINI_SLIDESHOW_MODEL,
+      openAiModel: OPENAI_SLIDESHOW_MODEL,
     },
+    slideshowProviders: [
+      { provider: "ollama", models: ollamaModels.map((model) => ({ model, costTier: getModelCostTier("ollama", model) })), configured: Boolean(normalizeServerUrl(OLLAMA_SERVER_URL)) },
+      { provider: "gemini", models: geminiModels.map((model) => ({ model, costTier: getModelCostTier("gemini", model) })), configured: Boolean(String(process.env.GEMINI_API_KEY || "").trim()) },
+      { provider: "openai", models: openAiModels.map((model) => ({ model, costTier: getModelCostTier("openai", model) })), configured: Boolean(OPENAI_API_KEY) },
+    ],
   });
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiJudgeModel, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin } = req.body;
+  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiJudgeProvider, aiJudgeModel, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -1936,7 +1938,8 @@ app.post("/api/settings", (req, res) => {
     defaultLng: defaultLng !== undefined ? Number(defaultLng) : undefined,
     defaultRadius: defaultRadius !== undefined ? Number(defaultRadius) : undefined,
     aiPromptCriteria: aiPromptCriteria !== undefined ? String(aiPromptCriteria).trim() : undefined,
-    aiJudgeModel: aiJudgeModel !== undefined ? normalizeAiJudgeModel(aiJudgeModel) : undefined,
+    aiJudgeProvider: aiJudgeProvider !== undefined ? normalizeAiJudgeProvider(aiJudgeProvider) : undefined,
+    aiJudgeModel: aiJudgeModel !== undefined ? normalizeAiJudgeModel(aiJudgeModel, normalizeAiJudgeProvider(aiJudgeProvider)) : undefined,
     aiVerificationEnabled: aiVerificationEnabled !== undefined ? !!aiVerificationEnabled : undefined,
     allowForceSubmit: allowForceSubmit !== undefined ? !!allowForceSubmit : undefined,
     activeInviteCode: activeInviteCode !== undefined ? String(activeInviteCode).trim().toLowerCase() : undefined,
@@ -2556,7 +2559,8 @@ app.post("/api/verify-submission", async (req, res) => {
     };
 
     const currentSettings = getAppSettings();
-    const aiJudgeModel = normalizeAiJudgeModel(currentSettings.aiJudgeModel);
+    const aiJudgeProvider = normalizeAiJudgeProvider(currentSettings.aiJudgeProvider);
+    const aiJudgeModel = normalizeAiJudgeModel(currentSettings.aiJudgeModel, aiJudgeProvider);
 
     // Check if AI verification is disabled - auto-approve if so
     if (currentSettings.aiVerificationEnabled === false) {
@@ -2617,7 +2621,7 @@ You MUST respond strictly in valid JSON matching this schema:
 }`;
 
     // Helper to check if error is a Gemini rate limit error
-    function isGeminiRateLimitError(err: any): boolean {
+    function isAiRateLimitError(err: any): boolean {
       const errorMessage = String(err?.message || "").toLowerCase();
       const errorCode = err?.code || err?.status || "";
       
@@ -2637,43 +2641,15 @@ You MUST respond strictly in valid JSON matching this schema:
     let rateLimited = false;
     
     try {
-      const response = await ai.models.generateContent({
-        model: aiJudgeModel,
-        contents: { parts: [imagePart, { text: promptText }] },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              isMatch: {
-                type: Type.BOOLEAN,
-                description: "Whether the picture matches specifications"
-              },
-              explanation: {
-                type: Type.STRING,
-                description: "Short feedback comment to show the user"
-              },
-              confidence: {
-                type: Type.INTEGER,
-                description: "Evaluation confidence score (0 to 100)"
-              },
-              creativityScore: {
-                type: Type.INTEGER,
-                description: "Creativity bonus score (0 to 100) for above-and-beyond submissions"
-              }
-            },
-            required: ["isMatch", "explanation", "confidence", "creativityScore"]
-          }
-        }
-      });
-      parsedResult = JSON.parse((response.text || "{}").trim());
+      const responseText = await callAiJudgeText(aiJudgeProvider, aiJudgeModel, promptText, mimeType, data);
+      parsedResult = JSON.parse(responseText.trim());
     } catch (aiErr: any) {
-      console.error("Gemini AI API scanning error:", aiErr);
+      console.error(`${aiJudgeProvider} AI judge scanning error:`, aiErr);
       
       // Check if this is a rate limit error
-      if (isGeminiRateLimitError(aiErr)) {
+      if (isAiRateLimitError(aiErr)) {
         rateLimited = true;
-        console.warn("⚠️ Gemini rate limit detected. Saving submission as pending for retry.");
+        console.warn(`⚠️ ${aiJudgeProvider} rate limit detected. Saving submission as pending for retry.`);
       }
       
       // Keep gameplay flowing when external AI is unreachable:
@@ -2884,7 +2860,8 @@ app.post("/api/submissions/:subId/retry", async (req, res) => {
     }
 
     const currentSettings = getAppSettings();
-    const aiJudgeModel = normalizeAiJudgeModel(currentSettings.aiJudgeModel);
+    const aiJudgeProvider = normalizeAiJudgeProvider(currentSettings.aiJudgeProvider);
+    const aiJudgeModel = normalizeAiJudgeModel(currentSettings.aiJudgeModel, aiJudgeProvider);
     const customPromptCriteria = currentSettings.aiPromptCriteria || "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.";
 
     const promptText = `You are an AI Referee for a mobile Scavenger Hunt game!
@@ -2914,36 +2891,8 @@ You MUST respond strictly in valid JSON matching this schema:
     let rateLimited = false;
 
     try {
-      const response = await ai.models.generateContent({
-        model: aiJudgeModel,
-        contents: { parts: [imagePart, { text: promptText }] },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              isMatch: {
-                type: Type.BOOLEAN,
-                description: "Whether the picture matches specifications"
-              },
-              explanation: {
-                type: Type.STRING,
-                description: "Short feedback comment to show the user"
-              },
-              confidence: {
-                type: Type.INTEGER,
-                description: "Evaluation confidence score (0 to 100)"
-              },
-              creativityScore: {
-                type: Type.INTEGER,
-                description: "Creativity bonus score (0 to 100) for above-and-beyond submissions"
-              }
-            },
-            required: ["isMatch", "explanation", "confidence", "creativityScore"]
-          }
-        }
-      });
-      parsedResult = JSON.parse((response.text || "{}").trim());
+      const responseText = await callAiJudgeText(aiJudgeProvider, aiJudgeModel, promptText, imagePart.inlineData.mimeType, imagePart.inlineData.data);
+      parsedResult = JSON.parse(responseText.trim());
     } catch (aiErr: any) {
       console.error("Gemini retry error:", aiErr);
       
@@ -3143,7 +3092,8 @@ app.post("/api/slideshow/generate-leaderboard-slide", async (req, res) => {
 app.post("/api/slideshow/generate", async (req, res) => {
   try {
     const { submissions, createdBy, title, promptTemplate, includeMissionNarration, missionSlidesScript, leaderboardSlideScript, songQueries } = req.body;
-    const chosenSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel);
+    const chosenSlideshowProvider = normalizeSlideshowProvider(req.body?.slideshowProvider);
+    const chosenSlideshowModel = normalizeSlideshowModel(req.body?.slideshowModel, chosenSlideshowProvider);
     const requestedSongQueries = parseRequestedSongQueries(songQueries);
 
     if (!submissions || !Array.isArray(submissions) || submissions.length === 0) {
@@ -3216,34 +3166,10 @@ app.post("/api/slideshow/generate", async (req, res) => {
       ? playerTotals.map((entry, idx) => `${idx + 1}. ${entry.username}: ${entry.score} pts`).join("\n")
       : "No player totals available";
 
-    const defaultPrompt = `You are an expert multimedia producer specializing in creating family reunion slideshows.
-
-I have a collection of photos from a family scavenger hunt. Here are the photos grouped by mission:
-{{PHOTO_LIST}}
-
-Please generate a detailed slideshow script that includes:
-
-0. **Mission Intro Cards**: Before each mission photo group, insert a non-image card showing that mission title and description
-1. **Mission Group Structure**: Keep photos grouped by mission while suggesting timing (2-4 seconds per slide)
-2. **Transitions**: Recommend transitions between slides and between mission groups
-3. **Music Recommendations**: Suggest 2-3 background music tracks that fit the full story arc
-4. **Timing & Pacing**: Provide duration estimate and pacing guidance by mission group
-5. **Animation Effects**: Suggest text overlay animations for mission title and photographer names
-6. **Color Grading**: Suggest filters or adjustments to maintain visual consistency
-7. **Voiceover Suggestions**: Optional brief commentary between mission groups
-
-Format your response as a professional production guide that a video editor or slideshow software operator could follow.
-
-Make it uplifting and celebratory, suitable for a family reunion event.
-
-Important output requirements:
-- This script will be used to generate an MP4 slideshow.
-- Include clear guidance for title cards, per-photo overlays, and pacing.`;
-
     // Admin can edit prompt before generation. If token omitted, append grouped list safely.
     const basePrompt = typeof promptTemplate === "string" && promptTemplate.trim().length > 0
       ? promptTemplate.trim()
-      : defaultPrompt;
+      : DEFAULT_SLIDESHOW_PROMPT;
     const slideshowPrompt = basePrompt.includes("{{PHOTO_LIST}}")
       ? basePrompt.replace("{{PHOTO_LIST}}", submissionsList)
       : `${basePrompt}\n\nMission-grouped photo list:\n${submissionsList}`;
@@ -3275,7 +3201,7 @@ Important output requirements:
     };
 
     let script = "";
-    let usedAiModel = "presenton-mission-grouped";
+    let usedAiModel = "local-mission-grouped";
     let usedFallbackScript = false;
     const providedMissionSlidesScript = typeof missionSlidesScript === "string" ? missionSlidesScript.trim() : "";
     const providedLeaderboardSlideScript = typeof leaderboardSlideScript === "string" ? leaderboardSlideScript.trim() : "";
@@ -3299,6 +3225,8 @@ Important output requirements:
         submissionOrder: normalizedSubmissionOrder,
         providedMissionSlidesScript,
         providedLeaderboardSlideScript,
+        slideshowProvider: chosenSlideshowProvider,
+        slideshowModel: chosenSlideshowModel,
       };
 
       return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
@@ -3331,13 +3259,13 @@ Important output requirements:
           slideshow: cachedSlideshow,
           photoCount: orderedSubmissions.length,
           generation: {
-            aiModel: "presenton-cache-hit",
+            aiModel: "local-cache-hit",
             requestedMode: "mp4_only",
             usedFallbackScript: false,
             costEstimate: null,
             geminiApiUsageCostEstimate: null,
             slideshowModel: chosenSlideshowModel,
-            slideshowProvider: "ollama_presenton",
+            slideshowProvider: chosenSlideshowProvider,
             narrationRequested: false,
             narrationGeneratedByAi: false,
             cacheHit: true,
@@ -3345,7 +3273,7 @@ Important output requirements:
               created: !!cachedVideoUrl,
               videoUrl: cachedVideoUrl,
               mode: "local_ffmpeg",
-              aiModel: "presenton-cache-hit",
+              aiModel: "local-cache-hit",
               usedFallbackPlan: !cachedVideoUrl,
               error: cachedVideoUrl ? null : "Cached slideshow exists but MP4 is not available",
             }
@@ -3357,11 +3285,6 @@ Important output requirements:
       console.warn("Slideshow cache lookup failed, continuing with generation:", cacheErr?.message || cacheErr);
     }
 
-    const presentonConfigured = normalizeServerUrl(PRESENTON_SERVER_URL).length > 0;
-    const skipOllamaScriptGeneration =
-      OLLAMA_SCRIPT_MODE === "disabled" ||
-      (OLLAMA_SCRIPT_MODE === "offload_if_presenton" && presentonConfigured);
-
     script = [
       "KinQuest Mission Group Slideshow Plan",
       "",
@@ -3371,13 +3294,18 @@ Important output requirements:
       "",
       "Keep photos grouped by mission with a mission card before each group and one final leaderboard slide at the end.",
     ].join("\n");
-    if (!presentonConfigured) {
+    try {
+      const generated = await callSlideshowText(chosenSlideshowProvider, slideshowPromptWithScores);
+      script = generated.text;
+      usedAiModel = generated.model;
+    } catch (generationErr: any) {
       usedFallbackScript = true;
       usedAiModel = "local-mission-grouped";
+      console.warn(`${chosenSlideshowProvider} slideshow generation failed, using local plan:`, generationErr?.message || generationErr);
     }
 
     let narrationGeneratedByAi = false;
-    if (includeMissionNarration === true && missionOrder.length > 0 && !skipOllamaScriptGeneration) {
+    if (includeMissionNarration === true && missionOrder.length > 0 && !usedFallbackScript) {
       let narratorOverlayMap: Record<string, string> = {};
       try {
         const narrationPrompt = [
@@ -3389,7 +3317,7 @@ Important output requirements:
           ...missionOrder.map((missionTitle, idx) => `${idx + 1}. ${missionTitle}`),
         ].join("\n");
 
-        const narratorResponse = await callOllamaText(narrationPrompt);
+        const narratorResponse = await callSlideshowText(chosenSlideshowProvider, narrationPrompt);
         const parsed = JSON.parse((narratorResponse.text || "{}").trim());
         const overlays = Array.isArray(parsed?.overlays) ? parsed.overlays : [];
         overlays.forEach((entry: any) => {
@@ -3424,7 +3352,7 @@ Important output requirements:
     const slideshow: Slideshow = {
       id: slideshowId,
       title: title || `Family Slideshow - ${new Date().toLocaleDateString()}`,
-      description: `${cacheTag} Presenton mission-group slideshow`,
+      description: `${cacheTag} Local FFmpeg mission-group slideshow`,
       script: script,
       submissionIds: orderedSubmissions.map((s) => s.id),
       createdBy: createdBy,
@@ -3483,7 +3411,7 @@ Important output requirements:
     let videoGeneration: {
       created: boolean;
       videoUrl: string | null;
-      mode: "presenton_remote" | "presenton_plan_local_render" | "local_ffmpeg";
+      mode: "local_ffmpeg";
       aiModel: string;
       usedFallbackPlan: boolean;
       error: string | null;
@@ -3496,118 +3424,33 @@ Important output requirements:
       error: null,
     };
 
-    const renderSlidesFromPlanRows = (
-      rows: Array<{ submissionId: string; overlayText: string; durationSeconds: number; transition: string }>
-    ) => {
-      const imageBySubmissionId = new Map(sourceSlides.map((slide) => [slide.submissionId, slide]));
-      const renderSlides: Array<{ imageUrl?: string; overlayText: string; durationSeconds: number; transition: string; isTitleCard?: boolean }> = [];
-      let previousMissionKey: string | null = null;
-
-      rows.forEach((row) => {
-        const source = imageBySubmissionId.get(row.submissionId);
-        if (!source) return;
-
-        const missionKey = `${source.missionTitle}||${source.missionDescription}`;
-        if (missionKey !== previousMissionKey) {
-          previousMissionKey = missionKey;
-          renderSlides.push({
-            overlayText: `${source.missionTitle}\n${source.missionDescription}`.trim(),
-            durationSeconds: 4,
-            transition: "fade",
-            isTitleCard: true,
-          });
-        }
-
-        renderSlides.push({
-          imageUrl: source.imageUrl,
-          overlayText: row.overlayText || source.username,
-          durationSeconds: row.durationSeconds,
-          transition: row.transition,
-        });
-      });
-
-      if (renderSlides.length) {
-        renderSlides.push({
-          overlayText: buildFinalScoreboardOverlay(playerTotals),
-          durationSeconds: 6,
-          transition: "fade",
-          isTitleCard: true,
-        });
-      }
-
-      return renderSlides;
-    };
-
     if (sourceSlides.length > 0) {
-      const shouldAttemptPresenton = presentonConfigured && !(PI_CONSTRAINED_RENDER && SKIP_PRESENTON_ON_CONSTRAINED_RENDER);
-
-      if (shouldAttemptPresenton) {
-        try {
-          const presentonResult = await callPresentonSlideshow(slideshow.id, script, sourceSlides, playerTotals);
-
-          if (presentonResult.videoUrl) {
-            videoGeneration = {
-              created: true,
-              videoUrl: presentonResult.videoUrl,
-              mode: "presenton_remote",
-              aiModel: usedAiModel,
-              usedFallbackPlan: false,
-              error: null,
-            };
-          } else if (presentonResult.slidesPlan?.length) {
-            const renderSlides = renderSlidesFromPlanRows(presentonResult.slidesPlan);
-            if (!renderSlides.length) {
-              throw new Error("Presenton returned an empty slideshow plan");
-            }
-
-            const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-              renderSlideshowMp4(slideshow.id, renderSlides, { requestedSongQueries })
-            );
-
-            videoGeneration = {
-              created: true,
-              videoUrl: rendered.outputUrl,
-              mode: "presenton_plan_local_render",
-              aiModel: usedAiModel,
-              usedFallbackPlan: false,
-              error: null,
-            };
-          }
-        } catch (presentonErr: any) {
-          console.warn("Presenton generation failed, falling back to local MP4 render:", presentonErr?.message || presentonErr);
+      try {
+        const fallbackSlides = buildGroupedFallbackSlides();
+        if (!fallbackSlides.length) {
+          throw new Error("No slides available for local MP4 render");
         }
-      } else if (presentonConfigured) {
-        console.log("Skipping Presenton for constrained render host; using local MP4 pipeline");
-      }
-
-      if (!videoGeneration.created) {
-        try {
-          const fallbackSlides = buildGroupedFallbackSlides();
-          if (!fallbackSlides.length) {
-            throw new Error("No slides available for local MP4 render");
-          }
-          const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
-            renderSlideshowMp4(slideshow.id, fallbackSlides, { requestedSongQueries })
-          );
-          videoGeneration = {
-            created: true,
-            videoUrl: rendered.outputUrl,
-            mode: "local_ffmpeg",
-            aiModel: usedAiModel,
-            usedFallbackPlan: true,
-            error: null,
-          };
-        } catch (localRenderErr: any) {
-          console.error("Local slideshow render failed:", localRenderErr);
-          videoGeneration = {
-            created: false,
-            videoUrl: null,
-            mode: "local_ffmpeg",
-            aiModel: usedAiModel,
-            usedFallbackPlan: true,
-            error: localRenderErr?.message || "Failed to render slideshow video",
-          };
-        }
+        const rendered = await slideshowRenderQueue.enqueue(slideshow.id, () =>
+          renderSlideshowMp4(slideshow.id, fallbackSlides, { requestedSongQueries })
+        );
+        videoGeneration = {
+          created: true,
+          videoUrl: rendered.outputUrl,
+          mode: "local_ffmpeg",
+          aiModel: usedAiModel,
+          usedFallbackPlan: true,
+          error: null,
+        };
+      } catch (localRenderErr: any) {
+        console.error("Local slideshow render failed:", localRenderErr);
+        videoGeneration = {
+          created: false,
+          videoUrl: null,
+          mode: "local_ffmpeg",
+          aiModel: usedAiModel,
+          usedFallbackPlan: true,
+          error: localRenderErr?.message || "Failed to render slideshow video",
+        };
       }
     } else {
       videoGeneration.error = "No valid image URLs available to render slideshow video";
@@ -3624,7 +3467,7 @@ Important output requirements:
         costEstimate: null,
         geminiApiUsageCostEstimate: null,
         slideshowModel: chosenSlideshowModel,
-        slideshowProvider: "ollama_presenton",
+        slideshowProvider: chosenSlideshowProvider,
         narrationRequested: includeMissionNarration === true,
         narrationGeneratedByAi,
         video: videoGeneration
@@ -3818,7 +3661,7 @@ app.patch("/api/slideshows/:id", async (req, res) => {
 app.post("/api/slideshows/:id/gemini-create", async (req, res) => {
   return res.status(410).json({
     error: "Gemini slideshow endpoint has been retired",
-    details: "Use /api/slideshow/generate for Ollama + Presenton MP4 generation, or /api/slideshows/:id/render-mp4 for local MP4 rendering."
+    details: "Use /api/slideshow/generate for local FFmpeg MP4 generation, or /api/slideshows/:id/render-mp4 to render an existing slideshow."
   });
 });
 

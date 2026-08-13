@@ -29,12 +29,18 @@ interface AiHealthResponse {
   overallOk: boolean;
   services: {
     ollama: AiServiceProbe;
-    presenton: AiServiceProbe;
+    gemini: AiServiceProbe;
+    openai: AiServiceProbe;
   };
   configured?: {
     ollamaModel?: string;
   };
   timestamp: string;
+}
+
+interface AiJudgeModelOption {
+  model: string;
+  costTier: "low" | "medium" | "high";
 }
 
 interface AdminSettingsModalProps {
@@ -55,8 +61,10 @@ interface AdminSettingsModalProps {
   onRadiusChange: (value: number) => void;
   aiPromptInput: string;
   onAiPromptChange: (value: string) => void;
-  aiJudgeModelInput: "gemini-3.5-flash" | "gemini-2.0-flash";
-  onAiJudgeModelChange: (value: "gemini-3.5-flash" | "gemini-2.0-flash") => void;
+  aiJudgeProviderInput: "ollama" | "gemini" | "openai";
+  onAiJudgeProviderChange: (value: "ollama" | "gemini" | "openai") => void;
+  aiJudgeModelInput: string;
+  onAiJudgeModelChange: (value: string) => void;
   aiVerificationEnabledInput: boolean;
   onAiVerificationEnabledChange: (value: boolean) => void;
   allowForceSubmitInput: boolean;
@@ -96,6 +104,8 @@ interface AdminSettingsModalProps {
   adminSessionId?: string | null;
   adminActiveSessions?: number;
   adminCurrentSessionActive?: boolean;
+  slideshowProvider: "ollama" | "gemini" | "openai";
+  onProviderAvailabilityChange?: (availability: Record<"ollama" | "gemini" | "openai", boolean>) => void;
 }
 
 export function AdminSettingsModal({
@@ -116,6 +126,8 @@ export function AdminSettingsModal({
   onRadiusChange,
   aiPromptInput,
   onAiPromptChange,
+  aiJudgeProviderInput,
+  onAiJudgeProviderChange,
   aiJudgeModelInput,
   onAiJudgeModelChange,
   aiVerificationEnabledInput,
@@ -156,23 +168,50 @@ export function AdminSettingsModal({
   onSubmitPasswordChange,
   adminSessionId = null,
   adminActiveSessions = 0,
-  adminCurrentSessionActive = false
+  adminCurrentSessionActive = false,
+  slideshowProvider = "ollama",
+  onProviderAvailabilityChange
 }: AdminSettingsModalProps) {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
-  const aiJudgeCostByModel: Record<"gemini-3.5-flash" | "gemini-2.0-flash", number> = {
-    "gemini-3.5-flash": 0.0025,
-    "gemini-2.0-flash": 0.0015,
-  };
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
   const [aiHealth, setAiHealth] = useState<AiHealthResponse | null>(null);
   const [aiHealthLoading, setAiHealthLoading] = useState(false);
+  const [aiHealthRefreshingProvider, setAiHealthRefreshingProvider] = useState<string | null>(null);
   const [aiHealthError, setAiHealthError] = useState<string | null>(null);
+  const [aiJudgeModels, setAiJudgeModels] = useState<Record<"ollama" | "gemini" | "openai", AiJudgeModelOption[]>>({
+    ollama: [],
+    gemini: [],
+    openai: [],
+  });
 
-  const loadAiHealth = async () => {
+  const loadAiJudgeModels = async () => {
+    try {
+      const response = await fetch("/api/ai-model-catalog");
+      if (!response.ok) return;
+      const data = await response.json();
+      const providers = Array.isArray(data?.aiJudgeProviders) ? data.aiJudgeProviders : [];
+      const models = (provider: "ollama" | "gemini" | "openai"): AiJudgeModelOption[] => {
+        const entry = providers.find((item: any) => item?.provider === provider);
+        return Array.isArray(entry?.models)
+          ? entry.models
+              .map((model: any) => ({
+                model: typeof model === "string" ? model.trim() : String(model?.model || "").trim(),
+                costTier: model?.costTier === "high" || model?.costTier === "medium" ? model.costTier : "low",
+              }))
+              .filter((model: AiJudgeModelOption) => model.model.length > 0)
+          : [];
+      };
+      setAiJudgeModels({ ollama: models("ollama"), gemini: models("gemini"), openai: models("openai") });
+    } catch (err) {
+      // Keep the current model if catalog discovery is unavailable.
+    }
+  };
+
+  const loadAiHealth = async (providerToRefresh?: "ollama" | "gemini" | "openai") => {
     const userId = localStorage.getItem("scavenger_uid");
     if (!userId) {
       setAiHealthError("Not logged in");
@@ -180,32 +219,51 @@ export function AdminSettingsModal({
     }
 
     setAiHealthLoading(true);
+    setAiHealthRefreshingProvider(providerToRefresh || null);
     setAiHealthError(null);
     try {
-      const response = await fetch(`/api/admin/ai-health?userId=${encodeURIComponent(userId)}`);
+      const response = await fetch(`/api/admin/ai-health?userId=${encodeURIComponent(userId)}&provider=${slideshowProvider}`);
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
+      if (!response.ok && !data?.activeProvider) {
         throw new Error(data?.error || data?.details || "Failed to fetch AI health");
       }
       setAiHealth(data as AiHealthResponse);
+      onProviderAvailabilityChange?.({
+        ollama: Boolean(data?.services?.ollama?.configured && data?.services?.ollama?.reachable),
+        gemini: Boolean(data?.services?.gemini?.configured && data?.services?.gemini?.reachable),
+        openai: Boolean(data?.services?.openai?.configured && data?.services?.openai?.reachable),
+      });
     } catch (err: any) {
       setAiHealthError(err?.message || "Failed to fetch AI health");
       setAiHealth(null);
     } finally {
       setAiHealthLoading(false);
+      setAiHealthRefreshingProvider(null);
     }
   };
 
   useEffect(() => {
     if (!isOpen) return;
     loadAiHealth();
-  }, [isOpen]);
+    loadAiJudgeModels();
+  }, [isOpen, slideshowProvider]);
 
   if (!isOpen) return null;
 
   const inviteUrl = inviteCodeInput.trim() 
     ? `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(inviteCodeInput.trim().toLowerCase())}`
     : "";
+  const providerHealthCards: Array<{ key: string; label: string; probe: AiServiceProbe }> = aiHealth
+    ? [
+        { key: "ollama", label: "Ollama", probe: aiHealth.services.ollama },
+        { key: "gemini", label: "Gemini", probe: aiHealth.services.gemini },
+        { key: "openai", label: "OpenAI", probe: aiHealth.services.openai },
+      ]
+    : [];
+  const selectedJudgeModels = aiJudgeModels[aiJudgeProviderInput];
+  const judgeModelOptions = selectedJudgeModels.some((option) => option.model === aiJudgeModelInput)
+    ? selectedJudgeModels
+    : [{ model: aiJudgeModelInput, costTier: "medium" as const }, ...selectedJudgeModels].filter((option) => option.model);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     // Only close if clicking on the backdrop, not the modal
@@ -585,11 +643,11 @@ export function AdminSettingsModal({
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider">AI Service Health</p>
-                  <p className="text-[9px] text-[#8c8c82]">Connectivity from this server container to Ollama and Presenton.</p>
+                  <p className="text-[9px] text-[#8c8c82]">Connectivity from this server container to Ollama, Gemini, and OpenAI.</p>
                 </div>
                 <button
                   type="button"
-                  onClick={loadAiHealth}
+                  onClick={() => loadAiHealth()}
                   disabled={aiHealthLoading}
                   className="px-2.5 py-1.5 rounded-lg border border-[#dcdcd4] bg-white text-[10px] font-bold text-[#5a5a40] hover:bg-[#f1f1ea] transition disabled:opacity-50"
                 >
@@ -610,32 +668,41 @@ export function AdminSettingsModal({
                     Overall Status: {aiHealth.overallOk ? "Healthy" : "Degraded"}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      { key: "ollama", label: "Ollama", probe: aiHealth.services.ollama, optionalWhenMissing: false },
-                      { key: "presenton", label: "Presenton", probe: aiHealth.services.presenton, optionalWhenMissing: true },
-                    ].map((service) => {
-                      const tone = getProbeTone(service.probe, service.optionalWhenMissing);
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {providerHealthCards.map((service) => {
+                      const probe = service.probe;
+                      const tone = getProbeTone(probe, false);
                       const classes = toneClasses[tone];
 
-                      let statusText = service.probe.reachable ? "reachable" : "unreachable";
-                      if (!service.probe.configured && service.optionalWhenMissing) {
-                        statusText = "not configured (optional)";
+                      let statusText = probe.reachable ? "reachable" : "unreachable";
+                      if (!probe.configured) {
+                        statusText = "not configured";
                       }
 
                       return (
                         <div key={service.key} className={`rounded-lg border px-2.5 py-2 ${classes.badge}`}>
                           <div className="flex items-center justify-between gap-2">
                             <span className={`text-[10px] font-bold uppercase tracking-wider ${classes.text}`}>{service.label}</span>
-                            <span className="flex items-center gap-1">
+                            <span className="flex items-center gap-1.5">
                               <span className={`inline-block h-2.5 w-2.5 rounded-full ${classes.dot}`} />
                               <span className={`text-[9px] font-semibold ${classes.text}`}>{statusText}</span>
+                              <button
+                                type="button"
+                                onClick={() => loadAiHealth(service.key as "ollama" | "gemini" | "openai")}
+                                disabled={aiHealthLoading}
+                                className="rounded p-0.5 text-[#8c8c82] hover:bg-white/70 hover:text-[#5a5a40] disabled:opacity-50"
+                                title={`Refresh ${service.label} status`}
+                                aria-label={`Refresh ${service.label} status`}
+                              >
+                                <RotateCcw className={`h-3 w-3 ${aiHealthRefreshingProvider === service.key ? "animate-spin" : ""}`} />
+                              </button>
                             </span>
                           </div>
                           <div className="mt-1 text-[9px] text-[#5a5a40] space-y-0.5">
-                            <div>Status Code: {service.probe.statusCode ?? "-"}</div>
-                            <div>Latency: {service.probe.latencyMs !== null ? `${service.probe.latencyMs}ms` : "-"}</div>
-                            <div className="truncate">Endpoint: {service.probe.endpoint || "-"}</div>
+                            <div>Status Code: {probe.statusCode ?? "-"}</div>
+                            <div>Latency: {probe.latencyMs !== null ? `${probe.latencyMs}ms` : "-"}</div>
+                            <div className="truncate">Endpoint: {probe.endpoint || "-"}</div>
+                            {probe.error && <div className="break-words text-red-700">Error: {probe.error}</div>}
                           </div>
                         </div>
                       );
@@ -652,24 +719,35 @@ export function AdminSettingsModal({
 
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-[#5a5a40] uppercase tracking-wider block">
-                AI Judge Model
+                AI Judge Provider and Model
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-start">
                 <select
-                  value={aiJudgeModelInput}
-                  onChange={(e) => onAiJudgeModelChange(e.target.value as "gemini-3.5-flash" | "gemini-2.0-flash")}
+                  value={aiJudgeProviderInput}
+                  onChange={(e) => {
+                    const provider = e.target.value as "ollama" | "gemini" | "openai";
+                    onAiJudgeProviderChange(provider);
+                    const firstModel = aiJudgeModels[provider][0]?.model;
+                    if (firstModel) onAiJudgeModelChange(firstModel);
+                  }}
                   className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2.5 outline-none font-mono text-[#2d2d2d] focus:ring-1 focus:ring-[#5a5a40]"
                 >
-                  <option value="gemini-3.5-flash">gemini-3.5-flash</option>
-                  <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                  <option value="ollama" disabled={!aiHealth?.services.ollama.configured || !aiHealth.services.ollama.reachable}>Ollama{aiHealth && (!aiHealth.services.ollama.configured || !aiHealth.services.ollama.reachable) ? " (not ready)" : ""}</option>
+                  <option value="gemini" disabled={!aiHealth?.services.gemini.configured || !aiHealth.services.gemini.reachable}>Gemini{aiHealth && (!aiHealth.services.gemini.configured || !aiHealth.services.gemini.reachable) ? " (not ready)" : ""}</option>
+                  <option value="openai" disabled={!aiHealth?.services.openai.configured || !aiHealth.services.openai.reachable}>OpenAI{aiHealth && (!aiHealth.services.openai.configured || !aiHealth.services.openai.reachable) ? " (not ready)" : ""}</option>
                 </select>
-                <div className="rounded-xl border border-[#dcdcd4] bg-[#f5f5f0]/60 px-3 py-2 text-[10px] text-[#5a5a40]">
-                  <div className="font-bold uppercase tracking-wider">Est. Cost / Submission</div>
-                  <div className="font-mono text-xs mt-0.5">${aiJudgeCostByModel[aiJudgeModelInput].toFixed(4)} USD</div>
-                </div>
+                <select
+                  value={aiJudgeModelInput}
+                  onChange={(e) => onAiJudgeModelChange(e.target.value)}
+                  className="w-full text-xs bg-[#f5f5f0]/70 border border-[#dcdcd4] rounded-xl px-3 py-2.5 outline-none font-mono text-[#2d2d2d] focus:ring-1 focus:ring-[#5a5a40]"
+                >
+                  {judgeModelOptions.length > 0
+                    ? judgeModelOptions.map((option) => <option key={option.model} value={option.model}>{option.model} ({option.costTier} cost)</option>)
+                    : <option value={aiJudgeModelInput}>{aiJudgeModelInput || "Loading models..."}</option>}
+                </select>
               </div>
               <p className="text-[9px] text-[#8c8c82]">
-                Estimated cost assumes one image verification call with prompt + structured response.
+                The selected provider must be configured and reachable. Use a vision-capable model for image verification.
               </p>
             </div>
 
@@ -699,7 +777,7 @@ export function AdminSettingsModal({
               />
               <div className="leading-none">
                 <span className="text-xs font-bold text-[#5a5a40] block">Enable AI Photo Verification</span>
-                <span className="text-[9px] text-[#8c8c82]">When enabled, Gemini AI reviews each submitted photo. When disabled, all submissions auto-approve instantly.</span>
+                <span className="text-[9px] text-[#8c8c82]">When enabled, the selected AI provider reviews each submitted photo. When disabled, all submissions auto-approve instantly.</span>
               </div>
             </label>
 

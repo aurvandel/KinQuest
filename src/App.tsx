@@ -83,8 +83,16 @@ export default function App() {
   const [adminLngInput, setAdminLngInput] = useState(-111.3800);
   const [adminRadiusInput, setAdminRadiusInput] = useState(200);
   const [adminAiPromptCriteriaInput, setAdminAiPromptCriteriaInput] = useState("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
-  const [adminAiJudgeModelInput, setAdminAiJudgeModelInput] = useState<"gemini-3.5-flash" | "gemini-2.0-flash">("gemini-3.5-flash");
+  const [adminAiJudgeProviderInput, setAdminAiJudgeProviderInput] = useState<"ollama" | "gemini" | "openai">("gemini");
+  const [adminAiJudgeModelInput, setAdminAiJudgeModelInput] = useState("gemini-2.5-flash");
   const [adminAiVerificationEnabledInput, setAdminAiVerificationEnabledInput] = useState(true);
+
+  const handleAiJudgeProviderChange = (provider: "ollama" | "gemini" | "openai") => {
+    setAdminAiJudgeProviderInput(provider);
+    setAdminAiJudgeModelInput(
+      provider === "ollama" ? "llama3.1" : provider === "openai" ? "gpt-4o-mini" : "gemini-2.5-flash"
+    );
+  };
   const [adminAllowForceSubmitInput, setAdminAllowForceSubmitInput] = useState(false);
   const [adminActiveInviteCodeInput, setAdminActiveInviteCodeInput] = useState("watkins");
   const [adminInviteRequiredInput, setAdminInviteRequiredInput] = useState(true);
@@ -141,15 +149,26 @@ export default function App() {
   const [slideshowGeneratedScript, setSlideshowGeneratedScript] = useState<string | null>(null);
   const [slideshowError, setSlideshowError] = useState<string | null>(null);
   const [slideshowRefreshKey, setSlideshowRefreshKey] = useState(0);
+  const [slideshowProvider, setSlideshowProvider] = useState<"ollama" | "gemini" | "openai">("ollama");
   const [slideshowAiHealth, setSlideshowAiHealth] = useState<{
     overallOk: boolean;
+    activeProvider: "ollama" | "gemini" | "openai";
     services: {
       ollama: { configured: boolean; reachable: boolean };
-      presenton: { configured: boolean; reachable: boolean };
+      gemini: { configured: boolean; reachable: boolean };
+      openai: { configured: boolean; reachable: boolean };
     };
   } | null>(null);
   const [slideshowAiHealthLoading, setSlideshowAiHealthLoading] = useState(false);
   const [slideshowAiHealthError, setSlideshowAiHealthError] = useState<string | null>(null);
+  const [providerAvailability, setProviderAvailability] = useState<Record<"ollama" | "gemini" | "openai", boolean> | null>(null);
+  const activeProviderAvailability = slideshowAiHealth
+    ? {
+        ollama: slideshowAiHealth.services.ollama.configured && slideshowAiHealth.services.ollama.reachable,
+        gemini: slideshowAiHealth.services.gemini.configured && slideshowAiHealth.services.gemini.reachable,
+        openai: slideshowAiHealth.services.openai.configured && slideshowAiHealth.services.openai.reachable,
+      }
+    : null;
   
   // Ref to track current active tab in WebSocket handlers without causing reconnection
   const activeTabRef = useRef<"missions" | "map" | "leaderboard" | "feed" | "chat" | "gallery" | "slideshows" | "approval" | "logs">("missions");
@@ -282,23 +301,33 @@ export default function App() {
     setSlideshowAiHealthLoading(true);
     setSlideshowAiHealthError(null);
     try {
-      const response = await fetch(`/api/admin/ai-health?userId=${encodeURIComponent(profile.id)}`);
+      const response = await fetch(`/api/admin/ai-health?userId=${encodeURIComponent(profile.id)}&provider=${slideshowProvider}`);
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
+      if (!response.ok && !data?.activeProvider) {
         throw new Error(data?.error || data?.details || "Failed to load AI health");
       }
       setSlideshowAiHealth({
         overallOk: Boolean(data?.overallOk),
+        activeProvider: data?.activeProvider === "gemini" || data?.activeProvider === "openai" ? data.activeProvider : "ollama",
         services: {
           ollama: {
             configured: Boolean(data?.services?.ollama?.configured),
             reachable: Boolean(data?.services?.ollama?.reachable),
           },
-          presenton: {
-            configured: Boolean(data?.services?.presenton?.configured),
-            reachable: Boolean(data?.services?.presenton?.reachable),
+          gemini: {
+            configured: Boolean(data?.services?.gemini?.configured),
+            reachable: Boolean(data?.services?.gemini?.reachable),
+          },
+          openai: {
+            configured: Boolean(data?.services?.openai?.configured),
+            reachable: Boolean(data?.services?.openai?.reachable),
           },
         },
+      });
+      setProviderAvailability({
+        ollama: Boolean(data?.services?.ollama?.configured && data?.services?.ollama?.reachable),
+        gemini: Boolean(data?.services?.gemini?.configured && data?.services?.gemini?.reachable),
+        openai: Boolean(data?.services?.openai?.configured && data?.services?.openai?.reachable),
       });
     } catch (err: any) {
       setSlideshowAiHealthError(err?.message || "Failed to load AI health");
@@ -312,7 +341,7 @@ export default function App() {
     if (activeTab === "slideshows" && profile?.role === "admin") {
       fetchSlideshowAiHealth();
     }
-  }, [activeTab, profile?.role, profile?.id]);
+  }, [activeTab, profile?.role, profile?.id, slideshowProvider]);
 
   // App uses Supabase exclusively for data persistence
   const [sqlVisible, setSqlVisible] = useState(false);
@@ -1200,7 +1229,8 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminLngInput(settings.defaultLng ?? -111.3800);
       setAdminRadiusInput(settings.defaultRadius ?? 200);
       setAdminAiPromptCriteriaInput(settings.aiPromptCriteria ?? "Friendly, witty, and slightly funny AI Referee. High-spirited, playful 1-2 sentence description explaining what you spotted.");
-      setAdminAiJudgeModelInput(settings.aiJudgeModel === "gemini-2.0-flash" ? "gemini-2.0-flash" : "gemini-3.5-flash");
+      setAdminAiJudgeProviderInput(settings.aiJudgeProvider === "ollama" || settings.aiJudgeProvider === "openai" ? settings.aiJudgeProvider : "gemini");
+      setAdminAiJudgeModelInput(settings.aiJudgeModel === "gemini-2.0-flash" ? "gemini-2.5-flash" : settings.aiJudgeModel || "gemini-2.5-flash");
       setAdminAiVerificationEnabledInput(settings.aiVerificationEnabled !== false);
       setAdminAllowForceSubmitInput(settings.allowForceSubmit === true);
       setAdminActiveInviteCodeInput(settings.activeInviteCode ?? "hunt-party-2026");
@@ -1316,7 +1346,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLng: Number(adminLngInput) || -111.3800,
           defaultRadius: Number(adminRadiusInput) || 200,
           aiPromptCriteria: adminAiPromptCriteriaInput.trim(),
-          aiJudgeModel: adminAiJudgeModelInput,
+          aiJudgeProvider: adminAiJudgeProviderInput,
+          aiJudgeModel: adminAiJudgeModelInput.trim(),
           aiVerificationEnabled: adminAiVerificationEnabledInput,
           allowForceSubmit: adminAllowForceSubmitInput,
           activeInviteCode: adminActiveInviteCodeInput.trim().toLowerCase(),
@@ -1360,7 +1391,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           defaultLng: -111.3800,
           defaultRadius: 200,
           aiPromptCriteria: "Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!",
-          aiJudgeModel: "gemini-3.5-flash",
+          aiJudgeProvider: "gemini",
+          aiJudgeModel: "gemini-2.5-flash",
           aiVerificationEnabled: true,
           allowForceSubmit: false,
           activeInviteCode: "watkins",
@@ -1381,7 +1413,8 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminLngInput(-111.3800);
         setAdminRadiusInput(200);
         setAdminAiPromptCriteriaInput("Friendly, warm, and playful AI Referee. High-spirited, encouraging 1-2 sentence description celebrating family members and awarding bonus points for reunion spirit!");
-        setAdminAiJudgeModelInput("gemini-3.5-flash");
+        setAdminAiJudgeProviderInput("gemini");
+        setAdminAiJudgeModelInput("gemini-2.5-flash");
         setAdminAiVerificationEnabledInput(true);
         setAdminAllowForceSubmitInput(false);
         setAdminActiveInviteCodeInput("watkins");
@@ -2728,9 +2761,13 @@ CREATE TABLE IF NOT EXISTS submissions (
             lngInput={adminLngInput}
             onLngChange={setAdminLngInput}
             radiusInput={adminRadiusInput}
+            slideshowProvider={slideshowProvider}
+            onProviderAvailabilityChange={setProviderAvailability}
             onRadiusChange={setAdminRadiusInput}
             aiPromptInput={adminAiPromptCriteriaInput}
             onAiPromptChange={setAdminAiPromptCriteriaInput}
+            aiJudgeProviderInput={adminAiJudgeProviderInput}
+            onAiJudgeProviderChange={handleAiJudgeProviderChange}
             aiJudgeModelInput={adminAiJudgeModelInput}
             onAiJudgeModelChange={setAdminAiJudgeModelInput}
             aiVerificationEnabledInput={adminAiVerificationEnabledInput}
@@ -2845,6 +2882,9 @@ CREATE TABLE IF NOT EXISTS submissions (
               setActiveTab("slideshows");
               setSlideshowRefreshKey((prev) => prev + 1);
             }}
+            slideshowProvider={slideshowProvider}
+            providerAvailability={providerAvailability || activeProviderAvailability}
+            onSlideshowProviderChange={setSlideshowProvider}
           />
         )}
 
@@ -3017,20 +3057,18 @@ CREATE TABLE IF NOT EXISTS submissions (
                         ? "bg-slate-100 border-slate-200 text-slate-600"
                         : slideshowAiHealthError
                           ? "bg-red-50 border-red-200 text-red-700"
-                          : slideshowAiHealth?.services?.ollama?.reachable && !slideshowAiHealth?.services?.presenton?.configured
-                            ? "bg-amber-50 border-amber-200 text-amber-700"
-                            : slideshowAiHealth?.overallOk
-                              ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                              : "bg-red-50 border-red-200 text-red-700"
+                          : slideshowAiHealth?.overallOk
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                            : "bg-red-50 border-red-200 text-red-700"
                     }`}
                     title={
                       slideshowAiHealthLoading
-                        ? "Checking AI connectivity..."
+                        ? `Checking ${slideshowProvider} connectivity...`
                         : slideshowAiHealthError
                           ? `AI health check failed: ${slideshowAiHealthError}`
                           : slideshowAiHealth?.overallOk
-                            ? "AI health looks good"
-                            : "AI services are degraded"
+                            ? `${slideshowProvider} is ready`
+                            : `${slideshowProvider} is not ready`
                     }
                   >
                     <span
@@ -3039,22 +3077,18 @@ CREATE TABLE IF NOT EXISTS submissions (
                           ? "bg-slate-500 animate-pulse"
                           : slideshowAiHealthError
                             ? "bg-red-500"
-                            : slideshowAiHealth?.services?.ollama?.reachable && !slideshowAiHealth?.services?.presenton?.configured
-                              ? "bg-amber-500"
-                              : slideshowAiHealth?.overallOk
-                                ? "bg-emerald-500"
-                                : "bg-red-500"
+                            : slideshowAiHealth?.overallOk
+                              ? "bg-emerald-500"
+                              : "bg-red-500"
                       }`}
                     />
                     {slideshowAiHealthLoading
-                      ? "AI Checking"
+                      ? `${slideshowProvider} Checking`
                       : slideshowAiHealthError
                         ? "AI Error"
-                        : slideshowAiHealth?.services?.ollama?.reachable && !slideshowAiHealth?.services?.presenton?.configured
-                          ? "AI Partial"
-                          : slideshowAiHealth?.overallOk
-                            ? "AI Healthy"
-                            : "AI Degraded"}
+                        : slideshowAiHealth?.overallOk
+                          ? `${slideshowProvider} Ready`
+                          : `${slideshowProvider} Not Ready`}
                   </div>
 
                   <button

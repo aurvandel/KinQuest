@@ -85,7 +85,8 @@ export interface AppSettings {
   defaultLng?: number;
   defaultRadius?: number;
   aiPromptCriteria?: string;
-  aiJudgeModel?: "gemini-3.5-flash" | "gemini-2.0-flash";
+  aiJudgeProvider?: "ollama" | "gemini" | "openai";
+  aiJudgeModel?: string;
   activeInviteCode?: string;
   inviteRequired?: boolean;
   aiVerificationEnabled?: boolean;
