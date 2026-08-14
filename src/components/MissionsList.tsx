@@ -41,6 +41,7 @@ interface MissionsListProps {
   onShowCreateModal?: () => void;
   onFocusMissionOnMap?: (itemId: string) => void;
   onOpenCamera?: (itemId: string, itemTitle: string) => void;
+  readOnlyMode?: boolean;
 }
 
 export function MissionsList({
@@ -60,7 +61,8 @@ export function MissionsList({
   onShowCreateModal,
   onFocusMissionOnMap,
   onOpenCamera,
-  players
+  players,
+  readOnlyMode = false
 }: MissionsListProps) {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
@@ -487,9 +489,10 @@ export function MissionsList({
                         <div className="space-y-4">
                           <button
                             onClick={() => onOpenCamera?.(item.id, item.title)}
-                            className="w-full py-3 px-4 bg-gradient-to-r from-brand-moss to-brand-moss-dark hover:from-brand-moss-dark hover:to-brand-moss-dark text-white font-bold text-sm rounded-xl transition flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
+                            disabled={readOnlyMode}
+                            className="w-full py-3 px-4 bg-gradient-to-r from-brand-moss to-brand-moss-dark hover:from-brand-moss-dark hover:to-brand-moss-dark text-white font-bold text-sm rounded-xl transition flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <span>📸 Open Camera / Upload Photo</span>
+                            <span>{readOnlyMode ? "📸 Submissions Paused" : "📸 Open Camera / Upload Photo"}</span>
                           </button>
 
                           {uploadError && (
@@ -502,9 +505,10 @@ export function MissionsList({
                                 <button
                                   onClick={() => onForceSubmit(item.id)}
                                   type="button"
-                                  className="w-full px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                  disabled={readOnlyMode}
+                                  className="w-full px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                  ⚠️ Force Submit Anyway
+                                  {readOnlyMode ? "⚠️ Submissions Paused" : "⚠️ Force Submit Anyway"}
                                 </button>
                               )}
                             </div>

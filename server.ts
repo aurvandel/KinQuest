@@ -2089,7 +2089,7 @@ app.get("/api/ai-model-catalog", async (_req, res) => {
 });
 
 app.post("/api/settings", (req, res) => {
-  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiJudgeProvider, aiJudgeModel, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin } = req.body;
+  const { name, icon, mapMode, defaultLat, defaultLng, defaultRadius, aiPromptCriteria, aiJudgeProvider, aiJudgeModel, aiVerificationEnabled, allowForceSubmit, activeInviteCode, inviteRequired, imageCompressionMaxDim, imageCompressionQuality, showTitle, showLogo, chatDisabledByAdmin, readOnlyMode } = req.body;
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return res.status(400).json({ error: "App name must be a non-empty string" });
   }
@@ -2116,7 +2116,8 @@ app.post("/api/settings", (req, res) => {
     imageCompressionQuality: imageCompressionQuality !== undefined ? Number(imageCompressionQuality) : undefined,
     showTitle: showTitle !== undefined ? !!showTitle : undefined,
     showLogo: showLogo !== undefined ? !!showLogo : undefined,
-    chatDisabledByAdmin: chatDisabledByAdmin !== undefined ? !!chatDisabledByAdmin : undefined
+    chatDisabledByAdmin: chatDisabledByAdmin !== undefined ? !!chatDisabledByAdmin : undefined,
+    readOnlyMode: readOnlyMode !== undefined ? !!readOnlyMode : undefined
   };
   saveAppSettings(updated);
   res.json({ success: true, settings: updated });
@@ -2628,6 +2629,10 @@ app.post("/api/verify-submission", async (req, res) => {
     const item = db.items[itemId];
     if (!item) {
       return res.status(404).json({ error: "Scavenger challenge object not found" });
+    }
+
+    if (getAppSettings().readOnlyMode === true) {
+      return res.status(423).json({ error: "The game is currently in read-only mode. Image submissions are disabled." });
     }
 
     // Check if this is a force-submit of an existing rejected submission

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Slideshow, Submission, ScavengerItem } from "../types";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { buildGuestShareLink } from "../utils/guestLink";
 import { Download, Copy, Check, Loader2, Sparkles, AlertCircle, Play, Pause, ChevronLeft, ChevronRight, ChevronDown, Trash2, Volume2, Link as LinkIcon } from "lucide-react";
 
 interface SlideshowViewerProps {
@@ -362,7 +363,7 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
   };
 
   const handleCopyTabLink = async () => {
-    const link = `${window.location.origin}${window.location.pathname}#slideshows`;
+    const link = buildGuestShareLink("slideshows");
     if (!(await copyTextToClipboard(link))) return;
     setCopiedLinkId("tab");
     setTimeout(() => setCopiedLinkId(null), 2000);
@@ -469,7 +470,7 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
         ) : (
           <>
             <LinkIcon className="h-3.5 w-3.5" />
-            Copy Link to Slide Shows Tab
+            Copy Guest Link to Slide Shows
           </>
         )}
       </button>

@@ -19,6 +19,7 @@ import { ServerLogs } from "./components/ServerLogs";
 import { useMeshNetwork } from "./utils/useMeshNetwork";
 import { QueuedSubmission } from "./utils/meshSubmissionQueue";
 import { copyTextToClipboard } from "./utils/clipboard";
+import { INVITE_CODE_STORAGE_KEY, generateGuestUsername } from "./utils/guestLink";
 
 import {
   Flame,
@@ -111,6 +112,7 @@ export default function App() {
   const [adminShowTitleInput, setAdminShowTitleInput] = useState(true);
   const [adminShowLogoInput, setAdminShowLogoInput] = useState(true);
   const [adminChatDisabledByAdminInput, setAdminChatDisabledByAdminInput] = useState(false);
+  const [adminReadOnlyModeInput, setAdminReadOnlyModeInput] = useState(false);
 
   // Admin password change states
   const [adminCurrentPasswordInput, setAdminCurrentPasswordInput] = useState("");
@@ -289,6 +291,9 @@ export default function App() {
   };
 
   const [registerName, setRegisterName] = useState("");
+  const [isGuestAutoJoin, setIsGuestAutoJoin] = useState(false);
+  const [authResetCount, setAuthResetCount] = useState(0);
+  const guestJoinInFlightRef = useRef(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isAdminAuthOpen, setIsAdminAuthOpen] = useState(false);
@@ -400,6 +405,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     localStorage.removeItem(USER_SESSION_ID_KEY);
     localStorage.removeItem(SESSION_META_KEY);
     localStorage.removeItem(ADMIN_SESSION_ID_KEY);
+    setAuthResetCount((count) => count + 1);
   };
 
   const getAdminSessionId = () => localStorage.getItem(ADMIN_SESSION_ID_KEY);
@@ -551,11 +557,15 @@ CREATE TABLE IF NOT EXISTS submissions (
   // On mount: Try getting current positioning plus reading cached self-hosted user
   useEffect(() => {
     // 0. Parse invite search parameter
+    let guestJoinRequested = false;
     try {
       const params = new URLSearchParams(window.location.search);
       const inviteUrlParam = params.get("invite");
+      guestJoinRequested = params.get("guest") === "1";
       if (inviteUrlParam) {
-        localStorage.setItem("wilderhunt_invite_code", inviteUrlParam.trim().toLowerCase());
+        localStorage.setItem(INVITE_CODE_STORAGE_KEY, inviteUrlParam.trim().toLowerCase());
+      }
+      if (inviteUrlParam || guestJoinRequested) {
         // Clean URL params from navigation bar
         const cleanURL = window.location.pathname + window.location.hash;
         window.history.replaceState({}, document.title, cleanURL);
@@ -664,6 +674,9 @@ CREATE TABLE IF NOT EXISTS submissions (
         clearStoredAuth();
       }
     }
+    if (guestJoinRequested) {
+      setIsGuestAutoJoin(true);
+    }
     setAppReady(true);
   }, []);
 
@@ -751,10 +764,14 @@ CREATE TABLE IF NOT EXISTS submissions (
 
   // Show tutorial on first login if not completed
   useEffect(() => {
-    if (profile && appReady && !profile.tutorialCompleted && !tutorialDismissedThisSession) {
+    if (settings.readOnlyMode) {
+      setShowTutorialModal(false);
+      return;
+    }
+    if (profile && appReady && !profile.tutorialCompleted && !tutorialDismissedThisSession && !isGuestAutoJoin) {
       setShowTutorialModal(true);
     }
-  }, [profile?.id, appReady, profile?.tutorialCompleted, tutorialDismissedThisSession]);
+  }, [profile?.id, appReady, profile?.tutorialCompleted, tutorialDismissedThisSession, isGuestAutoJoin, settings.readOnlyMode]);
 
   useEffect(() => {
     setHasPendingPhoto(Boolean(cameraSelectedImage));
@@ -1241,6 +1258,7 @@ CREATE TABLE IF NOT EXISTS submissions (
       setAdminShowTitleInput(settings.showTitle !== false);
       setAdminShowLogoInput(settings.showLogo !== false);
       setAdminChatDisabledByAdminInput(settings.chatDisabledByAdmin === true);
+      setAdminReadOnlyModeInput(settings.readOnlyMode === true);
       initializedAdminFormRef.current = true;
     } else if (!adminPanelOpen) {
       // Reset the flag when panel closes so it can initialize again when reopened
@@ -1357,7 +1375,8 @@ CREATE TABLE IF NOT EXISTS submissions (
           imageCompressionQuality: Number(adminImageCompressionQualityInput) || 0.7,
           showTitle: adminShowTitleInput,
           showLogo: adminShowLogoInput,
-          chatDisabledByAdmin: adminChatDisabledByAdminInput
+          chatDisabledByAdmin: adminChatDisabledByAdminInput,
+          readOnlyMode: adminReadOnlyModeInput
         })
       });
       if (res.ok) {
@@ -1401,7 +1420,9 @@ CREATE TABLE IF NOT EXISTS submissions (
           imageCompressionMaxDim: 800,
           imageCompressionQuality: 0.7,
           showTitle: true,
-          showLogo: true
+          showLogo: true,
+          chatDisabledByAdmin: false,
+          readOnlyMode: false
         })
       });
       if (res.ok) {
@@ -1425,6 +1446,7 @@ CREATE TABLE IF NOT EXISTS submissions (
         setAdminShowTitleInput(true);
         setAdminShowLogoInput(true);
         setAdminChatDisabledByAdminInput(false);
+        setAdminReadOnlyModeInput(false);
         setAdminSaveSuccess(true);
         setTimeout(() => setAdminSaveSuccess(false), 3000);
       } else {
@@ -1549,6 +1571,31 @@ CREATE TABLE IF NOT EXISTS submissions (
       setIsAuthLoading(false);
     }
   };
+
+  // Guest share links create a fresh anonymous profile per device, and again if a stale session is cleared.
+  useEffect(() => {
+    if (!isGuestAutoJoin || !appReady || profile) return;
+    if (localStorage.getItem(USER_ID_KEY)) return;
+    if (guestJoinInFlightRef.current) return;
+
+    guestJoinInFlightRef.current = true;
+    let cancelled = false;
+
+    const joinAsGuest = async () => {
+      // Retry so a slow or dropped first request never strands the visitor on the sign-in screen.
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        await registerUser(generateGuestUsername(), "user");
+        if (localStorage.getItem(USER_ID_KEY)) break;
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      }
+      guestJoinInFlightRef.current = false;
+    };
+
+    joinAsGuest();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuestAutoJoin, appReady, profile?.id, authResetCount]);
 
   // Self-hosted anonymous guest registration
   const handleRegisterInputSubmit = async (e: React.FormEvent) => {
@@ -1726,6 +1773,10 @@ CREATE TABLE IF NOT EXISTS submissions (
   // Submit base64 photo with current coordinates to server
   const handleUploadSubmission = async (itemId: string, base64Image: string, forceSubmit: boolean = false, submissionId?: string): Promise<boolean> => {
     if (!profile) return false;
+    if (settings.readOnlyMode) {
+      setSubmitErrorMap((prev) => ({ ...prev, [itemId]: "The game is currently in read-only mode. Image submissions are disabled." }));
+      return false;
+    }
 
     setSubmitErrorMap((prev) => ({ ...prev, [itemId]: null }));
     setIsSubmittingMap((prev) => ({ ...prev, [itemId]: true }));
@@ -2537,7 +2588,11 @@ CREATE TABLE IF NOT EXISTS submissions (
                       User Settings
                     </button>
                     <button
-                      onClick={handleSignOut}
+                      onClick={() => {
+                        // Explicit sign-out opts out of guest-link auto-rejoin.
+                        setIsGuestAutoJoin(false);
+                        handleSignOut();
+                      }}
                       className="w-full text-left px-4 py-3 text-xs font-semibold text-red-600 hover:bg-red-50 transition flex items-center gap-2"
                     >
                       <LogOut className="h-4 w-4" />
@@ -2812,6 +2867,8 @@ CREATE TABLE IF NOT EXISTS submissions (
             onShowLogoChange={setAdminShowLogoInput}
             chatDisabledByAdminInput={adminChatDisabledByAdminInput}
             onChatDisabledByAdminChange={setAdminChatDisabledByAdminInput}
+            readOnlyModeInput={adminReadOnlyModeInput}
+            onReadOnlyModeChange={setAdminReadOnlyModeInput}
             storageInfo={storageInfo}
             isLoading={isAdminSaving}
             saveSuccess={adminSaveSuccess}
@@ -2907,7 +2964,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 
         {/* Tutorial Modal - First time users */}
         <TutorialModal
-          isOpen={showTutorialModal}
+          isOpen={showTutorialModal && !settings.readOnlyMode}
           onClose={() => {
             setTutorialDismissedThisSession(true);
             setShowTutorialModal(false);
@@ -3020,6 +3077,7 @@ CREATE TABLE IF NOT EXISTS submissions (
                 setCameraModalItemTitle(itemTitle);
                 setCameraModalOpen(true);
               }}
+              readOnlyMode={settings.readOnlyMode === true}
               players={players}
             />
           )}

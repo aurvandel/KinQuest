@@ -109,6 +109,7 @@ export interface AppSettings {
   showTitle?: boolean;
   showLogo?: boolean;
   chatDisabledByAdmin?: boolean; // If true, chat is disabled for all users
+  readOnlyMode?: boolean; // If true, users can view the game but cannot submit images
 }
 
 

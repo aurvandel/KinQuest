@@ -30,7 +30,7 @@ A real-time, collaborative family reunion scavenger hunt application with AI-pow
 - **AI**: Google Gemini API for photo verification, with Ollama, Gemini, or OpenAI available for slideshow scripting
 - **Build Tools**: Vite, esbuild
 - **Containerization**: Docker & Docker Compose
-
+http://192.168.86.43:3001/?invite=bear-lake-stewarts&guest=1#slideshows
 ## Prerequisites
 
 - Node.js 16+

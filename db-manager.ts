@@ -1231,6 +1231,7 @@ export interface AppSettings {
   showTitle?: boolean;
   showLogo?: boolean;
   chatDisabledByAdmin?: boolean;
+  readOnlyMode?: boolean;
 }
 
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
@@ -1273,7 +1274,8 @@ export function getAppSettings(): AppSettings {
         imageCompressionQuality: Number(parsed.imageCompressionQuality) || 0.7,
         showTitle: parsed.showTitle !== undefined ? !!parsed.showTitle : true,
         showLogo: parsed.showLogo !== undefined ? !!parsed.showLogo : true,
-        chatDisabledByAdmin: parsed.chatDisabledByAdmin !== undefined ? !!parsed.chatDisabledByAdmin : false
+        chatDisabledByAdmin: parsed.chatDisabledByAdmin !== undefined ? !!parsed.chatDisabledByAdmin : false,
+        readOnlyMode: parsed.readOnlyMode !== undefined ? !!parsed.readOnlyMode : false
       };
     }
   } catch (err) {
@@ -1297,7 +1299,8 @@ export function getAppSettings(): AppSettings {
     imageCompressionQuality: 0.7,
     showTitle: true,
     showLogo: true,
-    chatDisabledByAdmin: false
+    chatDisabledByAdmin: false,
+    readOnlyMode: false
   };
 }
 

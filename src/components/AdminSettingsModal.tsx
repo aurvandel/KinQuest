@@ -85,6 +85,8 @@ interface AdminSettingsModalProps {
   onShowLogoChange: (value: boolean) => void;
   chatDisabledByAdminInput: boolean;
   onChatDisabledByAdminChange: (value: boolean) => void;
+  readOnlyModeInput: boolean;
+  onReadOnlyModeChange: (value: boolean) => void;
   storageInfo: StorageInfo | null;
   isLoading: boolean;
   saveSuccess: boolean;
@@ -150,6 +152,8 @@ export function AdminSettingsModal({
   onShowLogoChange,
   chatDisabledByAdminInput,
   onChatDisabledByAdminChange,
+  readOnlyModeInput,
+  onReadOnlyModeChange,
   storageInfo,
   isLoading,
   saveSuccess,
@@ -804,6 +808,19 @@ export function AdminSettingsModal({
               <div className="leading-none">
                 <span className="text-xs font-bold text-[#5a5a40] block">Disable Chat Feature</span>
                 <span className="text-[9px] text-[#8c8c82]">When enabled, the chat feature is completely disabled for all players. Messages are not sent or received, and the chat button is hidden from the menu.</span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2.5 cursor-pointer select-none mt-3">
+              <input
+                type="checkbox"
+                checked={readOnlyModeInput}
+                onChange={(e) => onReadOnlyModeChange(e.target.checked)}
+                className="mt-0.5 rounded border-[#dcdcd4] text-[#5a5a40] focus:ring-[#5a5a40]"
+              />
+              <div className="leading-none">
+                <span className="text-xs font-bold text-[#5a5a40] block">Read-Only Game Mode</span>
+                <span className="text-[9px] text-[#8c8c82]">Players can still view missions, results, and chat, but image submissions are disabled.</span>
               </div>
             </label>
           </div>
