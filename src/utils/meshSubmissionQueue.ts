@@ -27,6 +27,12 @@ interface LocalStorage {
   syncedSubmissionIds: string[]; // Track which submissions have been synced
 }
 
+interface BackgroundSyncRegistration extends ServiceWorkerRegistration {
+  sync: {
+    register(tag: string): Promise<void>;
+  };
+}
+
 const DB_NAME = "kinquest_mesh";
 const STORE_NAME = "submissions";
 
@@ -148,7 +154,7 @@ export class MeshSubmissionQueue {
   private requestBackgroundSync(): void {
     if ("serviceWorker" in navigator && "SyncManager" in window) {
       navigator.serviceWorker.ready
-        .then((registration) => (registration.sync as any).register("sync-submissions"))
+        .then((registration) => (registration as BackgroundSyncRegistration).sync.register("sync-submissions"))
         .catch((err) => console.warn("[Queue] Background sync registration failed:", err));
     }
   }

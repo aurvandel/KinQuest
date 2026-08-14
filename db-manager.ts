@@ -80,6 +80,8 @@ export interface Slideshow {
   createdBy?: string | null; // Admin user ID who generated it
   createdAt: string;
   isPublished: boolean;
+  isHidden: boolean;
+  isDefaultExpanded: boolean;
 }
 
 export interface MissionSlideshowPlan {
@@ -307,7 +309,9 @@ export async function getAppState(): Promise<DbStore> {
         submissionIds: slide.submission_ids || [],
         createdBy: slide.created_by,
         createdAt: slide.created_at,
-        isPublished: slide.is_published ?? false
+        isPublished: slide.is_published ?? false,
+        isHidden: slide.is_hidden ?? false,
+        isDefaultExpanded: slide.is_default_expanded ?? false
       };
     });
 
@@ -1047,6 +1051,14 @@ export async function bootUser(userId: string): Promise<boolean> {
 
 export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
   try {
+    if (slideshow.isDefaultExpanded) {
+      const { error: clearDefaultError } = await supabase!
+        .from("slideshows")
+        .update({ is_default_expanded: false })
+        .neq("id", slideshow.id);
+      if (clearDefaultError) throw clearDefaultError;
+    }
+
     // Save to Supabase
     const { error } = await supabase!
       .from("slideshows")
@@ -1058,7 +1070,9 @@ export async function saveSlideshow(slideshow: Slideshow): Promise<Slideshow> {
         submission_ids: slideshow.submissionIds,
         created_by: slideshow.createdBy === 'admin' ? null : (slideshow.createdBy || null),
         created_at: slideshow.createdAt,
-        is_published: slideshow.isPublished
+        is_published: slideshow.isPublished,
+        is_hidden: slideshow.isHidden,
+        is_default_expanded: slideshow.isDefaultExpanded
       }])
       .select();
     
@@ -1089,7 +1103,9 @@ export async function getSlideshow(id: string): Promise<Slideshow | null> {
       submissionIds: data.submission_ids,
       createdBy: data.created_by,
       createdAt: data.created_at,
-      isPublished: data.is_published
+      isPublished: data.is_published,
+      isHidden: data.is_hidden ?? false,
+      isDefaultExpanded: data.is_default_expanded ?? false
     };
   } catch (err) {
     console.warn("Supabase slideshow retrieve error:", err);
@@ -1097,13 +1113,19 @@ export async function getSlideshow(id: string): Promise<Slideshow | null> {
   }
 }
 
-export async function getAllSlideshows(): Promise<Slideshow[]> {
+export async function getAllSlideshows(includeHidden = false): Promise<Slideshow[]> {
   try {
-    const { data, error } = await supabase!
+    let query = supabase!
       .from("slideshows")
       .select("*")
       .eq("is_published", true)
       .order("created_at", { ascending: false });
+
+    if (!includeHidden) {
+      query = query.eq("is_hidden", false);
+    }
+
+    const { data, error } = await query;
     
     if (error) throw error;
     
@@ -1115,7 +1137,9 @@ export async function getAllSlideshows(): Promise<Slideshow[]> {
       submissionIds: s.submission_ids,
       createdBy: s.created_by,
       createdAt: s.created_at,
-      isPublished: s.is_published
+      isPublished: s.is_published,
+      isHidden: s.is_hidden ?? false,
+      isDefaultExpanded: s.is_default_expanded ?? false
     }));
   } catch (err) {
     console.warn("Supabase slideshow retrieve error:", err);
@@ -1421,7 +1445,9 @@ export async function restoreFromBackup(backup: any): Promise<{
       submission_ids: Array.isArray(slide.submissionIds) ? slide.submissionIds : slide.submission_ids,
       created_by: slide.createdBy || slide.created_by,
       created_at: slide.createdAt || slide.created_at,
-      is_published: slide.isPublished ?? false
+      is_published: slide.isPublished ?? false,
+      is_hidden: slide.isHidden ?? slide.is_hidden ?? false,
+      is_default_expanded: slide.isDefaultExpanded ?? slide.is_default_expanded ?? false
     }));
     const { error: slideErr } = await supabase.from("slideshows").insert(slideshowsToInsert);
     if (slideErr) throw new Error(`Failed to restore slideshows: ${slideErr.message}`);

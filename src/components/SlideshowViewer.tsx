@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Slideshow, Submission, ScavengerItem } from "../types";
-import { Download, Copy, Check, Loader2, Sparkles, AlertCircle, Play, Pause, ChevronLeft, ChevronRight, Trash2, Volume2 } from "lucide-react";
+import { copyTextToClipboard } from "../utils/clipboard";
+import { Download, Copy, Check, Loader2, Sparkles, AlertCircle, Play, Pause, ChevronLeft, ChevronRight, ChevronDown, Trash2, Volume2, Link as LinkIcon } from "lucide-react";
 
 interface SlideshowViewerProps {
   userId: string | null;
@@ -76,19 +77,25 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
   const [voiceEnabledMap, setVoiceEnabledMap] = useState<{ [slideshowId: string]: boolean }>({});
   const [scriptDraftMap, setScriptDraftMap] = useState<{ [slideshowId: string]: string }>({});
   const [savingScriptId, setSavingScriptId] = useState<string | null>(null);
+  const [savingSettingsId, setSavingSettingsId] = useState<string | null>(null);
+  const [detailsExpandedMap, setDetailsExpandedMap] = useState<{ [slideshowId: string]: boolean }>({});
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+
 
   useEffect(() => {
     const fetchSlideshows = async () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch("/api/slideshows");
+        const query = isAdmin && userId ? `?userId=${encodeURIComponent(userId)}` : "";
+        const response = await fetch(`/api/slideshows${query}`);
         if (!response.ok) {
           throw new Error("Failed to fetch slideshows");
         }
         const data = await response.json();
         const slideshowList = Array.isArray(data) ? data : [];
         setSlideshows(slideshowList);
+        setExpandedId(slideshowList.find((slideshow: Slideshow) => slideshow.isDefaultExpanded)?.id || null);
 
         const statusResponses = await Promise.all(
           slideshowList.map(async (slideshow: Slideshow) => {
@@ -122,7 +129,7 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     };
 
     fetchSlideshows();
-  }, [refreshKey]);
+  }, [refreshKey, isAdmin, userId]);
 
 
   useEffect(() => {
@@ -226,8 +233,8 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     document.body.removeChild(element);
   };
 
-  const handleCopy = (slideshow: Slideshow) => {
-    navigator.clipboard.writeText(getDisplayScript(slideshow.script || ""));
+  const handleCopy = async (slideshow: Slideshow) => {
+    if (!(await copyTextToClipboard(getDisplayScript(slideshow.script || "")))) return;
     setCopiedId(slideshow.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -287,6 +294,39 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     }
   };
 
+  const handleSaveSettings = async (
+    slideshow: Slideshow,
+    updates: Pick<Slideshow, "isHidden" | "isDefaultExpanded">
+  ) => {
+    if (!userId || !isAdmin) return;
+
+    setSavingSettingsId(slideshow.id);
+    setRenderErrorMap((prev) => ({ ...prev, [slideshow.id]: null }));
+    try {
+      const response = await fetch(`/api/slideshows/${slideshow.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, ...updates }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.details || data?.error || "Failed to save slideshow settings");
+      }
+      if (data?.slideshow) {
+        setSlideshows((prev) => prev.map((current) => {
+          if (current.id === slideshow.id) return data.slideshow;
+          return data.slideshow.isDefaultExpanded
+            ? { ...current, isDefaultExpanded: false }
+            : current;
+        }));
+      }
+    } catch (err: any) {
+      setRenderErrorMap((prev) => ({ ...prev, [slideshow.id]: err?.message || "Failed to save slideshow settings" }));
+    } finally {
+      setSavingSettingsId(null);
+    }
+  };
+
   const handleDeleteSlideshow = async (slideshowId: string) => {
     if (!userId || userRole !== "admin") return;
     const confirmed = window.confirm("Delete this slideshow and its generated MP4 file? This will not delete any mission or submission data.");
@@ -319,6 +359,13 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const handleCopyTabLink = async () => {
+    const link = `${window.location.origin}${window.location.pathname}#slideshows`;
+    if (!(await copyTextToClipboard(link))) return;
+    setCopiedLinkId("tab");
+    setTimeout(() => setCopiedLinkId(null), 2000);
   };
 
   if (isLoading) {
@@ -410,6 +457,23 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
         </span>
       </div>
 
+      <button
+        onClick={handleCopyTabLink}
+        className="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-xs font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg transition"
+      >
+        {copiedLinkId === "tab" ? (
+          <>
+            <Check className="h-3.5 w-3.5" />
+            Link Copied!
+          </>
+        ) : (
+          <>
+            <LinkIcon className="h-3.5 w-3.5" />
+            Copy Link to Slide Shows Tab
+          </>
+        )}
+      </button>
+
       <div className="space-y-3">
         {slideshows.map((slideshow) => (
           (() => {
@@ -456,85 +520,8 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
             {/* Expanded Content */}
             {expandedId === slideshow.id && (
               <div className="border-t border-gray-100 p-4 bg-gray-50 space-y-4">
-                {isAdmin ? (
-                  resolvedSlides.length > 0 ? (
-                    <div className="space-y-3">
-                      <div className="relative bg-black rounded-xl overflow-hidden">
-                        <img
-                          src={currentSlide.imageUrl}
-                          alt={currentSlide.title}
-                          className="w-full h-64 object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white">
-                          <p className="text-sm font-semibold">{currentSlide.description || currentSlide.title}</p>
-                          <p className="text-xs opacity-90">Photo by {currentSlide.username}</p>
-                        </div>
-                        {currentNarration && (
-                          <div className="absolute top-3 left-3 right-3 rounded-lg bg-black/60 border border-white/20 p-3 text-white">
-                            <p className="text-[11px] font-bold uppercase tracking-wide text-blue-200 mb-1">Mission Narrator</p>
-                            <p className="text-xs leading-relaxed">{currentNarration}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          onClick={() => goToPrevSlide(slideshow.id, resolvedSlides.length)}
-                          className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          Prev
-                        </button>
-
-                        <button
-                          onClick={() => setPlayingId((prev) => prev === slideshow.id ? null : slideshow.id)}
-                          className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1"
-                        >
-                          {playingId === slideshow.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                          {playingId === slideshow.id ? "Pause" : "Play"}
-                        </button>
-
-                        <button
-                          onClick={() => setVoiceEnabledMap((prev) => ({ ...prev, [slideshow.id]: !prev[slideshow.id] }))}
-                          className={`px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 ${voiceEnabledMap[slideshow.id] ? "bg-violet-600 text-white hover:bg-violet-700" : "bg-violet-100 text-violet-700 hover:bg-violet-200"}`}
-                        >
-                          <Volume2 className="h-4 w-4" />
-                          {voiceEnabledMap[slideshow.id] ? "Voice On" : "Voice Off"}
-                        </button>
-
-                        <button
-                          onClick={() => goToNextSlide(slideshow.id, resolvedSlides.length)}
-                          className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
-                        >
-                          Next
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <p className="text-xs text-gray-500">
-                        Slide {currentIndex + 1} of {resolvedSlides.length}
-                        {resolvedSlides.length !== slideshow.submissionIds.length && ` · ${slideshow.submissionIds.length - resolvedSlides.length} photo(s) missing from current submission dataset`}
-                      </p>
-
-                      <div className="grid grid-cols-5 gap-2">
-                        {resolvedSlides.map((slide, idx) => (
-                          <button
-                            key={slide.id}
-                            onClick={() => setSlideIndexMap((prev) => ({ ...prev, [slideshow.id]: idx }))}
-                            className={`rounded-lg overflow-hidden border ${idx === currentIndex ? "border-blue-500" : "border-transparent"}`}
-                          >
-                            <img src={slide.imageUrl} alt={slide.title} className="w-full h-14 object-cover" referrerPolicy="no-referrer" />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                      No slideshow photos are currently available for this record.
-                    </div>
-                  )
-                ) : hasVideo ? (
+                {/* Primary: MP4 player and download, shown first for everyone */}
+                {hasVideo ? (
                   <>
                     <div className="bg-black rounded-xl overflow-hidden border border-gray-800">
                       <video
@@ -553,161 +540,251 @@ export function SlideshowViewer({ userId, userRole, submissions, items, refreshK
                       Download MP4
                     </a>
                   </>
+                ) : isAdmin ? (
+                  <button
+                    onClick={() => handleRenderMp4(slideshow.id)}
+                    disabled={renderingId === slideshow.id}
+                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2.5 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
+                  >
+                    {renderingId === slideshow.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Rendering MP4...
+                      </>
+                    ) : (
+                      "Create Basic MP4"
+                    )}
+                  </button>
                 ) : (
                   <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">
                     Video is not available yet. Please check back soon.
                   </div>
                 )}
 
-                {isAdmin && (
-                  <>
-                    {/* Script Preview */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-                        Production Guide Script
-                      </label>
-                      <div className="bg-white rounded-xl p-3 max-h-48 overflow-y-auto border border-gray-200">
-                        <textarea
-                          value={scriptDraftMap[slideshow.id] ?? slideshow.script ?? ""}
-                          onChange={(e) => setScriptDraftMap((prev) => ({ ...prev, [slideshow.id]: e.target.value }))}
-                          rows={10}
-                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-300"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleSaveScript(slideshow)}
-                        disabled={savingScriptId === slideshow.id}
-                        className="flex-1 flex items-center justify-center gap-2 bg-sky-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-sky-700 disabled:bg-sky-300 disabled:cursor-not-allowed transition text-xs"
-                      >
-                        {savingScriptId === slideshow.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Saving Script...
-                          </>
-                        ) : (
-                          "Save Script"
-                        )}
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                {/* Action Buttons */}
-                {isAdmin && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleCopy(slideshow)}
-                      className="flex-1 flex items-center justify-center gap-2 bg-gray-200 text-gray-800 font-bold py-2 px-3 rounded-lg hover:bg-gray-300 transition text-xs"
-                    >
-                      {copiedId === slideshow.id ? (
-                        <>
-                          <Check className="h-4 w-4" />
-                          Copied!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-4 w-4" />
-                          Copy
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleDownload(slideshow)}
-                      className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-blue-700 transition text-xs"
-                    >
-                      <Download className="h-4 w-4" />
-                      Download
-                    </button>
+                {renderErrorMap[slideshow.id] && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
+                    {renderErrorMap[slideshow.id]}
                   </div>
                 )}
 
+                {/* Accordion: pictures, script, and other admin details */}
                 {isAdmin && (
-                  <>
-                    <div className="flex gap-2">
-                      {userRole === "admin" && !hasVideo && (
+                  <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
+                    <button
+                      onClick={() =>
+                        setDetailsExpandedMap((prev) => ({ ...prev, [slideshow.id]: !prev[slideshow.id] }))
+                      }
+                      className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                    >
+                      <span>Photos & Production Details</span>
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${detailsExpandedMap[slideshow.id] ? "rotate-180" : ""}`}
+                      />
+                    </button>
+
+                    {detailsExpandedMap[slideshow.id] && (
+                      <div className="border-t border-gray-100 p-3 space-y-4">
+                        {resolvedSlides.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="relative bg-black rounded-xl overflow-hidden">
+                              <img
+                                src={currentSlide.imageUrl}
+                                alt={currentSlide.title}
+                                className="w-full h-64 object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3 text-white">
+                                <p className="text-sm font-semibold">{currentSlide.description || currentSlide.title}</p>
+                                <p className="text-xs opacity-90">Photo by {currentSlide.username}</p>
+                              </div>
+                              {currentNarration && (
+                                <div className="absolute top-3 left-3 right-3 rounded-lg bg-black/60 border border-white/20 p-3 text-white">
+                                  <p className="text-[11px] font-bold uppercase tracking-wide text-blue-200 mb-1">Mission Narrator</p>
+                                  <p className="text-xs leading-relaxed">{currentNarration}</p>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                onClick={() => goToPrevSlide(slideshow.id, resolvedSlides.length)}
+                                className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                                Prev
+                              </button>
+
+                              <button
+                                onClick={() => setPlayingId((prev) => prev === slideshow.id ? null : slideshow.id)}
+                                className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1"
+                              >
+                                {playingId === slideshow.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                                {playingId === slideshow.id ? "Pause" : "Play"}
+                              </button>
+
+                              <button
+                                onClick={() => setVoiceEnabledMap((prev) => ({ ...prev, [slideshow.id]: !prev[slideshow.id] }))}
+                                className={`px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1 ${voiceEnabledMap[slideshow.id] ? "bg-violet-600 text-white hover:bg-violet-700" : "bg-violet-100 text-violet-700 hover:bg-violet-200"}`}
+                              >
+                                <Volume2 className="h-4 w-4" />
+                                {voiceEnabledMap[slideshow.id] ? "Voice On" : "Voice Off"}
+                              </button>
+
+                              <button
+                                onClick={() => goToNextSlide(slideshow.id, resolvedSlides.length)}
+                                className="px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-medium flex items-center gap-1"
+                              >
+                                Next
+                                <ChevronRight className="h-4 w-4" />
+                              </button>
+                            </div>
+
+                            <p className="text-xs text-gray-500">
+                              Slide {currentIndex + 1} of {resolvedSlides.length}
+                              {resolvedSlides.length !== slideshow.submissionIds.length && ` · ${slideshow.submissionIds.length - resolvedSlides.length} photo(s) missing from current submission dataset`}
+                            </p>
+
+                            <div className="grid grid-cols-5 gap-2">
+                              {resolvedSlides.map((slide, idx) => (
+                                <button
+                                  key={slide.id}
+                                  onClick={() => setSlideIndexMap((prev) => ({ ...prev, [slideshow.id]: idx }))}
+                                  className={`rounded-lg overflow-hidden border ${idx === currentIndex ? "border-blue-500" : "border-transparent"}`}
+                                >
+                                  <img src={slide.imageUrl} alt={slide.title} className="w-full h-14 object-cover" referrerPolicy="no-referrer" />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                            No slideshow photos are currently available for this record.
+                          </div>
+                        )}
+
+                        {/* Script Preview */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                            Production Guide Script
+                          </label>
+                          <div className="bg-white rounded-xl p-3 max-h-48 overflow-y-auto border border-gray-200">
+                            <textarea
+                              value={scriptDraftMap[slideshow.id] ?? slideshow.script ?? ""}
+                              onChange={(e) => setScriptDraftMap((prev) => ({ ...prev, [slideshow.id]: e.target.value }))}
+                              rows={10}
+                              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-300"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveScript(slideshow)}
+                            disabled={savingScriptId === slideshow.id}
+                            className="flex-1 flex items-center justify-center gap-2 bg-sky-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-sky-700 disabled:bg-sky-300 disabled:cursor-not-allowed transition text-xs"
+                          >
+                            {savingScriptId === slideshow.id ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Saving Script...
+                              </>
+                            ) : (
+                              "Save Script"
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleCopy(slideshow)}
+                            className="flex-1 flex items-center justify-center gap-2 bg-gray-200 text-gray-800 font-bold py-2 px-3 rounded-lg hover:bg-gray-300 transition text-xs"
+                          >
+                            {copiedId === slideshow.id ? (
+                              <>
+                                <Check className="h-4 w-4" />
+                                Copied!
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-4 w-4" />
+                                Copy
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleDownload(slideshow)}
+                            className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-blue-700 transition text-xs"
+                          >
+                            <Download className="h-4 w-4" />
+                            Download
+                          </button>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleDeleteSlideshow(slideshow.id)}
+                            disabled={deletingId === slideshow.id}
+                            className="flex-1 flex items-center justify-center gap-2 bg-rose-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed transition text-xs"
+                          >
+                            {deletingId === slideshow.id ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Deleting...
+                              </>
+                            ) : (
+                              <>
+                                <Trash2 className="h-4 w-4" />
+                                Delete Slideshow
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="space-y-2 border-t border-gray-100 pt-3">
+                          <label className="flex items-center justify-between gap-3 text-xs text-gray-700">
+                            <span>Hide from normal users</span>
+                            <input
+                              type="checkbox"
+                              checked={slideshow.isHidden}
+                              disabled={savingSettingsId === slideshow.id}
+                              onChange={(event) => handleSaveSettings(slideshow, {
+                                isHidden: event.target.checked,
+                                isDefaultExpanded: event.target.checked ? false : slideshow.isDefaultExpanded,
+                              })}
+                              className="h-4 w-4 accent-rose-600"
+                            />
+                          </label>
+                          <label className="flex items-center justify-between gap-3 text-xs text-gray-700">
+                            <span>Open by default for users</span>
+                            <input
+                              type="checkbox"
+                              checked={slideshow.isDefaultExpanded}
+                              disabled={slideshow.isHidden || savingSettingsId === slideshow.id}
+                              onChange={(event) => handleSaveSettings(slideshow, {
+                                isHidden: slideshow.isHidden,
+                                isDefaultExpanded: event.target.checked,
+                              })}
+                              className="h-4 w-4 accent-blue-600"
+                            />
+                          </label>
+                        </div>
+
+                        {/* Full Script Button */}
                         <button
-                          onClick={() => handleRenderMp4(slideshow.id)}
-                          disabled={renderingId === slideshow.id}
-                          className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed transition text-xs"
+                          onClick={() => {
+                            const element = document.createElement("pre");
+                            element.textContent = slideshow.script;
+                            element.className = "bg-white rounded-xl p-4 max-h-96 overflow-y-auto border border-gray-200 text-xs font-mono";
+                            // Create a modal to display full script
+                          }}
+                          className="w-full text-xs text-blue-600 hover:text-blue-700 font-medium py-1 hover:bg-white rounded transition"
                         >
-                          {renderingId === slideshow.id ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Rendering MP4...
-                            </>
-                          ) : (
-                            "Create Basic MP4"
-                          )}
+                          View Full Script
                         </button>
-                      )}
-
-                      {videoUrlMap[slideshow.id] && (
-                        <a
-                          href={videoUrlMap[slideshow.id]}
-                          download
-                          className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-indigo-700 transition text-xs"
-                        >
-                          <Download className="h-4 w-4" />
-                          Download MP4
-                        </a>
-                      )}
-
-                      {userRole === "admin" && (
-                        <button
-                          onClick={() => handleDeleteSlideshow(slideshow.id)}
-                          disabled={deletingId === slideshow.id}
-                          className="flex-1 flex items-center justify-center gap-2 bg-rose-600 text-white font-bold py-2 px-3 rounded-lg hover:bg-rose-700 disabled:bg-rose-300 disabled:cursor-not-allowed transition text-xs"
-                        >
-                          {deletingId === slideshow.id ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Deleting...
-                            </>
-                          ) : (
-                            <>
-                              <Trash2 className="h-4 w-4" />
-                              Delete Slideshow
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
-
-                    {renderErrorMap[slideshow.id] && (
-                      <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
-                        {renderErrorMap[slideshow.id]}
                       </div>
                     )}
-
-                    {videoUrlMap[slideshow.id] && (
-                      <div className="bg-black rounded-xl overflow-hidden border border-gray-800">
-                        <video
-                          src={videoUrlMap[slideshow.id]}
-                          controls
-                          preload="metadata"
-                          className="w-full h-auto max-h-[420px] bg-black"
-                        />
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Full Script Button */}
-                {isAdmin && (
-                  <button
-                    onClick={() => {
-                      const element = document.createElement("pre");
-                      element.textContent = slideshow.script;
-                      element.className = "bg-white rounded-xl p-4 max-h-96 overflow-y-auto border border-gray-200 text-xs font-mono";
-                      // Create a modal to display full script
-                    }}
-                    className="w-full text-xs text-blue-600 hover:text-blue-700 font-medium py-1 hover:bg-white rounded transition"
-                  >
-                    View Full Script
-                  </button>
+                  </div>
                 )}
               </div>
             )}

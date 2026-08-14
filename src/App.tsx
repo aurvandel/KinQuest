@@ -18,6 +18,7 @@ import { CameraModal } from "./components/CameraModal";
 import { ServerLogs } from "./components/ServerLogs";
 import { useMeshNetwork } from "./utils/useMeshNetwork";
 import { QueuedSubmission } from "./utils/meshSubmissionQueue";
+import { copyTextToClipboard } from "./utils/clipboard";
 
 import {
   Flame,
@@ -387,8 +388,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   distance_meters DOUBLE PRECISION
 );`;
 
-  const copySqlToClipboard = () => {
-    navigator.clipboard.writeText(SQL_SCHEMA);
+  const copySqlToClipboard = async () => {
+    if (!(await copyTextToClipboard(SQL_SCHEMA))) return;
     setCopiedSql(true);
     setTimeout(() => setCopiedSql(false), 2000);
   };
@@ -2089,6 +2090,22 @@ CREATE TABLE IF NOT EXISTS submissions (
     }
   }, [activeTab, isMapDisabled]);
 
+  // Allow deep-linking directly to a tab via URL hash (e.g. #slideshows)
+  useEffect(() => {
+    const validTabs = ["missions", "map", "leaderboard", "feed", "chat", "gallery", "slideshows", "approval", "logs"];
+    const hashTab = window.location.hash.replace("#", "");
+    if (validTabs.includes(hashTab)) {
+      setActiveTab(hashTab as typeof activeTab);
+    }
+  }, []);
+
+  useEffect(() => {
+    const nextHash = `#${activeTab}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", nextHash);
+    }
+  }, [activeTab]);
+
   // Map clicks link directly to challenge cards and expands them!
   const handleSelectChallengeFromMap = (itemId: string) => {
     setSelectedMapItemId(itemId);
@@ -2779,9 +2796,9 @@ CREATE TABLE IF NOT EXISTS submissions (
             inviteRequiredInput={adminInviteRequiredInput}
             onInviteRequiredChange={setAdminInviteRequiredInput}
             copiedInviteLink={copiedInviteLink}
-            onCopyInviteLink={() => {
+            onCopyInviteLink={async () => {
               const inviteLink = `${window.location.protocol}//${window.location.host}/?invite=${encodeURIComponent(adminActiveInviteCodeInput.trim().toLowerCase())}`;
-              navigator.clipboard.writeText(inviteLink);
+              if (!(await copyTextToClipboard(inviteLink))) return;
               setCopiedInviteLink(true);
               setTimeout(() => setCopiedInviteLink(false), 2000);
             }}

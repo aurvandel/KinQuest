@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { RefreshCw, Copy, Check, Trash2, Download, Cpu, MemoryStick, Activity } from "lucide-react";
+import { copyTextToClipboard } from "../utils/clipboard";
 
 interface LogEntry {
   timestamp: string;
@@ -153,11 +154,11 @@ export function ServerLogs() {
       })
     : [];
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const text = filteredLogs
       .map(log => `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}`)
       .join("\n");
-    navigator.clipboard.writeText(text);
+    if (!(await copyTextToClipboard(text))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

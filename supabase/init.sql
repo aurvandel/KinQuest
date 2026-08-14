@@ -122,8 +122,13 @@ CREATE TABLE IF NOT EXISTS slideshows (
   submission_ids TEXT[] DEFAULT ARRAY[]::TEXT[],
   created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   is_published BOOLEAN DEFAULT FALSE,
+  is_hidden BOOLEAN NOT NULL DEFAULT FALSE,
+  is_default_expanded BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE slideshows ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE slideshows ADD COLUMN IF NOT EXISTS is_default_expanded BOOLEAN NOT NULL DEFAULT FALSE;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON slideshows TO anon;
 
@@ -158,6 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_slideshows_created_by ON slideshows(created_by);
 CREATE INDEX IF NOT EXISTS idx_slideshows_is_published ON slideshows(is_published);
+CREATE INDEX IF NOT EXISTS idx_slideshows_visible ON slideshows(is_published, is_hidden);
 CREATE INDEX IF NOT EXISTS idx_slideshows_created_at ON slideshows(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mission_slideshow_plans_created_by ON mission_slideshow_plans(created_by);
 CREATE INDEX IF NOT EXISTS idx_mission_slideshow_plans_created_at ON mission_slideshow_plans(created_at DESC);

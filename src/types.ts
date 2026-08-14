@@ -75,6 +75,8 @@ export interface Slideshow {
   createdBy?: string | null; // Admin user ID who generated it
   createdAt: string;
   isPublished: boolean;
+  isHidden: boolean;
+  isDefaultExpanded: boolean;
 }
 
 export interface MissionSlideshowPlan {

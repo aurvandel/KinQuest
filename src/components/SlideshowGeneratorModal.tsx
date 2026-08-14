@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Submission, ScavengerItem } from "../types";
 import { X, Loader2, Sparkles, Download, Copy, Check } from "lucide-react";
 import { DEFAULT_LEADERBOARD_IMAGE_PROMPT, DEFAULT_SLIDESHOW_PROMPT } from "../../slideshow-prompt.ts";
+import { copyTextToClipboard } from "../utils/clipboard";
 
 interface SlideshowGeneratorModalProps {
   isOpen: boolean;
@@ -534,10 +535,10 @@ export function SlideshowGeneratorModal({
     document.body.removeChild(element);
   };
 
-  const copyScript = () => {
+  const copyScript = async () => {
     const scriptToCopy = localScript || generatedScript;
     if (!scriptToCopy) return;
-    navigator.clipboard.writeText(scriptToCopy);
+    if (!(await copyTextToClipboard(scriptToCopy))) return;
     setCopiedScript(true);
     setTimeout(() => setCopiedScript(false), 2000);
   };

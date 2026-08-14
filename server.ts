@@ -1320,6 +1320,31 @@ function buildColorGradingFilter(grading?: SlideshowColorGrading | null): string
   return `eq=brightness=${grading.brightness.toFixed(3)}:contrast=${grading.contrast.toFixed(3)}:saturation=${grading.saturation.toFixed(3)}:gamma=${grading.gamma.toFixed(3)}`;
 }
 
+/** Rejects if the rendered file is missing its moov atom (i.e. an interrupted FFmpeg run). */
+async function assertPlayableMp4(filePath: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const probe = spawn("ffprobe", [
+      "-v", "error",
+      "-select_streams", "v:0",
+      "-show_entries", "stream=codec_name",
+      "-of", "default=nw=1:nk=1",
+      filePath
+    ]);
+    let stderr = "";
+    probe.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    probe.on("error", () => resolve()); // ffprobe unavailable: skip validation
+    probe.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`Rendered MP4 failed validation: ${stderr.trim() || `ffprobe exited with code ${code}`}`));
+    });
+  });
+}
+
 async function renderSlideshowMp4(
   slideshowId: string,
   slides: Array<{ imageUrl?: string; overlayText?: string; durationSeconds?: number; transition?: string; isTitleCard?: boolean }>,
@@ -1338,6 +1363,9 @@ async function renderSlideshowMp4(
 
   const outputPath = path.join(videosDir, `${cleanId}.mp4`);
   const outputUrl = `/api/slideshows/video/${cleanId}.mp4`;
+  // Render to a scratch file so a killed/failed FFmpeg run can never leave a playable-looking
+  // but header-less MP4 (no moov atom) where clients expect the finished video.
+  const partialOutputPath = path.join(videosDir, `${cleanId}.partial-${Date.now()}.mp4`);
 
   const maxSlides = PI_CONSTRAINED_RENDER ? 45 : 90;
   const safeSlides = capSlidesForConstrainedRender(slides, maxSlides);
@@ -1541,8 +1569,20 @@ async function renderSlideshowMp4(
       filterComplex = `${videoLabelParts.join(";")};${concatInputs}concat=n=${resolvedSlides.length}:v=1:a=0,format=yuv420p[vfinal]`;
     }
 
-    // RESILIENCE: Add timeout protection for FFmpeg to prevent hung processes on Raspberry Pi
-    const FFMPEG_TIMEOUT_MS = 300000; // 5 minutes - reasonable for even high-res on Pi
+    // RESILIENCE: Timeout protection so a hung FFmpeg cannot pin the host forever.
+    // Scaled by slide count so long slideshows are not killed mid-render (which produces an
+    // unplayable MP4 with no moov atom).
+    const configuredTimeoutMs = Number(process.env.SLIDESHOW_FFMPEG_TIMEOUT_MS) || 0;
+    const FFMPEG_TIMEOUT_MS = configuredTimeoutMs > 0
+      ? configuredTimeoutMs
+      : Math.min(
+          Math.max(resolvedSlides.length * (PI_CONSTRAINED_RENDER ? 30000 : 20000), 1800000),
+          3600000
+        );
+    const renderStartedAt = Date.now();
+    console.log(
+      `[SlideshowRender] Starting FFmpeg for ${slideshowId}: ${resolvedSlides.length} slides, timeout ${Math.round(FFMPEG_TIMEOUT_MS / 1000)}s`
+    );
     const ffmpegPromise = new Promise<void>((resolve, reject) => {
       const ffmpeg = spawn("ffmpeg", [
         "-y",
@@ -1570,7 +1610,7 @@ async function renderSlideshowMp4(
         "-maxrate", PI_CONSTRAINED_RENDER ? "1200k" : "2200k",
         "-bufsize", PI_CONSTRAINED_RENDER ? "2400k" : "4400k",
         "-movflags", "+faststart",
-        outputPath
+        partialOutputPath
       ]);
 
       let stderr = "";
@@ -1596,14 +1636,26 @@ async function renderSlideshowMp4(
 
       // Set timeout to kill process if it runs too long
       const timeout = setTimeout(() => {
-        ffmpeg.kill("SIGKILL");
+        // SIGTERM first so FFmpeg can flush the moov atom; SIGKILL only if it ignores us.
+        ffmpeg.kill("SIGTERM");
+        setTimeout(() => ffmpeg.kill("SIGKILL"), 10000);
         reject(new Error(`FFmpeg rendering timeout (${FFMPEG_TIMEOUT_MS}ms). Process killed to prevent Pi lockup.`));
       }, FFMPEG_TIMEOUT_MS);
 
       ffmpeg.on("close", () => clearTimeout(timeout));
     });
 
-    await ffmpegPromise;
+    try {
+      await ffmpegPromise;
+      await assertPlayableMp4(partialOutputPath);
+      await fsp.rename(partialOutputPath, outputPath);
+      console.log(
+        `[SlideshowRender] Completed ${slideshowId} in ${Math.round((Date.now() - renderStartedAt) / 1000)}s`
+      );
+    } catch (renderErr) {
+      await fsp.rm(partialOutputPath, { force: true });
+      throw renderErr;
+    }
 
     return { outputPath, outputUrl };
   } finally {
@@ -3794,6 +3846,8 @@ app.post("/api/slideshow/generate", async (req, res) => {
       createdBy: createdBy,
       createdAt: new Date().toISOString(),
       isPublished: true,
+      isHidden: false,
+      isDefaultExpanded: false,
     };
 
     await saveSlideshow(slideshow);
@@ -4070,7 +4124,7 @@ app.post("/api/slideshow/song-match-preview", async (req, res) => {
 app.patch("/api/slideshows/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId, title, description, script, isPublished } = req.body || {};
+    const { userId, title, description, script, isPublished, isHidden, isDefaultExpanded } = req.body || {};
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
@@ -4093,7 +4147,13 @@ app.patch("/api/slideshows/:id", async (req, res) => {
       description: description !== undefined ? String(description) : slideshow.description,
       script: script !== undefined ? String(script) : slideshow.script,
       isPublished: isPublished !== undefined ? !!isPublished : slideshow.isPublished,
+      isHidden: typeof isHidden === "boolean" ? isHidden : slideshow.isHidden,
+      isDefaultExpanded: typeof isDefaultExpanded === "boolean" ? isDefaultExpanded : slideshow.isDefaultExpanded,
     };
+
+    if (updated.isHidden) {
+      updated.isDefaultExpanded = false;
+    }
 
     await saveSlideshow(updated);
     return res.json({ success: true, slideshow: updated });
@@ -4180,7 +4240,10 @@ app.get("/api/slideshows/:id/video-status", async (req, res) => {
 // 7. Get all published slideshows
 app.get("/api/slideshows", async (req, res) => {
   try {
-    const slideshows = await getAllSlideshows();
+    const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+    const state = userId ? await getAppState() : null;
+    const includeHidden = Boolean(userId && state?.users[userId]?.role === "admin");
+    const slideshows = await getAllSlideshows(includeHidden);
     res.json(slideshows);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch slideshows", details: err.message });
